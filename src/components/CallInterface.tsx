@@ -148,7 +148,7 @@ export const CallInterface = () => {
         {/* Connection Info */}
         <div className="text-xs text-muted-foreground space-y-1">
           <div>Server: devrtc.voicehost.io</div>
-          <div>SIP: hpbx.voicehost.co.uk</div>
+          <div>SIP: hpbx.sipconvergence.co.uk</div>
           <div>Account: 16331*201</div>
         </div>
       </Card>

@@ -163,7 +163,7 @@ export const useJanus = () => {
       request: "register",
       username: "16331*201",
       secret: "am4tsQwM53YYT!cw",
-      proxy: "sip:hpbx.voicehost.co.uk:5060",
+      host: "hpbx.sipconvergence.co.uk:5060",
       send_register: true
     }
 
@@ -246,7 +246,7 @@ export const useJanus = () => {
 
       const call = {
         request: "call",
-        uri: `sip:${phoneNumber}@hpbx.voicehost.co.uk`
+        uri: `sip:${phoneNumber}@hpbx.sipconvergence.co.uk`
       }
 
       sipPluginRef.current.createOffer({
