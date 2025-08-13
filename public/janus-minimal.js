@@ -196,15 +196,23 @@
     }
   };
 
-  // Make Janus constructor work with 'new' keyword
-  window.Janus = function(options) {
-    return new window.Janus.Session(options);
-  };
+  // Store original methods before overwriting
+  var originalInit = window.Janus.init;
+  var originalSession = window.Janus.Session;
+  var originalPluginHandle = window.Janus.PluginHandle;
   
-  // Add static methods
-  window.Janus.init = window.Janus.init;
-  window.Janus.isWebrtcSupported = isWebrtcSupported;
-  window.Janus.Session = window.Janus.Session;
-  window.Janus.PluginHandle = window.Janus.PluginHandle;
+  // Create constructor function that also serves as namespace
+  function JanusConstructor(options) {
+    return new originalSession(options);
+  }
+  
+  // Add all static methods to the constructor
+  JanusConstructor.init = originalInit;
+  JanusConstructor.isWebrtcSupported = isWebrtcSupported;
+  JanusConstructor.Session = originalSession;
+  JanusConstructor.PluginHandle = originalPluginHandle;
+  
+  // Replace global Janus with constructor
+  window.Janus = JanusConstructor;
   
 })();
