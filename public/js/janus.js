@@ -31,7 +31,8 @@ var Janus = (function (factory) {
 	} else if (typeof module === 'object' && module.exports) {
 		module.exports = factory();
 	} else if (typeof window === 'object') {
-		return factory();
+		window.Janus = factory();
+		return window.Janus;
 	}
 }(function () {
 
