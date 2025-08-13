@@ -161,7 +161,7 @@ export const useJanus = () => {
 
     const register = {
       request: "register",
-      username: "16331*201",
+      username: "sip:16331*201@hpbx.sipconvergence.co.uk",
       secret: "am4tsQwM53YYT!cw",
       host: "hpbx.sipconvergence.co.uk:5060",
       send_register: true
