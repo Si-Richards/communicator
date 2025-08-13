@@ -49,50 +49,43 @@ export const useJanus = () => {
     try {
       setCallState(prev => ({ ...prev, status: 'connecting', sipStatus: 'Initializing...' }))
 
-      // Check if Janus is available globally
-      if (typeof window !== 'undefined' && (window as any).Janus) {
-        const Janus = (window as any).Janus
-        
-        // Initialize Janus library
-        Janus.init({
-          debug: "all",
-          callback: () => {
-            console.log("Janus initialized")
-            connectToJanus(Janus)
+      // Wait for Janus to be available from the script tag
+      const waitForJanus = () => {
+        return new Promise<any>((resolve, reject) => {
+          let attempts = 0;
+          const maxAttempts = 100; // 10 seconds
+          
+          const checkJanus = () => {
+            attempts++;
+            if (typeof window !== 'undefined' && (window as any).Janus) {
+              console.log('Janus library loaded successfully')
+              resolve((window as any).Janus)
+            } else if (attempts >= maxAttempts) {
+              reject(new Error('Janus library failed to load - timeout'))
+            } else {
+              setTimeout(checkJanus, 100)
+            }
           }
+          checkJanus()
         })
-      } else {
-        // Load Janus from CDN
-        const script = document.createElement('script')
-        script.src = 'https://janus.conf.meetecho.com/janus.js'
-        script.onload = () => {
-          const Janus = (window as any).Janus
-          if (Janus) {
-            Janus.init({
-              debug: "all",
-              callback: () => {
-                console.log("Janus initialized")
-                connectToJanus(Janus)
-              }
-            })
-          }
-        }
-        script.onerror = () => {
-          setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'Failed to load Janus' }))
-          toast({
-            title: "Connection Error",
-            description: "Failed to load Janus library",
-            variant: "destructive"
-          })
-        }
-        document.head.appendChild(script)
       }
+
+      const Janus = await waitForJanus()
+      
+      // Initialize Janus library
+      Janus.init({
+        debug: "all",
+        callback: () => {
+          console.log("Janus initialized successfully")
+          connectToJanus(Janus)
+        }
+      })
     } catch (error) {
       console.error("Failed to initialize Janus:", error)
-      setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'Failed to initialize' }))
+      setCallState(prev => ({ ...prev, status: 'error', sipStatus: `Failed to initialize: ${error.message}` }))
       toast({
         title: "Connection Error",
-        description: "Failed to initialize WebRTC",
+        description: "Failed to initialize WebRTC library",
         variant: "destructive"
       })
     }
@@ -125,12 +118,14 @@ export const useJanus = () => {
   }, [])
 
   const attachSipPlugin = useCallback((Janus: any) => {
-    janusRef.current?.attach({
+    if (!janusRef.current) return;
+    
+    janusRef.current.attach({
       plugin: "janus.plugin.sip",
       success: (pluginHandle: any) => {
-        console.log("SIP plugin attached")
+        console.log("SIP plugin attached successfully")
         sipPluginRef.current = pluginHandle
-        setCallState(prev => ({ ...prev, sipStatus: 'SIP plugin attached' }))
+        setCallState(prev => ({ ...prev, sipStatus: 'SIP plugin ready' }))
         registerSipAccount()
       },
       error: (error: any) => {
