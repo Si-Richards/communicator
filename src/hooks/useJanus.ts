@@ -1,8 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { toast } from '@/hooks/use-toast'
-
-// Use global Janus from CDN
-declare const Janus: any
+import { loadJanus, getJanus } from '@/lib/janusLoader'
 
 // Janus WebRTC Gateway types
 interface JanusConfig {
@@ -52,6 +50,10 @@ export const useJanus = () => {
     try {
       setCallState(prev => ({ ...prev, status: 'connecting', sipStatus: 'Initializing...' }))
 
+      // Load Janus library first
+      await loadJanus()
+      const Janus = getJanus()
+
       // Initialize Janus library
       Janus.init({
         debug: "all",
@@ -62,7 +64,7 @@ export const useJanus = () => {
       })
     } catch (error) {
       console.error("Failed to initialize Janus:", error)
-      setCallState(prev => ({ ...prev, status: 'error', sipStatus: `Failed to initialize: ${error.message}` }))
+      setCallState(prev => ({ ...prev, status: 'error', sipStatus: `Failed to initialize: ${error instanceof Error ? error.message : 'Unknown error'}` }))
       toast({
         title: "Connection Error",
         description: "Failed to initialize WebRTC library",
@@ -73,6 +75,7 @@ export const useJanus = () => {
 
   const connectToJanus = useCallback(() => {
     // Create Janus session
+    const Janus = getJanus()
     janusRef.current = new Janus({
       server: "wss://devrtc.voicehost.io:443",
       apisecret: "overlord",
