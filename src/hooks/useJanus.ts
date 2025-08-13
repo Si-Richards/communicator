@@ -161,7 +161,6 @@ export const useJanus = () => {
 
     const register = {
       request: "register",
-      type: "guest",
       username: "16331*201",
       secret: "am4tsQwM53YYT!cw",
       proxy: "sip:hpbx.voicehost.co.uk:5060",
