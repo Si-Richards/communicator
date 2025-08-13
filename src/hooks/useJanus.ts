@@ -1,5 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { toast } from '@/hooks/use-toast'
+// Import webrtc-adapter first to make it available globally
+import 'webrtc-adapter'
+// Then import Janus
 import Janus from 'janus-gateway'
 
 // Janus WebRTC Gateway types
