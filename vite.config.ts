@@ -19,9 +19,6 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  optimizeDeps: {
-    include: ['janus-gateway', 'webrtc-adapter']
-  },
   define: {
     global: 'globalThis',
   }
