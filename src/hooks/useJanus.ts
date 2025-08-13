@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { toast } from '@/hooks/use-toast'
+import Janus from 'janus-gateway'
 
 // Janus WebRTC Gateway types
 interface JanusConfig {
@@ -49,35 +50,12 @@ export const useJanus = () => {
     try {
       setCallState(prev => ({ ...prev, status: 'connecting', sipStatus: 'Initializing...' }))
 
-      // Wait for Janus to be available from the script tag
-      const waitForJanus = () => {
-        return new Promise<any>((resolve, reject) => {
-          let attempts = 0;
-          const maxAttempts = 100; // 10 seconds
-          
-          const checkJanus = () => {
-            attempts++;
-            if (typeof window !== 'undefined' && (window as any).Janus) {
-              console.log('Janus library loaded successfully')
-              resolve((window as any).Janus)
-            } else if (attempts >= maxAttempts) {
-              reject(new Error('Janus library failed to load - timeout'))
-            } else {
-              setTimeout(checkJanus, 100)
-            }
-          }
-          checkJanus()
-        })
-      }
-
-      const Janus = await waitForJanus()
-      
       // Initialize Janus library
       Janus.init({
         debug: "all",
         callback: () => {
           console.log("Janus initialized successfully")
-          connectToJanus(Janus)
+          connectToJanus()
         }
       })
     } catch (error) {
@@ -91,7 +69,7 @@ export const useJanus = () => {
     }
   }, [])
 
-  const connectToJanus = useCallback((Janus: any) => {
+  const connectToJanus = useCallback(() => {
     // Create Janus session
     janusRef.current = new Janus({
       server: "wss://devrtc.voicehost.io:443",
@@ -99,7 +77,7 @@ export const useJanus = () => {
       success: () => {
         console.log("Connected to Janus Gateway")
         setCallState(prev => ({ ...prev, status: 'connected', sipStatus: 'Connected to server' }))
-        attachSipPlugin(Janus)
+        attachSipPlugin()
       },
       error: (error: any) => {
         console.error("Failed to connect to Janus:", error)
@@ -117,7 +95,7 @@ export const useJanus = () => {
     })
   }, [])
 
-  const attachSipPlugin = useCallback((Janus: any) => {
+  const attachSipPlugin = useCallback(() => {
     if (!janusRef.current) return;
     
     janusRef.current.attach({
