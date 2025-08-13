@@ -52,16 +52,34 @@ export default {
 					DEFAULT: 'hsl(var(--card))',
 					foreground: 'hsl(var(--card-foreground))'
 				},
-				sidebar: {
-					DEFAULT: 'hsl(var(--sidebar-background))',
-					foreground: 'hsl(var(--sidebar-foreground))',
-					primary: 'hsl(var(--sidebar-primary))',
-					'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
-					accent: 'hsl(var(--sidebar-accent))',
-					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
-					border: 'hsl(var(--sidebar-border))',
-					ring: 'hsl(var(--sidebar-ring))'
+				call: {
+					success: 'hsl(var(--call-success))',
+					'success-foreground': 'hsl(var(--call-success-foreground))',
+					danger: 'hsl(var(--call-danger))',
+					'danger-foreground': 'hsl(var(--call-danger-foreground))',
+					warning: 'hsl(var(--call-warning))',
+					'warning-foreground': 'hsl(var(--call-warning-foreground))'
+				},
+				status: {
+					connected: 'hsl(var(--status-connected))',
+					connecting: 'hsl(var(--status-connecting))',
+					disconnected: 'hsl(var(--status-disconnected))',
+					error: 'hsl(var(--status-error))'
 				}
+			},
+			backgroundImage: {
+				'gradient-call': 'var(--gradient-call)',
+				'gradient-hangup': 'var(--gradient-hangup)',
+				'gradient-primary': 'var(--gradient-primary)'
+			},
+			boxShadow: {
+				'call': 'var(--shadow-call)',
+				'hangup': 'var(--shadow-hangup)',
+				'elegant': 'var(--shadow-elegant)'
+			},
+			transitionProperty: {
+				'smooth': 'var(--transition-smooth)',
+				'call': 'var(--transition-call)'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
