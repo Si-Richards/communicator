@@ -478,7 +478,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       setCallState(prev => ({ 
         ...prev, 
         status: 'connected', 
-        sipStatus: callState.registered ? 'Online' : 'Offline',
+        sipStatus: prev.registered ? 'Online' : 'Offline',
         localStream: undefined,
         remoteStream: undefined,
         incomingCallerId: undefined,
@@ -499,7 +499,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       setCallState(prev => ({ 
         ...prev, 
         status: 'connected', 
-        sipStatus: callState.registered ? 'Online' : 'Offline',
+        sipStatus: prev.registered ? 'Online' : 'Offline',
         incomingCallerId: undefined,
         incomingCallId: undefined,
         remoteJsep: undefined
