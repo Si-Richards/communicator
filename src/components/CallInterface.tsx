@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Phone, PhoneOff, Settings, Mic, MicOff } from 'lucide-react'
+import { Phone, PhoneOff, Settings, Mic, MicOff, PhoneIncoming } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { CallButton } from '@/components/ui/call-button'
 import { StatusIndicator } from '@/components/ui/status-indicator'
@@ -9,13 +9,15 @@ import { useJanus } from '@/hooks/useJanus'
 import { toast } from '@/hooks/use-toast'
 
 export const CallInterface = () => {
-  const { callState, makeCall, hangupCall, reconnect } = useJanus()
+  const { callState, makeCall, acceptCall, rejectCall, hangupCall, reconnect } = useJanus()
   const [phoneNumber, setPhoneNumber] = useState('07880498653')
   const [isMuted, setIsMuted] = useState(false)
 
   const handleCall = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
       hangupCall()
+    } else if (callState.status === 'incoming') {
+      acceptCall()
     } else {
       makeCall(phoneNumber)
     }
@@ -38,6 +40,7 @@ export const CallInterface = () => {
         return 'connecting'
       case 'calling':
       case 'incall':
+      case 'incoming':
         return 'connected'
       case 'error':
         return 'error'
@@ -49,6 +52,8 @@ export const CallInterface = () => {
   const getCallButtonVariant = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
       return 'hangup'
+    } else if (callState.status === 'incoming') {
+      return 'call'
     }
     return 'call'
   }
@@ -91,12 +96,16 @@ export const CallInterface = () => {
         </div>
 
         {/* Call Status */}
-        {(callState.status === 'calling' || callState.status === 'incall') && (
+        {(callState.status === 'calling' || callState.status === 'incall' || callState.status === 'incoming') && (
           <div className="space-y-2">
             <div className="text-lg font-medium text-foreground">
-              {callState.status === 'calling' ? 'Calling...' : 'In Call'}
+              {callState.status === 'calling' && 'Calling...'}
+              {callState.status === 'incall' && 'In Call'}
+              {callState.status === 'incoming' && 'Incoming Call'}
             </div>
-            <div className="text-sm text-muted-foreground">{phoneNumber}</div>
+            <div className="text-sm text-muted-foreground">
+              {callState.status === 'incoming' ? callState.incomingCallerId : phoneNumber}
+            </div>
             
             {/* Call duration could be added here */}
           </div>
@@ -104,32 +113,59 @@ export const CallInterface = () => {
 
         {/* Call Controls */}
         <div className="flex justify-center gap-4">
-          {/* Mute Button - only show during call */}
-          {callState.status === 'incall' && (
-            <CallButton
-              variant="secondary"
-              size="lg"
-              onClick={toggleMute}
-              className="relative"
-            >
-              {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-            </CallButton>
+          {/* Incoming call controls */}
+          {callState.status === 'incoming' && (
+            <>
+              <CallButton
+                variant="hangup"
+                size="lg"
+                onClick={rejectCall}
+                className="relative"
+              >
+                <PhoneOff className="h-6 w-6" />
+              </CallButton>
+              <CallButton
+                variant="call"
+                size="xl"
+                onClick={acceptCall}
+                className="relative animate-pulse"
+              >
+                <PhoneIncoming className="h-8 w-8" />
+              </CallButton>
+            </>
           )}
 
-          {/* Main Call Button */}
-          <CallButton
-            variant={getCallButtonVariant()}
-            size="xl"
-            onClick={handleCall}
-            disabled={isCallDisabled()}
-            className="relative"
-          >
-            {callState.status === 'incall' || callState.status === 'calling' ? (
-              <PhoneOff className="h-8 w-8" />
-            ) : (
-              <Phone className="h-8 w-8" />
-            )}
-          </CallButton>
+          {/* Regular call controls */}
+          {callState.status !== 'incoming' && (
+            <>
+              {/* Mute Button - only show during call */}
+              {callState.status === 'incall' && (
+                <CallButton
+                  variant="secondary"
+                  size="lg"
+                  onClick={toggleMute}
+                  className="relative"
+                >
+                  {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+                </CallButton>
+              )}
+
+              {/* Main Call Button */}
+              <CallButton
+                variant={getCallButtonVariant()}
+                size="xl"
+                onClick={handleCall}
+                disabled={isCallDisabled()}
+                className="relative"
+              >
+                {callState.status === 'incall' || callState.status === 'calling' ? (
+                  <PhoneOff className="h-8 w-8" />
+                ) : (
+                  <Phone className="h-8 w-8" />
+                )}
+              </CallButton>
+            </>
+          )}
         </div>
 
         {/* Action Buttons */}

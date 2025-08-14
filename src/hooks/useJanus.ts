@@ -25,11 +25,13 @@ interface JanusPlugin {
 }
 
 interface CallState {
-  status: 'disconnected' | 'connecting' | 'connected' | 'calling' | 'incall' | 'error'
+  status: 'disconnected' | 'connecting' | 'connected' | 'calling' | 'incall' | 'incoming' | 'ringing' | 'error'
   registered: boolean
   sipStatus: string
   localStream?: MediaStream
   remoteStream?: MediaStream
+  incomingCallerId?: string
+  incomingCallId?: string
 }
 
 export const useJanus = () => {
@@ -200,6 +202,20 @@ export const useJanus = () => {
         description: msg.reason || "SIP registration failed",
         variant: "destructive"
       })
+    } else if (event === "incomingcall") {
+      console.log("Incoming call received:", msg)
+      const callerId = msg.username || msg.result?.username || "Unknown"
+      setCallState(prev => ({ 
+        ...prev, 
+        status: 'incoming', 
+        sipStatus: `Incoming call from ${callerId}`,
+        incomingCallerId: callerId,
+        incomingCallId: msg.call_id || msg.result?.call_id
+      }))
+      toast({
+        title: "Incoming Call",
+        description: `Call from ${callerId}`,
+      })
     } else if (event === "calling") {
       setCallState(prev => ({ ...prev, status: 'calling', sipStatus: 'Calling...' }))
     } else if (event === "accepted") {
@@ -214,11 +230,26 @@ export const useJanus = () => {
         status: 'connected', 
         sipStatus: 'Call ended',
         localStream: undefined,
-        remoteStream: undefined
+        remoteStream: undefined,
+        incomingCallerId: undefined,
+        incomingCallId: undefined
       }))
       toast({
         title: "Call Ended",
         description: "Call has been terminated",
+      })
+    } else if (event === "missed") {
+      setCallState(prev => ({ 
+        ...prev, 
+        status: 'connected', 
+        sipStatus: 'Missed call',
+        incomingCallerId: undefined,
+        incomingCallId: undefined
+      }))
+      toast({
+        title: "Missed Call",
+        description: "You missed an incoming call",
+        variant: "destructive"
       })
     }
 
@@ -273,6 +304,58 @@ export const useJanus = () => {
     }
   }, [callState.registered])
 
+  const acceptCall = useCallback(async () => {
+    if (!sipPluginRef.current || callState.status !== 'incoming') return
+
+    try {
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true, 
+        video: false 
+      })
+
+      const accept = { request: "accept" }
+
+      sipPluginRef.current.createAnswer({
+        tracks: [{ type: "audio", capture: true, recv: true }],
+        success: (jsep: any) => {
+          sipPluginRef.current.send({ message: accept, jsep })
+          setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
+        },
+        error: (error: any) => {
+          console.error("Create answer error:", error)
+          toast({
+            title: "Call Failed",
+            description: "Failed to accept call",
+            variant: "destructive"
+          })
+        }
+      })
+    } catch (error) {
+      console.error("Failed to get microphone access:", error)
+      toast({
+        title: "Microphone Error",
+        description: "Cannot access microphone",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status])
+
+  const rejectCall = useCallback(() => {
+    if (!sipPluginRef.current || callState.status !== 'incoming') return
+
+    const decline = { request: "decline" }
+    sipPluginRef.current.send({ message: decline })
+    
+    setCallState(prev => ({ 
+      ...prev, 
+      status: 'connected', 
+      sipStatus: 'Call rejected',
+      incomingCallerId: undefined,
+      incomingCallId: undefined
+    }))
+  }, [callState.status])
+
   const hangupCall = useCallback(() => {
     if (!sipPluginRef.current) return
 
@@ -300,6 +383,8 @@ export const useJanus = () => {
   return {
     callState,
     makeCall,
+    acceptCall,
+    rejectCall,
     hangupCall,
     disconnect,
     reconnect: initJanus
