@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
-import { StatusIndicator } from '@/components/ui/status-indicator';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
@@ -36,22 +35,6 @@ export const CallInterface = () => {
       description: isMuted ? "You can now speak" : "Your microphone is muted"
     });
   };
-  const getStatusVariant = () => {
-    switch (callState.status) {
-      case 'connected':
-        return callState.registered ? 'connected' : 'connecting';
-      case 'connecting':
-        return 'connecting';
-      case 'calling':
-      case 'incall':
-      case 'incoming':
-        return 'connected';
-      case 'error':
-        return 'error';
-      default:
-        return 'disconnected';
-    }
-  };
   const getCallButtonVariant = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
       return 'hangup';
@@ -75,11 +58,6 @@ export const CallInterface = () => {
   };
   return (
       <Card className="w-full max-w-md p-8 space-y-6 text-center mx-auto">
-        {/* Status Indicator */}
-        <div className="flex justify-center">
-          <StatusIndicator variant={getStatusVariant()} label={callState.sipStatus} />
-        </div>
-
         {/* Phone Number Input */}
         <div className="space-y-4">
           <div className="relative">

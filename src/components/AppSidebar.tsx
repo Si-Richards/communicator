@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sidebar"
 
 const items = [
-  { title: "Dial", url: "/", icon: Phone },
+  { title: "Dialpad", url: "/", icon: Phone },
   { title: "Contacts", url: "/contacts", icon: Users },
   { title: "Call History", url: "/history", icon: History },
   { title: "Settings", url: "/settings", icon: Settings },

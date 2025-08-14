@@ -408,10 +408,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         registered: true, 
         sipStatus: 'Online'
       }))
-      toast({
-        title: "SIP Registered",
-        description: "Ready to make calls",
-      })
+      // Registration successful - no toast needed as status is visible in sidebar
     } else if (event === "registering") {
       setCallState(prev => ({ ...prev, sipStatus: 'Registering...' }))
     } else if (event === "registration_failed") {
