@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
-import { PhoneInput } from '@/components/ui/phone-input';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
 import { useJanusContext } from '@/contexts/JanusContext';
@@ -19,7 +19,7 @@ export const CallInterface = () => {
     holdCall,
     resumeCall
   } = useJanusContext();
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('07880498653');
   const [isMuted, setIsMuted] = useState(false);
   const callTimer = useCallTimer(callState.status === 'incall');
   const handleCall = () => {
@@ -60,10 +60,7 @@ export const CallInterface = () => {
   };
   const handleDialpadDigit = (digit: string) => {
     if (callState.status !== 'calling' && callState.status !== 'incall') {
-      // Only allow numeric digits
-      if (/^\d$/.test(digit)) {
-        setPhoneNumber(prev => prev + digit);
-      }
+      setPhoneNumber(prev => prev + digit);
     }
   };
   const handleDialpadBackspace = () => {
@@ -95,23 +92,10 @@ export const CallInterface = () => {
         {/* Phone Number Input */}
         <div className="space-y-4">
           <div className="relative">
-            <PhoneInput
-              value={phoneNumber}
-              onChange={setPhoneNumber}
-              placeholder="Enter phone number"
-              className="pr-10"
-              disabled={callState.status === 'calling' || callState.status === 'incall'}
-            />
-            {phoneNumber && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPhoneNumber('')}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
-              >
+            <Input id="phone" type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="Enter phone number" className="text-center text-lg pr-10" disabled={callState.status === 'calling' || callState.status === 'incall'} />
+            {phoneNumber && <Button variant="ghost" size="sm" onClick={() => setPhoneNumber('')} className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0">
                 <X className="h-4 w-4" />
-              </Button>
-            )}
+              </Button>}
           </div>
           
           {/* Dialpad */}
