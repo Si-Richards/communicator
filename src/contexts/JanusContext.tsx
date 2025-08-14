@@ -32,7 +32,7 @@ interface JanusPlugin {
 }
 
 interface CallState {
-  status: 'disconnected' | 'connecting' | 'connected' | 'calling' | 'incall' | 'incoming' | 'ringing' | 'error'
+  status: 'disconnected' | 'connecting' | 'connected' | 'calling' | 'incall' | 'incoming' | 'ringing' | 'error' | 'busy' | 'failed' | 'timeout'
   registered: boolean
   sipStatus: string
   doNotDisturb: boolean
@@ -597,7 +597,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         description: "Call is now active",
       })
     } else if (event === "hangup") {
-      // Stop any ringing sounds
+      // Handle SIP response codes for call failures
+      const sipCode = msg.result?.code || msg.code
+      const sipReason = msg.result?.reason || msg.reason || "Call ended"
+      
+      // Stop any ringing sounds first
       ringtoneManager.stopRinging()
       
       // Dismiss incoming call toast if still showing
@@ -606,20 +610,209 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         incomingCallToastRef.current = null
       }
       
-      setCallState(prev => ({ 
-        ...prev, 
-        status: 'connected', 
-        sipStatus: prev.registered ? 'Online' : 'Offline',
-        localStream: undefined,
-        remoteStream: undefined,
-        incomingCallerId: undefined,
-        incomingCallId: undefined,
-        remoteJsep: undefined
-      }))
-      toast({
-        title: "Call Ended",
-        description: "Call has been terminated",
-      })
+      // Handle specific SIP error codes
+      if (sipCode) {
+        logger.info(`SIP hangup with code: ${sipCode} - ${sipReason}`, undefined, 'JanusContext')
+        
+        if (sipCode === 486) {
+          // Busy Here - line is engaged
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'busy', 
+            sipStatus: 'Line busy',
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          // Play busy tone
+          if (settings.ringtones.enabled) {
+            ringtoneManager.playBusyTone()
+          }
+          
+          toast({
+            title: "Line Busy",
+            description: "The line you called is busy",
+            variant: "destructive"
+          })
+          
+          // Auto-return to connected state after 4 seconds
+          setTimeout(() => {
+            setCallState(prev => ({ 
+              ...prev, 
+              status: 'connected', 
+              sipStatus: prev.registered ? 'Online' : 'Offline'
+            }))
+          }, 4000)
+          
+        } else if (sipCode === 404) {
+          // Not Found
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'failed', 
+            sipStatus: 'Number not found',
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          toast({
+            title: "Number Not Found",
+            description: "The number you dialed does not exist",
+            variant: "destructive"
+          })
+          
+          // Auto-return to connected state after 3 seconds
+          setTimeout(() => {
+            setCallState(prev => ({ 
+              ...prev, 
+              status: 'connected', 
+              sipStatus: prev.registered ? 'Online' : 'Offline'
+            }))
+          }, 3000)
+          
+        } else if (sipCode === 408) {
+          // Request Timeout
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'timeout', 
+            sipStatus: 'Call timeout',
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          toast({
+            title: "Call Timeout",
+            description: "The call could not be completed - no response",
+            variant: "destructive"
+          })
+          
+          // Auto-return to connected state after 3 seconds
+          setTimeout(() => {
+            setCallState(prev => ({ 
+              ...prev, 
+              status: 'connected', 
+              sipStatus: prev.registered ? 'Online' : 'Offline'
+            }))
+          }, 3000)
+          
+        } else if (sipCode === 480) {
+          // Temporarily Unavailable
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'failed', 
+            sipStatus: 'Temporarily unavailable',
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          toast({
+            title: "Temporarily Unavailable",
+            description: "The person you're calling is temporarily unavailable",
+            variant: "destructive"
+          })
+          
+          // Auto-return to connected state after 3 seconds
+          setTimeout(() => {
+            setCallState(prev => ({ 
+              ...prev, 
+              status: 'connected', 
+              sipStatus: prev.registered ? 'Online' : 'Offline'
+            }))
+          }, 3000)
+          
+        } else if (sipCode === 487) {
+          // Request Terminated - call was cancelled
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'connected', 
+            sipStatus: prev.registered ? 'Online' : 'Offline',
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          toast({
+            title: "Call Cancelled",
+            description: "The call was cancelled",
+          })
+          
+        } else if (sipCode >= 400 && sipCode < 600) {
+          // Other 4xx/5xx errors
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'failed', 
+            sipStatus: `Call failed (${sipCode})`,
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          toast({
+            title: "Call Failed",
+            description: `${sipReason} (SIP ${sipCode})`,
+            variant: "destructive"
+          })
+          
+          // Auto-return to connected state after 3 seconds
+          setTimeout(() => {
+            setCallState(prev => ({ 
+              ...prev, 
+              status: 'connected', 
+              sipStatus: prev.registered ? 'Online' : 'Offline'
+            }))
+          }, 3000)
+          
+        } else {
+          // Normal hangup without error code
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'connected', 
+            sipStatus: prev.registered ? 'Online' : 'Offline',
+            localStream: undefined,
+            remoteStream: undefined,
+            incomingCallerId: undefined,
+            incomingCallId: undefined,
+            remoteJsep: undefined
+          }))
+          
+          toast({
+            title: "Call Ended",
+            description: "Call has been terminated",
+          })
+        }
+      } else {
+        // Normal hangup without SIP code
+        setCallState(prev => ({ 
+          ...prev, 
+          status: 'connected', 
+          sipStatus: prev.registered ? 'Online' : 'Offline',
+          localStream: undefined,
+          remoteStream: undefined,
+          incomingCallerId: undefined,
+          incomingCallId: undefined,
+          remoteJsep: undefined
+        }))
+        
+        toast({
+          title: "Call Ended",
+          description: "Call has been terminated",
+        })
+      }
     } else if (event === "missed") {
       // Stop any ringing sounds
       ringtoneManager.stopRinging()

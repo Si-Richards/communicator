@@ -1,7 +1,9 @@
 class RingtoneManager {
   private incomingAudio: HTMLAudioElement | null = null
   private outgoingAudio: HTMLAudioElement | null = null
+  private busyAudio: HTMLAudioElement | null = null
   private isPlaying = false
+  private isBusyPlaying = false
   private volume = 0.5
 
   constructor() {
@@ -12,6 +14,7 @@ class RingtoneManager {
     try {
       this.incomingAudio = new Audio('/audio/incoming-ring.mp3')
       this.outgoingAudio = new Audio('/audio/outgoing-ring.mp3')
+      this.busyAudio = new Audio('/audio/busy-tone.mp3')
       
       // Set default properties
       if (this.incomingAudio) {
@@ -24,6 +27,12 @@ class RingtoneManager {
         this.outgoingAudio.loop = true
         this.outgoingAudio.volume = this.volume
         this.outgoingAudio.preload = 'auto'
+      }
+
+      if (this.busyAudio) {
+        this.busyAudio.loop = false
+        this.busyAudio.volume = this.volume
+        this.busyAudio.preload = 'auto'
       }
     } catch (error) {
       console.warn('Failed to preload ringtone audio files:', error)
@@ -58,8 +67,39 @@ class RingtoneManager {
     }
   }
 
+  async playBusyTone(): Promise<void> {
+    if (!this.busyAudio || this.isBusyPlaying) return
+
+    try {
+      this.stopRinging() // Stop any currently playing rings
+      this.isBusyPlaying = true
+      await this.busyAudio.play()
+      console.log('Playing busy tone')
+      
+      // Auto-stop busy tone after 4 seconds
+      setTimeout(() => {
+        this.stopBusyTone()
+      }, 4000)
+    } catch (error) {
+      console.warn('Failed to play busy tone:', error)
+      this.isBusyPlaying = false
+    }
+  }
+
+  stopBusyTone(): void {
+    this.isBusyPlaying = false
+    
+    if (this.busyAudio) {
+      this.busyAudio.pause()
+      this.busyAudio.currentTime = 0
+    }
+    
+    console.log('Stopped busy tone')
+  }
+
   stopRinging(): void {
     this.isPlaying = false
+    this.isBusyPlaying = false
     
     if (this.incomingAudio) {
       this.incomingAudio.pause()
@@ -69,6 +109,11 @@ class RingtoneManager {
     if (this.outgoingAudio) {
       this.outgoingAudio.pause()
       this.outgoingAudio.currentTime = 0
+    }
+
+    if (this.busyAudio) {
+      this.busyAudio.pause()
+      this.busyAudio.currentTime = 0
     }
     
     console.log('Stopped all ringtones')
@@ -84,6 +129,10 @@ class RingtoneManager {
     if (this.outgoingAudio) {
       this.outgoingAudio.volume = this.volume
     }
+
+    if (this.busyAudio) {
+      this.busyAudio.volume = this.volume
+    }
   }
 
   getVolume(): number {
@@ -94,6 +143,7 @@ class RingtoneManager {
     this.stopRinging()
     this.incomingAudio = null
     this.outgoingAudio = null
+    this.busyAudio = null
   }
 }
 
