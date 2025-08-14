@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { Input } from '@/components/ui/input';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
 import { useJanusContext } from '@/contexts/JanusContext';
 import { toast } from '@/hooks/use-toast';
+import { useCallTimer } from '@/hooks/useCallTimer';
 
 export const CallInterface = () => {
   const {
@@ -14,10 +15,13 @@ export const CallInterface = () => {
     makeCall,
     acceptCall,
     rejectCall,
-    hangupCall
+    hangupCall,
+    holdCall,
+    resumeCall
   } = useJanusContext();
   const [phoneNumber, setPhoneNumber] = useState('07880498653');
   const [isMuted, setIsMuted] = useState(false);
+  const callTimer = useCallTimer(callState.status === 'incall');
   const handleCall = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
       hangupCall();
@@ -34,6 +38,14 @@ export const CallInterface = () => {
       title: isMuted ? "Microphone Enabled" : "Microphone Muted",
       description: isMuted ? "You can now speak" : "Your microphone is muted"
     });
+  };
+
+  const toggleHold = () => {
+    if (callState.isOnHold) {
+      resumeCall();
+    } else {
+      holdCall();
+    }
   };
   const getCallButtonVariant = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
@@ -58,6 +70,25 @@ export const CallInterface = () => {
   };
   return (
       <Card className="w-full max-w-md p-8 space-y-6 text-center mx-auto">
+        {/* Call Status - Moved above dialpad */}
+        {(callState.status === 'calling' || callState.status === 'incall' || callState.status === 'incoming') && <div className="space-y-2">
+            <div className="text-lg font-medium text-foreground">
+              {callState.status === 'calling' && 'Calling...'}
+              {callState.status === 'incall' && (callState.isOnHold ? 'On Hold' : 'In Call')}
+              {callState.status === 'incoming' && 'Incoming Call'}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {callState.status === 'incoming' ? callState.incomingCallerId : phoneNumber}
+            </div>
+            
+            {/* Call Timer */}
+            {callState.status === 'incall' && (
+              <div className="text-xl font-mono text-primary">
+                {callTimer}
+              </div>
+            )}
+          </div>}
+
         {/* Phone Number Input */}
         <div className="space-y-4">
           <div className="relative">
@@ -73,20 +104,6 @@ export const CallInterface = () => {
           </div>
         </div>
 
-        {/* Call Status */}
-        {(callState.status === 'calling' || callState.status === 'incall' || callState.status === 'incoming') && <div className="space-y-2">
-            <div className="text-lg font-medium text-foreground">
-              {callState.status === 'calling' && 'Calling...'}
-              {callState.status === 'incall' && 'In Call'}
-              {callState.status === 'incoming' && 'Incoming Call'}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {callState.status === 'incoming' ? callState.incomingCallerId : phoneNumber}
-            </div>
-            
-            {/* Call duration could be added here */}
-          </div>}
-
         {/* Call Controls */}
         <div className="flex justify-center gap-4">
           {/* Incoming call controls */}
@@ -101,10 +118,20 @@ export const CallInterface = () => {
 
           {/* Regular call controls */}
           {callState.status !== 'incoming' && <>
-              {/* Mute Button - only show during call */}
-              {callState.status === 'incall' && <CallButton variant="secondary" size="lg" onClick={toggleMute} className="relative">
-                  {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-                </CallButton>}
+              {/* Call control buttons - only show during call */}
+              {callState.status === 'incall' && (
+                <div className="flex gap-4">
+                  {/* Mute Button */}
+                  <CallButton variant="secondary" size="lg" onClick={toggleMute} className="relative">
+                    {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+                  </CallButton>
+
+                  {/* Hold Button */}
+                  <CallButton variant="secondary" size="lg" onClick={toggleHold} className="relative">
+                    {callState.isOnHold ? <Play className="h-6 w-6" /> : <Pause className="h-6 w-6" />}
+                  </CallButton>
+                </div>
+              )}
 
               {/* Main Call Button */}
               <CallButton variant={getCallButtonVariant()} size="xl" onClick={handleCall} disabled={isCallDisabled()} className="relative">

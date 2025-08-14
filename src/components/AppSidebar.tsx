@@ -1,4 +1,4 @@
-import { Phone, Users, History, Settings, User, RefreshCw, Moon } from "lucide-react"
+import { Phone, Users, History, Settings, User, RefreshCw, Moon, Voicemail, MessageSquare, MessageCircle } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useJanusContext } from "@/contexts/JanusContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -22,6 +22,9 @@ const items = [
   { title: "Dialpad", url: "/", icon: Phone },
   { title: "Contacts", url: "/contacts", icon: Users },
   { title: "Call History", url: "/history", icon: History },
+  { title: "Voicemail", url: "/voicemail", icon: Voicemail },
+  { title: "Messages", url: "/messages", icon: MessageSquare },
+  { title: "SMS", url: "/sms", icon: MessageCircle },
   { title: "Settings", url: "/settings", icon: Settings },
 ]
 

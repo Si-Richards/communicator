@@ -35,6 +35,7 @@ interface CallState {
   registered: boolean
   sipStatus: string
   doNotDisturb: boolean
+  isOnHold: boolean
   localStream?: MediaStream
   remoteStream?: MediaStream
   incomingCallerId?: string
@@ -48,6 +49,8 @@ interface JanusContextType {
   acceptCall: () => Promise<void>
   rejectCall: () => void
   hangupCall: () => void
+  holdCall: () => void
+  resumeCall: () => void
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
@@ -73,7 +76,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     status: 'disconnected',
     registered: false,
     sipStatus: 'Not connected',
-    doNotDisturb: false
+    doNotDisturb: false,
+    isOnHold: false
   })
   
   const { dismiss } = useToast()
@@ -671,6 +675,46 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     const hangup = { request: "hangup" }
     sipPluginRef.current.send({ message: hangup })
+    
+    setCallState(prev => ({ 
+      ...prev, 
+      status: 'connected',
+      isOnHold: false
+    }))
+  }, [])
+
+  const holdCall = useCallback(() => {
+    if (!sipPluginRef.current) return
+
+    logger.info('Placing call on hold')
+    
+    const hold = {
+      request: 'hold'
+    }
+
+    sipPluginRef.current.send({ message: hold })
+    
+    setCallState(prev => ({ 
+      ...prev, 
+      isOnHold: true
+    }))
+  }, [])
+
+  const resumeCall = useCallback(() => {
+    if (!sipPluginRef.current) return
+
+    logger.info('Resuming call from hold')
+    
+    const unhold = {
+      request: 'unhold'
+    }
+
+    sipPluginRef.current.send({ message: unhold })
+    
+    setCallState(prev => ({ 
+      ...prev, 
+      isOnHold: false
+    }))
   }, [])
 
   const disconnect = useCallback(() => {
@@ -712,6 +756,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     acceptCall,
     rejectCall,
     hangupCall,
+    holdCall,
+    resumeCall,
     disconnect,
     reconnect: initJanus,
     setDoNotDisturb
