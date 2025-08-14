@@ -22,10 +22,16 @@ export interface LogSettings {
   autoScroll: boolean;
 }
 
+export interface RingtoneSettings {
+  enabled: boolean;
+  volume: number;
+}
+
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
   logs: LogSettings;
+  ringtones: RingtoneSettings;
   version: string;
 }
 
@@ -34,6 +40,7 @@ interface SettingsContextType {
   updateAudioQuality: (updates: Partial<AudioQualitySettings>) => void;
   updateAudioDevices: (updates: Partial<AudioDeviceSettings>) => void;
   updateLogSettings: (updates: Partial<LogSettings>) => void;
+  updateRingtoneSettings: (updates: Partial<RingtoneSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -58,6 +65,10 @@ const defaultSettings: AppSettings = {
     level: 'info',
     maxHistory: 1000,
     autoScroll: true,
+  },
+  ringtones: {
+    enabled: true,
+    volume: 0.5,
   },
   version: '1.0.0',
 };
@@ -119,6 +130,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateRingtoneSettings = (updates: Partial<RingtoneSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      ringtones: { ...prev.ringtones, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -147,6 +165,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateAudioQuality,
         updateAudioDevices,
         updateLogSettings,
+        updateRingtoneSettings,
         resetToDefaults,
         exportSettings,
         importSettings,

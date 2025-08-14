@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 
 const SettingsPage = () => {
-  const { settings, updateAudioQuality, updateAudioDevices, updateLogSettings, resetToDefaults, exportSettings, importSettings } = useSettings();
+  const { settings, updateAudioQuality, updateAudioDevices, updateLogSettings, updateRingtoneSettings, resetToDefaults, exportSettings, importSettings } = useSettings();
   const { toast } = useToast();
 
   // Device management state
@@ -425,6 +425,43 @@ const SettingsPage = () => {
                 </CardContent>
               </Card>
             </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Volume2 className="h-5 w-5" />
+                  Ringtone Settings
+                </CardTitle>
+                <CardDescription>Configure ringtone behavior and volume</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="ringtones-enabled">Enable Ringtones</Label>
+                  <Switch
+                    id="ringtones-enabled"
+                    checked={settings.ringtones.enabled}
+                    onCheckedChange={(checked) => updateRingtoneSettings({ enabled: checked })}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Ringtone Volume: {Math.round(settings.ringtones.volume * 100)}%</Label>
+                  <Slider
+                    value={[settings.ringtones.volume * 100]}
+                    onValueChange={([value]) => updateRingtoneSettings({ volume: value / 100 })}
+                    max={100}
+                    step={5}
+                    className="w-full"
+                    disabled={!settings.ringtones.enabled}
+                  />
+                </div>
+
+                <div className="text-sm text-muted-foreground">
+                  <p>• Incoming calls will play a ringtone to alert you</p>
+                  <p>• Outgoing calls will play a ringback tone while connecting</p>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="advanced" className="space-y-4">

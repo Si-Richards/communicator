@@ -4,6 +4,7 @@ import { ToastAction } from '@/components/ui/toast'
 import { Phone, PhoneOff } from 'lucide-react'
 import { loadJanus, getJanus } from '@/lib/janusLoader'
 import { AudioQualityOptimizer, getOptimalAudioConstraints } from '@/lib/audioQualityOptimizer'
+import { ringtoneManager } from '@/lib/ringtoneManager'
 import { useSettings } from './SettingsContext'
 import { audioDeviceManager } from '@/lib/audioDeviceManager'
 import { logger } from '@/lib/logger'
@@ -553,6 +554,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         remoteJsep: jsep
       }))
       
+      // Play incoming ringtone if enabled
+      if (settings.ringtones.enabled) {
+        ringtoneManager.playIncomingRing()
+      }
+      
       incomingCallToastRef.current = toast({
         title: phoneNumber,
         description: "Incoming call",
@@ -577,13 +583,23 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       })
     } else if (event === "calling") {
       setCallState(prev => ({ ...prev, status: 'calling', sipStatus: 'Calling...' }))
+      // Play outgoing ringtone if enabled
+      if (settings.ringtones.enabled) {
+        ringtoneManager.playOutgoingRing()
+      }
     } else if (event === "accepted") {
+      // Stop any ringing sounds
+      ringtoneManager.stopRinging()
+      
       setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
       toast({
         title: "Call Connected",
         description: "Call is now active",
       })
     } else if (event === "hangup") {
+      // Stop any ringing sounds
+      ringtoneManager.stopRinging()
+      
       // Dismiss incoming call toast if still showing
       if (incomingCallToastRef.current) {
         incomingCallToastRef.current.dismiss()
@@ -605,6 +621,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         description: "Call has been terminated",
       })
     } else if (event === "missed") {
+      // Stop any ringing sounds
+      ringtoneManager.stopRinging()
+      
       // Dismiss incoming call toast if still showing
       if (incomingCallToastRef.current) {
         incomingCallToastRef.current.dismiss()
@@ -776,6 +795,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   useEffect(() => {
     // Initialize audio quality optimizer
     audioOptimizerRef.current = new AudioQualityOptimizer()
+    
+    // Apply ringtone settings
+    ringtoneManager.setVolume(settings.ringtones.volume)
     
     initJanus()
     return () => {
