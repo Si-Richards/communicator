@@ -73,8 +73,8 @@ export const CallInterface = () => {
       setPhoneNumber(prev => prev.slice(0, -1));
     }
   };
-  return <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <Card className="w-full max-w-md p-8 space-y-8 text-center">
+  return (
+      <Card className="w-full max-w-md p-8 space-y-8 text-center mx-auto">
         {/* Header */}
         <div className="space-y-2">
           <h1 className="text-2xl font-bold text-foreground">VoiceHost Phone</h1>
@@ -153,5 +153,5 @@ export const CallInterface = () => {
         </div>
 
       </Card>
-    </div>;
+    );
 };
