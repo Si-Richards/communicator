@@ -1,8 +1,10 @@
-import { Phone, Users, History, Settings, User, RefreshCw } from "lucide-react"
+import { Phone, Users, History, Settings, User, RefreshCw, Moon } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useJanusContext } from "@/contexts/JanusContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 import {
   Sidebar,
@@ -27,7 +29,7 @@ export function AppSidebar() {
   const { state } = useSidebar()
   const location = useLocation()
   const currentPath = location.pathname
-  const { callState, reconnect } = useJanusContext()
+  const { callState, reconnect, setDoNotDisturb } = useJanusContext()
 
   const isActive = (path: string) => currentPath === path
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
@@ -35,9 +37,9 @@ export function AppSidebar() {
 
   const getConnectionStatus = () => {
     if (callState.registered && callState.status === 'connected') {
-      return { text: 'Online', color: 'text-green-600' }
+      return { text: 'Connected', color: 'text-green-600' }
     }
-    return { text: 'Offline', color: 'text-red-500' }
+    return { text: 'Disconnected', color: 'text-red-500' }
   }
 
   const connectionStatus = getConnectionStatus()
@@ -55,6 +57,22 @@ export function AppSidebar() {
                 <User className="h-6 w-6" />
               </AvatarFallback>
             </Avatar>
+          </div>
+
+          {/* Do Not Disturb Toggle */}
+          <div className="px-2 pb-4">
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="do-not-disturb"
+                checked={callState.doNotDisturb}
+                onCheckedChange={setDoNotDisturb}
+                className="data-[state=checked]:bg-muted-foreground"
+              />
+              <Label htmlFor="do-not-disturb" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                <Moon className="h-4 w-4" />
+                {state !== "collapsed" && "Do Not Disturb"}
+              </Label>
+            </div>
           </div>
 
           <SidebarGroupContent>

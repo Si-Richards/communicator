@@ -30,6 +30,7 @@ interface CallState {
   status: 'disconnected' | 'connecting' | 'connected' | 'calling' | 'incall' | 'incoming' | 'ringing' | 'error'
   registered: boolean
   sipStatus: string
+  doNotDisturb: boolean
   localStream?: MediaStream
   remoteStream?: MediaStream
   incomingCallerId?: string
@@ -45,6 +46,7 @@ interface JanusContextType {
   hangupCall: () => void
   disconnect: () => void
   reconnect: () => Promise<void>
+  setDoNotDisturb: (enabled: boolean) => void
 }
 
 const JanusContext = createContext<JanusContextType | undefined>(undefined)
@@ -65,7 +67,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const [callState, setCallState] = useState<CallState>({
     status: 'disconnected',
     registered: false,
-    sipStatus: 'Not connected'
+    sipStatus: 'Not connected',
+    doNotDisturb: false
   })
   
   const { dismiss } = useToast()
@@ -429,6 +432,20 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       const callerId = msg.username || msg.result?.username || "Unknown"
       const phoneNumber = extractPhoneNumber(callerId)
       
+      // Check if Do Not Disturb is enabled
+      if (callState.doNotDisturb) {
+        console.log("Rejecting call due to Do Not Disturb mode")
+        const decline = { request: "decline" }
+        sipPluginRef.current.send({ message: decline })
+        
+        toast({
+          title: "Call Blocked",
+          description: `Incoming call from ${phoneNumber} blocked (Do Not Disturb)`,
+          variant: "default"
+        })
+        return
+      }
+      
       setCallState(prev => ({ 
         ...prev, 
         status: 'incoming', 
@@ -562,6 +579,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
   }, [callState.registered])
 
+  const setDoNotDisturb = useCallback((enabled: boolean) => {
+    setCallState(prev => ({ ...prev, doNotDisturb: enabled }))
+    // Persist DND setting in localStorage
+    localStorage.setItem('doNotDisturb', enabled.toString())
+  }, [])
+
   const hangupCall = useCallback(() => {
     if (!sipPluginRef.current) return
 
@@ -575,6 +598,14 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       janusRef.current = null
       sessionRef.current = null
       sipPluginRef.current = null
+    }
+  }, [])
+
+  // Load DND setting from localStorage on mount
+  useEffect(() => {
+    const savedDND = localStorage.getItem('doNotDisturb')
+    if (savedDND === 'true') {
+      setCallState(prev => ({ ...prev, doNotDisturb: true }))
     }
   }, [])
 
@@ -593,7 +624,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     rejectCall,
     hangupCall,
     disconnect,
-    reconnect: initJanus
+    reconnect: initJanus,
+    setDoNotDisturb
   }
 
   return (
