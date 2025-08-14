@@ -6,8 +6,9 @@ import { StatusIndicator } from '@/components/ui/status-indicator';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
-import { useJanus } from '@/hooks/useJanus';
+import { useJanusContext } from '@/contexts/JanusContext';
 import { toast } from '@/hooks/use-toast';
+
 export const CallInterface = () => {
   const {
     callState,
@@ -16,7 +17,7 @@ export const CallInterface = () => {
     rejectCall,
     hangupCall,
     reconnect
-  } = useJanus();
+  } = useJanusContext();
   const [phoneNumber, setPhoneNumber] = useState('07880498653');
   const [isMuted, setIsMuted] = useState(false);
   const handleCall = () => {
