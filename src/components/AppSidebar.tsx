@@ -1,16 +1,18 @@
-import { Phone, Users, History, Settings } from "lucide-react"
+import { Phone, Users, History, Settings, User, RefreshCw } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useJanusContext } from "@/contexts/JanusContext"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
 
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar"
 
@@ -25,7 +27,7 @@ export function AppSidebar() {
   const { state } = useSidebar()
   const location = useLocation()
   const currentPath = location.pathname
-  const { callState } = useJanusContext()
+  const { callState, reconnect } = useJanusContext()
 
   const isActive = (path: string) => currentPath === path
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
@@ -46,18 +48,13 @@ export function AppSidebar() {
     >
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="text-primary font-semibold">
-            VoiceHost Phone
-          </SidebarGroupLabel>
-
-          {/* Connection Status */}
-          <div className="px-2 py-2 border-b border-border">
-            <div className="flex items-center gap-2 text-sm">
-              <div className={`w-2 h-2 rounded-full ${callState.registered ? 'bg-green-500' : 'bg-red-500'}`} />
-              <span className={`font-medium ${connectionStatus.color}`}>
-                {connectionStatus.text}
-              </span>
-            </div>
+          {/* Avatar at top */}
+          <div className="flex justify-center py-4">
+            <Avatar className="h-12 w-12">
+              <AvatarFallback className="bg-primary/10 text-primary">
+                <User className="h-6 w-6" />
+              </AvatarFallback>
+            </Avatar>
           </div>
 
           <SidebarGroupContent>
@@ -76,6 +73,32 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      {/* Connection Status and Reconnect Button in Footer */}
+      <SidebarFooter>
+        <div className="px-2 py-2 space-y-2">
+          {/* Connection Status */}
+          <div className="flex items-center gap-2 text-sm">
+            <div className={`w-2 h-2 rounded-full ${callState.registered ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className={`font-medium ${connectionStatus.color}`}>
+              {connectionStatus.text}
+            </span>
+          </div>
+          
+          {/* Reconnect Button */}
+          {!callState.registered && (
+            <Button 
+              onClick={reconnect} 
+              size="sm" 
+              variant="outline" 
+              className="w-full text-xs"
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Reconnect
+            </Button>
+          )}
+        </div>
+      </SidebarFooter>
     </Sidebar>
   )
 }

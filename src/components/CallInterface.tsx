@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Settings, Mic, MicOff, PhoneIncoming, X } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { StatusIndicator } from '@/components/ui/status-indicator';
@@ -15,8 +15,7 @@ export const CallInterface = () => {
     makeCall,
     acceptCall,
     rejectCall,
-    hangupCall,
-    reconnect
+    hangupCall
   } = useJanusContext();
   const [phoneNumber, setPhoneNumber] = useState('07880498653');
   const [isMuted, setIsMuted] = useState(false);
@@ -75,23 +74,14 @@ export const CallInterface = () => {
     }
   };
   return (
-      <Card className="w-full max-w-md p-8 space-y-8 text-center mx-auto">
-        {/* Header */}
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-foreground">VoiceHost Phone</h1>
-          <p className="text-sm text-muted-foreground">Advanced Telecommunications</p>
-        </div>
-
+      <Card className="w-full max-w-md p-8 space-y-6 text-center mx-auto">
         {/* Status Indicator */}
         <div className="flex justify-center">
           <StatusIndicator variant={getStatusVariant()} label={callState.sipStatus} />
         </div>
 
         {/* Phone Number Input */}
-        <div className="space-y-2">
-          <label htmlFor="phone" className="text-sm font-medium text-foreground">
-            Phone Number
-          </label>
+        <div className="space-y-4">
           <div className="relative">
             <Input id="phone" type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="Enter phone number" className="text-center text-lg pr-10" disabled={callState.status === 'calling' || callState.status === 'incall'} />
             {phoneNumber && <Button variant="ghost" size="sm" onClick={() => setPhoneNumber('')} className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0">
@@ -143,14 +133,6 @@ export const CallInterface = () => {
                 {callState.status === 'incall' || callState.status === 'calling' ? <PhoneOff className="h-8 w-8" /> : <Phone className="h-8 w-8" />}
               </CallButton>
             </>}
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-2 justify-center">
-          <Button variant="outline" size="sm" onClick={reconnect} disabled={callState.status === 'connecting'}>
-            <Settings className="h-4 w-4 mr-2" />
-            Reconnect
-          </Button>
         </div>
 
       </Card>
