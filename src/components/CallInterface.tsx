@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Phone, PhoneOff, Settings, Mic, MicOff, PhoneIncoming, Grid3x3 } from 'lucide-react'
+import { Phone, PhoneOff, Settings, Mic, MicOff, PhoneIncoming, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { CallButton } from '@/components/ui/call-button'
 import { StatusIndicator } from '@/components/ui/status-indicator'
@@ -13,7 +13,7 @@ export const CallInterface = () => {
   const { callState, makeCall, acceptCall, rejectCall, hangupCall, reconnect } = useJanus()
   const [phoneNumber, setPhoneNumber] = useState('07880498653')
   const [isMuted, setIsMuted] = useState(false)
-  const [showDialpad, setShowDialpad] = useState(false)
+  
 
   const handleCall = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
@@ -95,38 +95,38 @@ export const CallInterface = () => {
 
         {/* Phone Number Input */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label htmlFor="phone" className="text-sm font-medium text-foreground">
-              Phone Number
-            </label>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowDialpad(!showDialpad)}
-              className="h-8 w-8 p-0"
-            >
-              <Grid3x3 className="h-4 w-4" />
-            </Button>
+          <label htmlFor="phone" className="text-sm font-medium text-foreground">
+            Phone Number
+          </label>
+          <div className="relative">
+            <Input
+              id="phone"
+              type="tel"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              placeholder="Enter phone number"
+              className="text-center text-lg pr-10"
+              disabled={callState.status === 'calling' || callState.status === 'incall'}
+            />
+            {phoneNumber && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPhoneNumber('')}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
           </div>
-          <Input
-            id="phone"
-            type="tel"
-            value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
-            placeholder="Enter phone number"
-            className="text-center text-lg"
-            disabled={callState.status === 'calling' || callState.status === 'incall'}
-          />
           
           {/* Dialpad */}
-          {showDialpad && (
-            <div className="mt-4 animate-fade-in">
-              <Dialpad
-                onDigitPress={handleDialpadDigit}
-                onBackspace={handleDialpadBackspace}
-              />
-            </div>
-          )}
+          <div className="mt-4">
+            <Dialpad
+              onDigitPress={handleDialpadDigit}
+              onBackspace={handleDialpadBackspace}
+            />
+          </div>
         </div>
 
         {/* Call Status */}
@@ -215,12 +215,6 @@ export const CallInterface = () => {
           </Button>
         </div>
 
-        {/* Connection Info */}
-        <div className="text-xs text-muted-foreground space-y-1">
-          <div>Server: devrtc.voicehost.io</div>
-          <div>SIP: hpbx.sipconvergence.co.uk</div>
-          <div>Account: 16331*201</div>
-        </div>
       </Card>
     </div>
   )
