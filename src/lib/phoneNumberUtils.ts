@@ -63,23 +63,25 @@ export function validatePhoneNumber(number: string): boolean {
 }
 
 /**
- * Detects country from phone number, returns 'GB' as default
+ * Detects country from phone number, returns null for UK/non-international numbers
  */
-export function detectCountryFromNumber(number: string): CountryCode {
-  if (!number.trim()) return 'GB';
+export function detectCountryFromNumber(number: string): CountryCode | null {
+  if (!number.trim()) return null;
   
   // If number starts with +, try to parse as international
   if (number.startsWith('+')) {
     try {
       const phoneNumber = parsePhoneNumber(number);
-      return phoneNumber?.country || 'GB';
+      const country = phoneNumber?.country;
+      // Return null for UK numbers, actual country for others
+      return country && country !== 'GB' ? country : null;
     } catch {
-      return 'GB';
+      return null;
     }
   }
   
-  // For non-international numbers, default to UK
-  return 'GB';
+  // For non-international numbers, return null (assume UK)
+  return null;
 }
 
 /**
@@ -87,6 +89,17 @@ export function detectCountryFromNumber(number: string): CountryCode {
  */
 export function getCountryName(countryCode: CountryCode): string {
   return countryNames[countryCode] || countryCode;
+}
+
+/**
+ * Gets country flag emoji from country code
+ */
+export function getCountryFlag(countryCode: CountryCode): string {
+  const flagOffset = 127397;
+  return countryCode
+    .split('')
+    .map(char => String.fromCodePoint(char.charCodeAt(0) + flagOffset))
+    .join('');
 }
 
 /**

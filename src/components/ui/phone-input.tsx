@@ -1,7 +1,8 @@
 import * as React from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { detectCountryFromNumber, getCountryName, filterPhoneInput, validatePhoneNumber } from "@/lib/phoneNumberUtils";
+import { detectCountryFromNumber, getCountryName, getCountryFlag, filterPhoneInput, validatePhoneNumber } from "@/lib/phoneNumberUtils";
+import { CountryCode } from 'libphonenumber-js';
 
 export interface PhoneInputProps extends Omit<React.ComponentProps<"input">, "onChange"> {
   value: string;
@@ -11,14 +12,16 @@ export interface PhoneInputProps extends Omit<React.ComponentProps<"input">, "on
 
 const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
   ({ className, value, onChange, onCountryChange, ...props }, ref) => {
-    const [detectedCountry, setDetectedCountry] = React.useState('GB');
+    const [detectedCountry, setDetectedCountry] = React.useState<CountryCode | null>(null);
     const [isValid, setIsValid] = React.useState(true);
 
     React.useEffect(() => {
       const country = detectCountryFromNumber(value);
       setDetectedCountry(country);
       setIsValid(value === '' || validatePhoneNumber(value));
-      onCountryChange?.(getCountryName(country));
+      if (country) {
+        onCountryChange?.(getCountryName(country));
+      }
     }, [value, onCountryChange]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -28,6 +31,12 @@ const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
 
     return (
       <div className="space-y-2">
+        {detectedCountry && (
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <span className="text-lg">{getCountryFlag(detectedCountry)}</span>
+            <span>{getCountryName(detectedCountry)}</span>
+          </div>
+        )}
         <Input
           ref={ref}
           type="tel"
@@ -40,11 +49,6 @@ const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
           )}
           {...props}
         />
-        {value && (
-          <div className="text-sm text-muted-foreground text-center">
-            {getCountryName(detectedCountry as any)}
-          </div>
-        )}
       </div>
     );
   }
