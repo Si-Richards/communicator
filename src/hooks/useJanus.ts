@@ -32,6 +32,7 @@ interface CallState {
   remoteStream?: MediaStream
   incomingCallerId?: string
   incomingCallId?: string
+  remoteJsep?: any
 }
 
 export const useJanus = () => {
@@ -203,14 +204,15 @@ export const useJanus = () => {
         variant: "destructive"
       })
     } else if (event === "incomingcall") {
-      console.log("Incoming call received:", msg)
+      console.log("Incoming call received:", msg, "JSEP:", jsep)
       const callerId = msg.username || msg.result?.username || "Unknown"
       setCallState(prev => ({ 
         ...prev, 
         status: 'incoming', 
         sipStatus: `Incoming call from ${callerId}`,
         incomingCallerId: callerId,
-        incomingCallId: msg.call_id || msg.result?.call_id
+        incomingCallId: msg.call_id || msg.result?.call_id,
+        remoteJsep: jsep
       }))
       toast({
         title: "Incoming Call",
@@ -232,7 +234,8 @@ export const useJanus = () => {
         localStream: undefined,
         remoteStream: undefined,
         incomingCallerId: undefined,
-        incomingCallId: undefined
+        incomingCallId: undefined,
+        remoteJsep: undefined
       }))
       toast({
         title: "Call Ended",
@@ -244,7 +247,8 @@ export const useJanus = () => {
         status: 'connected', 
         sipStatus: 'Missed call',
         incomingCallerId: undefined,
-        incomingCallId: undefined
+        incomingCallId: undefined,
+        remoteJsep: undefined
       }))
       toast({
         title: "Missed Call",
@@ -305,7 +309,23 @@ export const useJanus = () => {
   }, [callState.registered])
 
   const acceptCall = useCallback(async () => {
-    if (!sipPluginRef.current || callState.status !== 'incoming') return
+    if (!sipPluginRef.current || callState.status !== 'incoming') {
+      toast({
+        title: "Cannot Accept Call",
+        description: "No incoming call to accept",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!callState.remoteJsep) {
+      toast({
+        title: "Call Failed",
+        description: "Missing remote session description",
+        variant: "destructive"
+      })
+      return
+    }
 
     try {
       // Get microphone access
@@ -317,6 +337,7 @@ export const useJanus = () => {
       const accept = { request: "accept" }
 
       sipPluginRef.current.createAnswer({
+        jsep: callState.remoteJsep,
         tracks: [{ type: "audio", capture: true, recv: true }],
         success: (jsep: any) => {
           sipPluginRef.current.send({ message: accept, jsep })
@@ -325,8 +346,8 @@ export const useJanus = () => {
         error: (error: any) => {
           console.error("Create answer error:", error)
           toast({
-            title: "Call Failed",
-            description: "Failed to accept call",
+            title: "Failed to Accept Call",
+            description: error.message || "Could not create answer",
             variant: "destructive"
           })
         }
@@ -335,11 +356,11 @@ export const useJanus = () => {
       console.error("Failed to get microphone access:", error)
       toast({
         title: "Microphone Error",
-        description: "Cannot access microphone",
+        description: "Cannot access microphone to accept call",
         variant: "destructive"
       })
     }
-  }, [callState.status])
+  }, [callState.status, callState.remoteJsep])
 
   const rejectCall = useCallback(() => {
     if (!sipPluginRef.current || callState.status !== 'incoming') return
@@ -352,7 +373,8 @@ export const useJanus = () => {
       status: 'connected', 
       sipStatus: 'Call rejected',
       incomingCallerId: undefined,
-      incomingCallId: undefined
+      incomingCallId: undefined,
+      remoteJsep: undefined
     }))
   }, [callState.status])
 
