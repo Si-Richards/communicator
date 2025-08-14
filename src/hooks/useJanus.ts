@@ -172,7 +172,7 @@ export const useJanus = () => {
   }, [])
 
   const handleSipMessage = useCallback((msg: any, jsep?: any) => {
-    const event = msg.sip
+    const event = msg.result?.event || msg.sip
     
     if (event === "registered") {
       console.log("SIP registration successful")
