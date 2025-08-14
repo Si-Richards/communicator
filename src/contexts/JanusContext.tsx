@@ -650,6 +650,23 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
   }, [callState.registered, extractPhoneNumber, handleToastAcceptCall, handleToastRejectCall])
 
+  // Utility function to preprocess phone numbers for SIP extensions
+  const preprocessPhoneNumber = useCallback((phoneNumber: string): string => {
+    // Remove any non-digit characters for processing
+    const cleanNumber = phoneNumber.replace(/[^0-9]/g, '')
+    
+    // Check if it's a numeric extension between 200 and 99899
+    const numericValue = parseInt(cleanNumber, 10)
+    if (!isNaN(numericValue) && numericValue >= 200 && numericValue <= 99899) {
+      logger.info(`Preprocessing extension ${phoneNumber} -> 16331*${phoneNumber}`, undefined, 'JanusContext')
+      return `16331*${phoneNumber}`
+    }
+    
+    // Return original number for external numbers
+    logger.info(`Using original number: ${phoneNumber}`, undefined, 'JanusContext')
+    return phoneNumber
+  }, [])
+
   const makeCall = useCallback(async (phoneNumber: string) => {
     if (!sipPluginRef.current || !callState.registered) {
       toast({
@@ -661,6 +678,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
 
     try {
+      // Preprocess phone number for extensions
+      const processedNumber = preprocessPhoneNumber(phoneNumber)
+      logger.info(`Making call: ${phoneNumber} -> ${processedNumber}`, undefined, 'JanusContext')
+
       // Get optimal audio constraints based on settings and selected device
       const deviceConstraints = await audioDeviceManager.getOptimalAudioConstraints(
         settings.audioDevices.inputDeviceId || undefined
@@ -688,8 +709,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
       const call = {
         request: "call",
-        uri: `sip:${phoneNumber}@hpbx.sipconvergence.co.uk`
+        uri: `sip:${processedNumber}@hpbx.sipconvergence.co.uk`
       }
+      
+      logger.info(`SIP URI: ${call.uri}`, undefined, 'JanusContext')
 
       sipPluginRef.current.createOffer({
         tracks: [{ type: "audio", capture: true, recv: true }],
