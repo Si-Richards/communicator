@@ -3,6 +3,7 @@ import { toast, useToast } from '@/hooks/use-toast'
 import { ToastAction } from '@/components/ui/toast'
 import { Phone, PhoneOff } from 'lucide-react'
 import { loadJanus, getJanus } from '@/lib/janusLoader'
+import { AudioQualityOptimizer, getOptimalAudioConstraints } from '@/lib/audioQualityOptimizer'
 
 // Janus WebRTC Gateway types
 interface JanusConfig {
@@ -78,6 +79,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const incomingCallToastRef = useRef<any>(null)
+  const audioOptimizerRef = useRef<AudioQualityOptimizer | null>(null)
 
   // Initialize Janus
   const initJanus = useCallback(async () => {
@@ -108,13 +110,31 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   }, [])
 
   const connectToJanus = useCallback(() => {
-    // Create Janus session
+    // Create Janus session with optimized settings for audio quality
     const Janus = getJanus()
     janusRef.current = new Janus({
       server: "wss://devrtc.voicehost.io:443",
       apisecret: "overlord",
+      // ICE servers for better connectivity
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" }
+      ],
+      // Jitter buffer configuration for audio quality
+      jitterBuffer: {
+        minDelay: 20,
+        maxDelay: 250,
+        targetDelay: 50
+      },
+      // Network adaptation settings
+      rtcConfiguration: {
+        iceConnectionPolicy: "all",
+        iceCandidatePoolSize: 10,
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require"
+      },
       success: () => {
-        console.log("Connected to Janus Gateway")
+        console.log("Connected to Janus Gateway with optimized settings")
         setCallState(prev => ({ ...prev, status: 'connected', sipStatus: 'Connected to server' }))
         attachSipPlugin()
       },
@@ -171,10 +191,34 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           const stream = new MediaStream([track])
           setCallState(prev => ({ ...prev, remoteStream: stream }))
           
-          // Play remote audio
-          const audioElement = new Audio()
+          // Enhanced audio playback with optimized settings
+          const audioElement = document.createElement('audio')
           audioElement.srcObject = stream
-          audioElement.play().catch(console.error)
+          audioElement.autoplay = true
+          audioElement.controls = false
+          audioElement.muted = false
+          
+          // Optimize for low latency and quality
+          audioElement.setAttribute('playsinline', 'true')
+          audioElement.setAttribute('webkit-playsinline', 'true')
+          
+          // Set audio context for better processing
+          try {
+            if ('audioTracks' in stream) {
+              const audioTracks = stream.getAudioTracks()
+              if (audioTracks.length > 0) {
+                const audioTrack = audioTracks[0]
+                const settings = audioTrack.getSettings()
+                console.log("Remote audio track settings:", settings)
+              }
+            }
+          } catch (error) {
+            console.warn("Could not access audio track settings:", error)
+          }
+          
+          audioElement.play().catch(error => {
+            console.error("Failed to play remote audio:", error)
+          })
         }
       },
       oncleanup: () => {
@@ -245,7 +289,14 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     try {
       console.log("Getting user media for accept call")
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          sampleSize: 16,
+          channelCount: 1
+        }, 
         video: false 
       })
 
@@ -327,7 +378,14 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     try {
       console.log("Getting user media for direct accept call")
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          sampleSize: 16,
+          channelCount: 1
+        }, 
         video: false 
       })
 
@@ -544,11 +602,17 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
 
     try {
-      // Get microphone access
+      // Enhanced microphone access with optimized audio constraints
+      const audioConstraints = getOptimalAudioConstraints('high')
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
+        audio: audioConstraints, 
         video: false 
       })
+
+      // Apply audio optimization if available
+      const optimizedStream = audioOptimizerRef.current 
+        ? audioOptimizerRef.current.optimizeAudioStream(stream)
+        : stream
 
       const call = {
         request: "call",
@@ -611,8 +675,16 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
   // Auto-connect on mount
   useEffect(() => {
+    // Initialize audio quality optimizer
+    audioOptimizerRef.current = new AudioQualityOptimizer()
+    
     initJanus()
     return () => {
+      // Cleanup audio optimizer
+      if (audioOptimizerRef.current) {
+        audioOptimizerRef.current.destroy()
+        audioOptimizerRef.current = null
+      }
       disconnect()
     }
   }, [initJanus, disconnect])
