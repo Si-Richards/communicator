@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Phone, PhoneOff, Settings, Mic, MicOff, PhoneIncoming } from 'lucide-react'
+import { Phone, PhoneOff, Settings, Mic, MicOff, PhoneIncoming, Grid3x3 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { CallButton } from '@/components/ui/call-button'
 import { StatusIndicator } from '@/components/ui/status-indicator'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Dialpad } from '@/components/ui/dialpad'
 import { useJanus } from '@/hooks/useJanus'
 import { toast } from '@/hooks/use-toast'
 
@@ -12,6 +13,7 @@ export const CallInterface = () => {
   const { callState, makeCall, acceptCall, rejectCall, hangupCall, reconnect } = useJanus()
   const [phoneNumber, setPhoneNumber] = useState('07880498653')
   const [isMuted, setIsMuted] = useState(false)
+  const [showDialpad, setShowDialpad] = useState(false)
 
   const handleCall = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
@@ -62,6 +64,18 @@ export const CallInterface = () => {
     return !callState.registered || callState.status === 'connecting' || callState.status === 'error'
   }
 
+  const handleDialpadDigit = (digit: string) => {
+    if (callState.status !== 'calling' && callState.status !== 'incall') {
+      setPhoneNumber(prev => prev + digit)
+    }
+  }
+
+  const handleDialpadBackspace = () => {
+    if (callState.status !== 'calling' && callState.status !== 'incall') {
+      setPhoneNumber(prev => prev.slice(0, -1))
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-md p-8 space-y-8 text-center">
@@ -81,9 +95,19 @@ export const CallInterface = () => {
 
         {/* Phone Number Input */}
         <div className="space-y-2">
-          <label htmlFor="phone" className="text-sm font-medium text-foreground block">
-            Phone Number
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="phone" className="text-sm font-medium text-foreground">
+              Phone Number
+            </label>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowDialpad(!showDialpad)}
+              className="h-8 w-8 p-0"
+            >
+              <Grid3x3 className="h-4 w-4" />
+            </Button>
+          </div>
           <Input
             id="phone"
             type="tel"
@@ -93,6 +117,16 @@ export const CallInterface = () => {
             className="text-center text-lg"
             disabled={callState.status === 'calling' || callState.status === 'incall'}
           />
+          
+          {/* Dialpad */}
+          {showDialpad && (
+            <div className="mt-4 animate-fade-in">
+              <Dialpad
+                onDigitPress={handleDialpadDigit}
+                onBackspace={handleDialpadBackspace}
+              />
+            </div>
+          )}
         </div>
 
         {/* Call Status */}
