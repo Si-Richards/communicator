@@ -14,25 +14,21 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { 
-  Download, 
-  Upload, 
-  RotateCcw, 
-  Play, 
-  Volume2, 
-  Mic, 
-  Search,
-  Filter,
-  Trash2,
-  Settings,
-  AudioLines,
-  Database,
-  Activity
-} from 'lucide-react';
-
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity } from 'lucide-react';
 const SettingsPage = () => {
-  const { settings, updateAudioQuality, updateAudioDevices, updateLogSettings, updateRingtoneSettings, resetToDefaults, exportSettings, importSettings } = useSettings();
-  const { toast } = useToast();
+  const {
+    settings,
+    updateAudioQuality,
+    updateAudioDevices,
+    updateLogSettings,
+    updateRingtoneSettings,
+    resetToDefaults,
+    exportSettings,
+    importSettings
+  } = useSettings();
+  const {
+    toast
+  } = useToast();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -44,43 +40,40 @@ const SettingsPage = () => {
   const [logSearch, setLogSearch] = useState('');
   const [logLevelFilter, setLogLevelFilter] = useState<LogLevel | 'all'>('all');
   const logsEndRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     // Load devices
     loadDevices();
-    
+
     // Set up device change listener
     const unsubscribe = audioDeviceManager.onDeviceChange(() => {
       loadDevices();
     });
 
     // Set up log listener
-    const unsubscribeLogs = logger.subscribe((log) => {
+    const unsubscribeLogs = logger.subscribe(log => {
       setLogs(prev => [...prev, log]);
     });
 
     // Load existing logs
     setLogs(logger.getLogs());
-
     return () => {
       unsubscribe();
       unsubscribeLogs();
     };
   }, []);
-
   useEffect(() => {
     if (settings.logs.autoScroll && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      logsEndRef.current.scrollIntoView({
+        behavior: 'smooth'
+      });
     }
   }, [logs, settings.logs.autoScroll]);
-
   const loadDevices = async () => {
     await audioDeviceManager.requestPermissions();
     const allDevices = await audioDeviceManager.enumerateDevices();
     setInputDevices(audioDeviceManager.getInputDevices());
     setOutputDevices(audioDeviceManager.getOutputDevices());
   };
-
   const testDevice = async (deviceId: string, kind: 'audioinput' | 'audiooutput') => {
     setTestingDevice(deviceId);
     try {
@@ -90,35 +83,33 @@ const SettingsPage = () => {
       } else {
         result = await audioDeviceManager.testOutputDevice(deviceId);
       }
-
       if (result.success) {
         toast({
           title: 'Device Test Successful',
-          description: kind === 'audioinput' ? 
-            `Microphone working. Volume: ${result.volume}%` : 
-            'Speaker test completed successfully',
+          description: kind === 'audioinput' ? `Microphone working. Volume: ${result.volume}%` : 'Speaker test completed successfully'
         });
       } else {
         toast({
           title: 'Device Test Failed',
           description: result.error,
-          variant: 'destructive',
+          variant: 'destructive'
         });
       }
     } catch (error) {
       toast({
         title: 'Test Error',
         description: 'Failed to test device',
-        variant: 'destructive',
+        variant: 'destructive'
       });
     } finally {
       setTestingDevice(null);
     }
   };
-
   const handleExportSettings = () => {
     const data = exportSettings();
-    const blob = new Blob([data], { type: 'application/json' });
+    const blob = new Blob([data], {
+      type: 'application/json'
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -128,41 +119,41 @@ const SettingsPage = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
   const handleImportSettings = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = e => {
         try {
           const data = e.target?.result as string;
           if (importSettings(data)) {
             toast({
               title: 'Settings Imported',
-              description: 'Settings have been successfully imported',
+              description: 'Settings have been successfully imported'
             });
           } else {
             toast({
               title: 'Import Failed',
               description: 'Invalid settings file format',
-              variant: 'destructive',
+              variant: 'destructive'
             });
           }
         } catch (error) {
           toast({
             title: 'Import Error',
             description: 'Failed to read settings file',
-            variant: 'destructive',
+            variant: 'destructive'
           });
         }
       };
       reader.readAsText(file);
     }
   };
-
   const exportLogs = (format: 'json' | 'text') => {
     const data = logger.exportLogs(format);
-    const blob = new Blob([data], { type: format === 'json' ? 'application/json' : 'text/plain' });
+    const blob = new Blob([data], {
+      type: format === 'json' ? 'application/json' : 'text/plain'
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -172,26 +163,24 @@ const SettingsPage = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
   const filteredLogs = logs.filter(log => {
     const matchesLevel = logLevelFilter === 'all' || log.level === logLevelFilter;
-    const matchesSearch = !logSearch || 
-      log.message.toLowerCase().includes(logSearch.toLowerCase()) ||
-      log.source?.toLowerCase().includes(logSearch.toLowerCase());
+    const matchesSearch = !logSearch || log.message.toLowerCase().includes(logSearch.toLowerCase()) || log.source?.toLowerCase().includes(logSearch.toLowerCase());
     return matchesLevel && matchesSearch;
   });
-
   const getLevelColor = (level: LogLevel) => {
     switch (level) {
-      case 'error': return 'text-call-danger';
-      case 'warn': return 'text-call-warning';
-      case 'info': return 'text-primary';
-      case 'debug': return 'text-muted-foreground';
+      case 'error':
+        return 'text-call-danger';
+      case 'warn':
+        return 'text-call-warning';
+      case 'info':
+        return 'text-primary';
+      case 'debug':
+        return 'text-muted-foreground';
     }
   };
-
-  return (
-    <div className="min-h-full p-6">
+  return <div className="min-h-full p-6">
       <div className="max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Settings</h1>
@@ -230,10 +219,9 @@ const SettingsPage = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label>Sample Rate</Label>
-                    <Select
-                      value={settings.audioQuality.sampleRate.toString()}
-                      onValueChange={(value) => updateAudioQuality({ sampleRate: parseInt(value) as 16000 | 32000 | 48000 })}
-                    >
+                    <Select value={settings.audioQuality.sampleRate.toString()} onValueChange={value => updateAudioQuality({
+                    sampleRate: parseInt(value) as 16000 | 32000 | 48000
+                  })}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -247,10 +235,9 @@ const SettingsPage = () => {
 
                   <div className="space-y-2">
                     <Label>Network Quality</Label>
-                    <Select
-                      value={settings.audioQuality.networkQuality}
-                      onValueChange={(value) => updateAudioQuality({ networkQuality: value as 'high' | 'medium' | 'low' })}
-                    >
+                    <Select value={settings.audioQuality.networkQuality} onValueChange={value => updateAudioQuality({
+                    networkQuality: value as 'high' | 'medium' | 'low'
+                  })}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -264,10 +251,9 @@ const SettingsPage = () => {
 
                   <div className="space-y-2">
                     <Label>Jitter Buffer Size</Label>
-                    <Select
-                      value={settings.audioQuality.jitterBufferSize}
-                      onValueChange={(value) => updateAudioQuality({ jitterBufferSize: value as 'small' | 'medium' | 'large' })}
-                    >
+                    <Select value={settings.audioQuality.jitterBufferSize} onValueChange={value => updateAudioQuality({
+                    jitterBufferSize: value as 'small' | 'medium' | 'large'
+                  })}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -287,27 +273,21 @@ const SettingsPage = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="noise-suppression">Noise Suppression</Label>
-                      <Switch
-                        id="noise-suppression"
-                        checked={settings.audioQuality.noiseSuppression}
-                        onCheckedChange={(checked) => updateAudioQuality({ noiseSuppression: checked })}
-                      />
+                      <Switch id="noise-suppression" checked={settings.audioQuality.noiseSuppression} onCheckedChange={checked => updateAudioQuality({
+                      noiseSuppression: checked
+                    })} />
                     </div>
                     <div className="flex items-center justify-between">
                       <Label htmlFor="echo-cancellation">Echo Cancellation</Label>
-                      <Switch
-                        id="echo-cancellation"
-                        checked={settings.audioQuality.echoCancellation}
-                        onCheckedChange={(checked) => updateAudioQuality({ echoCancellation: checked })}
-                      />
+                      <Switch id="echo-cancellation" checked={settings.audioQuality.echoCancellation} onCheckedChange={checked => updateAudioQuality({
+                      echoCancellation: checked
+                    })} />
                     </div>
                     <div className="flex items-center justify-between">
                       <Label htmlFor="auto-gain-control">Auto Gain Control</Label>
-                      <Switch
-                        id="auto-gain-control"
-                        checked={settings.audioQuality.autoGainControl}
-                        onCheckedChange={(checked) => updateAudioQuality({ autoGainControl: checked })}
-                      />
+                      <Switch id="auto-gain-control" checked={settings.audioQuality.autoGainControl} onCheckedChange={checked => updateAudioQuality({
+                      autoGainControl: checked
+                    })} />
                     </div>
                   </div>
                 </div>
@@ -328,46 +308,31 @@ const SettingsPage = () => {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Microphone</Label>
-                    <Select
-                      value={settings.audioDevices.inputDeviceId || 'default'}
-                      onValueChange={(value) => updateAudioDevices({ inputDeviceId: value === 'default' ? null : value })}
-                    >
+                    <Select value={settings.audioDevices.inputDeviceId || 'default'} onValueChange={value => updateAudioDevices({
+                    inputDeviceId: value === 'default' ? null : value
+                  })}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="default">System Default</SelectItem>
-                        {inputDevices.map((device) => (
-                          <SelectItem key={device.deviceId} value={device.deviceId}>
+                        {inputDevices.map(device => <SelectItem key={device.deviceId} value={device.deviceId}>
                             {device.label}
-                          </SelectItem>
-                        ))}
+                          </SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="space-y-2">
                     <Label>Input Volume: {settings.audioDevices.inputVolume}%</Label>
-                    <Slider
-                      value={[settings.audioDevices.inputVolume]}
-                      onValueChange={([value]) => updateAudioDevices({ inputVolume: value })}
-                      max={100}
-                      step={5}
-                      className="w-full"
-                    />
+                    <Slider value={[settings.audioDevices.inputVolume]} onValueChange={([value]) => updateAudioDevices({
+                    inputVolume: value
+                  })} max={100} step={5} className="w-full" />
                   </div>
 
-                  {settings.audioDevices.inputDeviceId && (
-                    <Button
-                      onClick={() => testDevice(settings.audioDevices.inputDeviceId!, 'audioinput')}
-                      disabled={testingDevice === settings.audioDevices.inputDeviceId}
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                    >
+                  {settings.audioDevices.inputDeviceId && <Button onClick={() => testDevice(settings.audioDevices.inputDeviceId!, 'audioinput')} disabled={testingDevice === settings.audioDevices.inputDeviceId} variant="outline" size="sm" className="w-full">
                       {testingDevice === settings.audioDevices.inputDeviceId ? 'Testing...' : 'Test Microphone'}
-                    </Button>
-                  )}
+                    </Button>}
                 </CardContent>
               </Card>
 
@@ -382,46 +347,31 @@ const SettingsPage = () => {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Speakers</Label>
-                    <Select
-                      value={settings.audioDevices.outputDeviceId || 'default'}
-                      onValueChange={(value) => updateAudioDevices({ outputDeviceId: value === 'default' ? null : value })}
-                    >
+                    <Select value={settings.audioDevices.outputDeviceId || 'default'} onValueChange={value => updateAudioDevices({
+                    outputDeviceId: value === 'default' ? null : value
+                  })}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="default">System Default</SelectItem>
-                        {outputDevices.map((device) => (
-                          <SelectItem key={device.deviceId} value={device.deviceId}>
+                        {outputDevices.map(device => <SelectItem key={device.deviceId} value={device.deviceId}>
                             {device.label}
-                          </SelectItem>
-                        ))}
+                          </SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="space-y-2">
                     <Label>Output Volume: {settings.audioDevices.outputVolume}%</Label>
-                    <Slider
-                      value={[settings.audioDevices.outputVolume]}
-                      onValueChange={([value]) => updateAudioDevices({ outputVolume: value })}
-                      max={100}
-                      step={5}
-                      className="w-full"
-                    />
+                    <Slider value={[settings.audioDevices.outputVolume]} onValueChange={([value]) => updateAudioDevices({
+                    outputVolume: value
+                  })} max={100} step={5} className="w-full" />
                   </div>
 
-                  {settings.audioDevices.outputDeviceId && (
-                    <Button
-                      onClick={() => testDevice(settings.audioDevices.outputDeviceId!, 'audiooutput')}
-                      disabled={testingDevice === settings.audioDevices.outputDeviceId}
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                    >
+                  {settings.audioDevices.outputDeviceId && <Button onClick={() => testDevice(settings.audioDevices.outputDeviceId!, 'audiooutput')} disabled={testingDevice === settings.audioDevices.outputDeviceId} variant="outline" size="sm" className="w-full">
                       {testingDevice === settings.audioDevices.outputDeviceId ? 'Testing...' : 'Test Speakers'}
-                    </Button>
-                  )}
+                    </Button>}
                 </CardContent>
               </Card>
             </div>
@@ -437,29 +387,19 @@ const SettingsPage = () => {
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="ringtones-enabled">Enable Ringtones</Label>
-                  <Switch
-                    id="ringtones-enabled"
-                    checked={settings.ringtones.enabled}
-                    onCheckedChange={(checked) => updateRingtoneSettings({ enabled: checked })}
-                  />
+                  <Switch id="ringtones-enabled" checked={settings.ringtones.enabled} onCheckedChange={checked => updateRingtoneSettings({
+                  enabled: checked
+                })} />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Ringtone Volume: {Math.round(settings.ringtones.volume * 100)}%</Label>
-                  <Slider
-                    value={[settings.ringtones.volume * 100]}
-                    onValueChange={([value]) => updateRingtoneSettings({ volume: value / 100 })}
-                    max={100}
-                    step={5}
-                    className="w-full"
-                    disabled={!settings.ringtones.enabled}
-                  />
+                  <Slider value={[settings.ringtones.volume * 100]} onValueChange={([value]) => updateRingtoneSettings({
+                  volume: value / 100
+                })} max={100} step={5} className="w-full" disabled={!settings.ringtones.enabled} />
                 </div>
 
-                <div className="text-sm text-muted-foreground">
-                  <p>• Incoming calls will play a ringtone to alert you</p>
-                  <p>• Outgoing calls will play a ringback tone while connecting</p>
-                </div>
+                
               </CardContent>
             </Card>
           </TabsContent>
@@ -481,20 +421,11 @@ const SettingsPage = () => {
                     <label>
                       <Upload className="h-4 w-4 mr-2" />
                       Import Settings
-                      <input
-                        type="file"
-                        accept=".json"
-                        onChange={handleImportSettings}
-                        className="hidden"
-                      />
+                      <input type="file" accept=".json" onChange={handleImportSettings} className="hidden" />
                     </label>
                   </Button>
 
-                  <Button 
-                    onClick={resetToDefaults} 
-                    variant="outline"
-                    className="text-call-danger hover:text-call-danger-foreground hover:bg-call-danger"
-                  >
+                  <Button onClick={resetToDefaults} variant="outline" className="text-call-danger hover:text-call-danger-foreground hover:bg-call-danger">
                     <RotateCcw className="h-4 w-4 mr-2" />
                     Reset to Defaults
                   </Button>
@@ -513,15 +444,10 @@ const SettingsPage = () => {
                 <div className="flex flex-wrap gap-2 items-center">
                   <div className="flex items-center gap-2">
                     <Search className="h-4 w-4" />
-                    <Input
-                      placeholder="Search logs..."
-                      value={logSearch}
-                      onChange={(e) => setLogSearch(e.target.value)}
-                      className="w-48"
-                    />
+                    <Input placeholder="Search logs..." value={logSearch} onChange={e => setLogSearch(e.target.value)} className="w-48" />
                   </div>
 
-                  <Select value={logLevelFilter} onValueChange={(value) => setLogLevelFilter(value as LogLevel | 'all')}>
+                  <Select value={logLevelFilter} onValueChange={value => setLogLevelFilter(value as LogLevel | 'all')}>
                     <SelectTrigger className="w-32">
                       <SelectValue />
                     </SelectTrigger>
@@ -536,11 +462,9 @@ const SettingsPage = () => {
 
                   <div className="flex items-center gap-2">
                     <Label htmlFor="auto-scroll">Auto-scroll</Label>
-                    <Switch
-                      id="auto-scroll"
-                      checked={settings.logs.autoScroll}
-                      onCheckedChange={(checked) => updateLogSettings({ autoScroll: checked })}
-                    />
+                    <Switch id="auto-scroll" checked={settings.logs.autoScroll} onCheckedChange={checked => updateLogSettings({
+                    autoScroll: checked
+                  })} />
                   </div>
 
                   <Button onClick={() => exportLogs('text')} variant="outline" size="sm">
@@ -551,37 +475,28 @@ const SettingsPage = () => {
                     Export JSON
                   </Button>
 
-                  <Button
-                    onClick={() => {
-                      logger.clearLogs();
-                      setLogs([]);
-                    }}
-                    variant="outline"
-                    size="sm"
-                    className="text-call-danger hover:text-call-danger-foreground hover:bg-call-danger"
-                  >
+                  <Button onClick={() => {
+                  logger.clearLogs();
+                  setLogs([]);
+                }} variant="outline" size="sm" className="text-call-danger hover:text-call-danger-foreground hover:bg-call-danger">
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
 
                 <ScrollArea className="h-96 w-full border rounded-md p-4">
                   <div className="space-y-2 font-mono text-sm">
-                    {filteredLogs.map((log) => (
-                      <div key={log.id} className="flex items-start gap-2 py-1">
+                    {filteredLogs.map(log => <div key={log.id} className="flex items-start gap-2 py-1">
                         <Badge variant="outline" className={`text-xs ${getLevelColor(log.level)}`}>
                           {log.level.toUpperCase()}
                         </Badge>
                         <span className="text-muted-foreground text-xs">
                           {log.timestamp.toLocaleTimeString()}
                         </span>
-                        {log.source && (
-                          <Badge variant="secondary" className="text-xs">
+                        {log.source && <Badge variant="secondary" className="text-xs">
                             {log.source}
-                          </Badge>
-                        )}
+                          </Badge>}
                         <span className="flex-1">{log.message}</span>
-                      </div>
-                    ))}
+                      </div>)}
                     <div ref={logsEndRef} />
                   </div>
                 </ScrollArea>
@@ -590,8 +505,6 @@ const SettingsPage = () => {
           </TabsContent>
         </Tabs>
       </div>
-    </div>
-  );
+    </div>;
 };
-
 export default SettingsPage;
