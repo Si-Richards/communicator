@@ -88,6 +88,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const incomingCallToastRef = useRef<any>(null)
   const audioOptimizerRef = useRef<AudioQualityOptimizer | null>(null)
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [isRetrying, setIsRetrying] = useState(false)
+  const maxRetries = 3
+  const retryDelay = 3000
 
   // Initialize Janus
   const initJanus = useCallback(async () => {
@@ -143,17 +148,44 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       },
       success: () => {
         console.log("Connected to Janus Gateway with optimized settings")
+        // Reset retry state on successful connection
+        setRetryCount(0)
+        setIsRetrying(false)
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current)
+          retryTimeoutRef.current = null
+        }
         setCallState(prev => ({ ...prev, status: 'connected', sipStatus: 'Connected to server' }))
         attachSipPlugin()
       },
       error: (error: any) => {
         console.error("Failed to connect to Janus:", error)
-        setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'Connection failed' }))
-        toast({
-          title: "Connection Error",
-          description: "Failed to connect to Janus server",
-          variant: "destructive"
-        })
+        
+        // Check if we can retry
+        if (retryCount < maxRetries) {
+          setIsRetrying(true)
+          setRetryCount(prev => prev + 1)
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'connecting', 
+            sipStatus: `Retrying connection... (${retryCount + 1}/${maxRetries})` 
+          }))
+          
+          // Retry after delay
+          retryTimeoutRef.current = setTimeout(() => {
+            console.log(`Retrying connection attempt ${retryCount + 1}/${maxRetries}`)
+            connectToJanus()
+          }, retryDelay)
+        } else {
+          // All retries exhausted
+          setIsRetrying(false)
+          setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'Connection failed after retries' }))
+          toast({
+            title: "Connection Error",
+            description: `Failed to connect to Janus server after ${maxRetries} attempts`,
+            variant: "destructive"
+          })
+        }
       },
       destroyed: () => {
         console.log("Janus session destroyed")
@@ -718,6 +750,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   }, [])
 
   const disconnect = useCallback(() => {
+    // Clear any pending retry timeout
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current)
+      retryTimeoutRef.current = null
+    }
+    
     if (janusRef.current) {
       janusRef.current.destroy()
       janusRef.current = null
@@ -741,6 +779,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     
     initJanus()
     return () => {
+      // Cleanup retry timeout
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current)
+        retryTimeoutRef.current = null
+      }
       // Cleanup audio optimizer
       if (audioOptimizerRef.current) {
         audioOptimizerRef.current.destroy()
@@ -749,6 +792,18 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       disconnect()
     }
   }, [initJanus, disconnect])
+
+  // Reconnect function that resets retry state
+  const reconnect = useCallback(async () => {
+    // Reset retry state on manual reconnection
+    setRetryCount(0)
+    setIsRetrying(false)
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current)
+      retryTimeoutRef.current = null
+    }
+    await initJanus()
+  }, [initJanus])
 
   const value: JanusContextType = {
     callState,
@@ -759,7 +814,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     holdCall,
     resumeCall,
     disconnect,
-    reconnect: initJanus,
+    reconnect,
     setDoNotDisturb
   }
 
