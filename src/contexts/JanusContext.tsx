@@ -297,15 +297,97 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }))
   }, [callState.status, callState.registered])
 
-  // Toast action handlers that capture current state
+  // Direct action functions that bypass state validation for toast handlers
+  const directAcceptCall = useCallback(async () => {
+    console.log("Direct accept call - bypassing state validation")
+    
+    if (!sipPluginRef.current) {
+      console.log("Cannot accept call - No SIP plugin")
+      toast({
+        title: "Call Failed",
+        description: "SIP plugin not available",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!callState.remoteJsep) {
+      console.log("Cannot accept call - Missing remote JSEP")
+      toast({
+        title: "Call Failed",
+        description: "Missing remote session description", 
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      console.log("Getting user media for direct accept call")
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true, 
+        video: false 
+      })
+
+      const accept = { request: "accept" }
+
+      sipPluginRef.current.createAnswer({
+        jsep: callState.remoteJsep,
+        tracks: [{ type: "audio", capture: true, recv: true }],
+        success: (jsep: any) => {
+          console.log("Direct accept call - create answer success")
+          sipPluginRef.current.send({ message: accept, jsep })
+          setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
+        },
+        error: (error: any) => {
+          console.error("Direct accept create answer error:", error)
+          toast({
+            title: "Failed to Accept Call",
+            description: error.message || "Could not create answer",
+            variant: "destructive"
+          })
+        }
+      })
+    } catch (error) {
+      console.error("Direct accept failed to get microphone access:", error)
+      toast({
+        title: "Microphone Error",
+        description: "Cannot access microphone to accept call",
+        variant: "destructive"
+      })
+    }
+  }, [callState.remoteJsep])
+
+  const directRejectCall = useCallback(() => {
+    console.log("Direct reject call - bypassing state validation")
+    
+    if (!sipPluginRef.current) {
+      console.log("Cannot reject call - No SIP plugin")
+      return
+    }
+
+    console.log("Sending decline message directly")
+    const decline = { request: "decline" }
+    sipPluginRef.current.send({ message: decline })
+    
+    setCallState(prev => ({ 
+      ...prev, 
+      status: 'connected', 
+      sipStatus: prev.registered ? 'Online' : 'Offline',
+      incomingCallerId: undefined,
+      incomingCallId: undefined,
+      remoteJsep: undefined
+    }))
+  }, [])
+
+  // Toast action handlers that use direct functions
   const handleToastAcceptCall = useCallback(() => {
     console.log("Toast Accept button clicked")
     if (incomingCallToastRef.current) {
       incomingCallToastRef.current.dismiss()
       incomingCallToastRef.current = null
     }
-    acceptCall()
-  }, [acceptCall])
+    directAcceptCall()
+  }, [directAcceptCall])
 
   const handleToastRejectCall = useCallback(() => {
     console.log("Toast Reject button clicked")
@@ -313,8 +395,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       incomingCallToastRef.current.dismiss()
       incomingCallToastRef.current = null
     }
-    rejectCall()
-  }, [rejectCall])
+    directRejectCall()
+  }, [directRejectCall])
 
   const handleSipMessage = useCallback((msg: any, jsep?: any) => {
     const event = msg.result?.event || msg.sip
