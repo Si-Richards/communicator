@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from 'react'
-import { toast } from '@/hooks/use-toast'
+import { toast, useToast } from '@/hooks/use-toast'
 import { ToastAction } from '@/components/ui/toast'
 import { Phone, PhoneOff } from 'lucide-react'
 import { loadJanus, getJanus } from '@/lib/janusLoader'
@@ -68,11 +68,13 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     sipStatus: 'Not connected'
   })
   
+  const { dismiss } = useToast()
   const janusRef = useRef<any>(null)
   const sessionRef = useRef<JanusSession | null>(null)
   const sipPluginRef = useRef<any>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
+  const incomingCallToastRef = useRef<any>(null)
 
   // Initialize Janus
   const initJanus = useCallback(async () => {
@@ -215,7 +217,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   }, [])
 
   const acceptCall = useCallback(async () => {
+    console.log("AcceptCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
+    
     if (!sipPluginRef.current || callState.status !== 'incoming') {
+      console.log("Cannot accept call - Invalid state")
       toast({
         title: "Cannot Accept Call", 
         description: "No incoming call to accept",
@@ -225,6 +230,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
 
     if (!callState.remoteJsep) {
+      console.log("Cannot accept call - Missing remote JSEP")
       toast({
         title: "Call Failed",
         description: "Missing remote session description", 
@@ -234,6 +240,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
 
     try {
+      console.log("Getting user media for accept call")
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
         video: false 
@@ -245,6 +252,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         jsep: callState.remoteJsep,
         tracks: [{ type: "audio", capture: true, recv: true }],
         success: (jsep: any) => {
+          console.log("Accept call - create answer success")
           sipPluginRef.current.send({ message: accept, jsep })
           setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
         },
@@ -268,8 +276,14 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   }, [callState.status, callState.remoteJsep])
 
   const rejectCall = useCallback(() => {
-    if (!sipPluginRef.current || callState.status !== 'incoming') return
+    console.log("RejectCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
+    
+    if (!sipPluginRef.current || callState.status !== 'incoming') {
+      console.log("Cannot reject call - Invalid state")
+      return
+    }
 
+    console.log("Sending decline message")
     const decline = { request: "decline" }
     sipPluginRef.current.send({ message: decline })
     
@@ -282,6 +296,25 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       remoteJsep: undefined
     }))
   }, [callState.status, callState.registered])
+
+  // Toast action handlers that capture current state
+  const handleToastAcceptCall = useCallback(() => {
+    console.log("Toast Accept button clicked")
+    if (incomingCallToastRef.current) {
+      incomingCallToastRef.current.dismiss()
+      incomingCallToastRef.current = null
+    }
+    acceptCall()
+  }, [acceptCall])
+
+  const handleToastRejectCall = useCallback(() => {
+    console.log("Toast Reject button clicked")
+    if (incomingCallToastRef.current) {
+      incomingCallToastRef.current.dismiss()
+      incomingCallToastRef.current = null
+    }
+    rejectCall()
+  }, [rejectCall])
 
   const handleSipMessage = useCallback((msg: any, jsep?: any) => {
     const event = msg.result?.event || msg.sip
@@ -326,21 +359,21 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         remoteJsep: jsep
       }))
       
-      toast({
+      incomingCallToastRef.current = toast({
         title: phoneNumber,
         description: "Incoming call",
         action: (
           <div className="flex gap-2">
             <ToastAction 
               altText="Accept call"
-              onClick={() => acceptCall()}
+              onClick={handleToastAcceptCall}
               className="bg-green-600 hover:bg-green-700 text-white"
             >
               <Phone className="h-4 w-4" />
             </ToastAction>
             <ToastAction 
               altText="Reject call"
-              onClick={() => rejectCall()}
+              onClick={handleToastRejectCall}
               className="bg-red-600 hover:bg-red-700 text-white"
             >
               <PhoneOff className="h-4 w-4" />
@@ -357,6 +390,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         description: "Call is now active",
       })
     } else if (event === "hangup") {
+      // Dismiss incoming call toast if still showing
+      if (incomingCallToastRef.current) {
+        incomingCallToastRef.current.dismiss()
+        incomingCallToastRef.current = null
+      }
+      
       setCallState(prev => ({ 
         ...prev, 
         status: 'connected', 
@@ -372,6 +411,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         description: "Call has been terminated",
       })
     } else if (event === "missed") {
+      // Dismiss incoming call toast if still showing
+      if (incomingCallToastRef.current) {
+        incomingCallToastRef.current.dismiss()
+        incomingCallToastRef.current = null
+      }
+      
       setCallState(prev => ({ 
         ...prev, 
         status: 'connected', 
@@ -390,7 +435,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     if (jsep) {
       sipPluginRef.current.handleRemoteJsep({ jsep })
     }
-  }, [callState.registered, extractPhoneNumber, acceptCall, rejectCall])
+  }, [callState.registered, extractPhoneNumber, handleToastAcceptCall, handleToastRejectCall])
 
   const makeCall = useCallback(async (phoneNumber: string) => {
     if (!sipPluginRef.current || !callState.registered) {
