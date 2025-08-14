@@ -1,14 +1,560 @@
-import { Card } from '@/components/ui/card'
+import React, { useState, useEffect, useRef } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import { useSettings } from '@/contexts/SettingsContext';
+import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
+import { logger, LogEntry, LogLevel } from '@/lib/logger';
+import { useToast } from '@/hooks/use-toast';
+import { 
+  Download, 
+  Upload, 
+  RotateCcw, 
+  Play, 
+  Volume2, 
+  Mic, 
+  Search,
+  Filter,
+  Trash2,
+  Settings,
+  AudioLines,
+  Database,
+  Activity
+} from 'lucide-react';
 
 const SettingsPage = () => {
-  return (
-    <div className="min-h-full flex items-center justify-center p-4">
-      <Card className="w-full max-w-2xl p-8 text-center">
-        <h1 className="text-2xl font-bold text-foreground mb-4">Settings</h1>
-        <p className="text-muted-foreground">Application settings coming soon...</p>
-      </Card>
-    </div>
-  )
-}
+  const { settings, updateAudioQuality, updateAudioDevices, updateLogSettings, resetToDefaults, exportSettings, importSettings } = useSettings();
+  const { toast } = useToast();
 
-export default SettingsPage
+  // Device management state
+  const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
+  const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
+  const [testingDevice, setTestingDevice] = useState<string | null>(null);
+
+  // Logs state
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logSearch, setLogSearch] = useState('');
+  const [logLevelFilter, setLogLevelFilter] = useState<LogLevel | 'all'>('all');
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Load devices
+    loadDevices();
+    
+    // Set up device change listener
+    const unsubscribe = audioDeviceManager.onDeviceChange(() => {
+      loadDevices();
+    });
+
+    // Set up log listener
+    const unsubscribeLogs = logger.subscribe((log) => {
+      setLogs(prev => [...prev, log]);
+    });
+
+    // Load existing logs
+    setLogs(logger.getLogs());
+
+    return () => {
+      unsubscribe();
+      unsubscribeLogs();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (settings.logs.autoScroll && logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, settings.logs.autoScroll]);
+
+  const loadDevices = async () => {
+    await audioDeviceManager.requestPermissions();
+    const allDevices = await audioDeviceManager.enumerateDevices();
+    setInputDevices(audioDeviceManager.getInputDevices());
+    setOutputDevices(audioDeviceManager.getOutputDevices());
+  };
+
+  const testDevice = async (deviceId: string, kind: 'audioinput' | 'audiooutput') => {
+    setTestingDevice(deviceId);
+    try {
+      let result: DeviceTestResult;
+      if (kind === 'audioinput') {
+        result = await audioDeviceManager.testInputDevice(deviceId);
+      } else {
+        result = await audioDeviceManager.testOutputDevice(deviceId);
+      }
+
+      if (result.success) {
+        toast({
+          title: 'Device Test Successful',
+          description: kind === 'audioinput' ? 
+            `Microphone working. Volume: ${result.volume}%` : 
+            'Speaker test completed successfully',
+        });
+      } else {
+        toast({
+          title: 'Device Test Failed',
+          description: result.error,
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      toast({
+        title: 'Test Error',
+        description: 'Failed to test device',
+        variant: 'destructive',
+      });
+    } finally {
+      setTestingDevice(null);
+    }
+  };
+
+  const handleExportSettings = () => {
+    const data = exportSettings();
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'webrtc-app-settings.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportSettings = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result as string;
+          if (importSettings(data)) {
+            toast({
+              title: 'Settings Imported',
+              description: 'Settings have been successfully imported',
+            });
+          } else {
+            toast({
+              title: 'Import Failed',
+              description: 'Invalid settings file format',
+              variant: 'destructive',
+            });
+          }
+        } catch (error) {
+          toast({
+            title: 'Import Error',
+            description: 'Failed to read settings file',
+            variant: 'destructive',
+          });
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const exportLogs = (format: 'json' | 'text') => {
+    const data = logger.exportLogs(format);
+    const blob = new Blob([data], { type: format === 'json' ? 'application/json' : 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `app-logs.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const filteredLogs = logs.filter(log => {
+    const matchesLevel = logLevelFilter === 'all' || log.level === logLevelFilter;
+    const matchesSearch = !logSearch || 
+      log.message.toLowerCase().includes(logSearch.toLowerCase()) ||
+      log.source?.toLowerCase().includes(logSearch.toLowerCase());
+    return matchesLevel && matchesSearch;
+  });
+
+  const getLevelColor = (level: LogLevel) => {
+    switch (level) {
+      case 'error': return 'text-call-danger';
+      case 'warn': return 'text-call-warning';
+      case 'info': return 'text-primary';
+      case 'debug': return 'text-muted-foreground';
+    }
+  };
+
+  return (
+    <div className="min-h-full p-6">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Settings</h1>
+          <p className="text-muted-foreground">Configure your WebRTC calling experience</p>
+        </div>
+
+        <Tabs defaultValue="audio-quality" className="w-full">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="audio-quality" className="flex items-center gap-2">
+              <AudioLines className="h-4 w-4" />
+              Audio Quality
+            </TabsTrigger>
+            <TabsTrigger value="devices" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Devices
+            </TabsTrigger>
+            <TabsTrigger value="advanced" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Advanced
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Logs
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="audio-quality" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Audio Quality Settings</CardTitle>
+                <CardDescription>
+                  Configure audio processing and network optimization
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label>Sample Rate</Label>
+                    <Select
+                      value={settings.audioQuality.sampleRate.toString()}
+                      onValueChange={(value) => updateAudioQuality({ sampleRate: parseInt(value) as 16000 | 32000 | 48000 })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="16000">16 kHz (Low bandwidth)</SelectItem>
+                        <SelectItem value="32000">32 kHz (Medium quality)</SelectItem>
+                        <SelectItem value="48000">48 kHz (High quality)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Network Quality</Label>
+                    <Select
+                      value={settings.audioQuality.networkQuality}
+                      onValueChange={(value) => updateAudioQuality({ networkQuality: value as 'high' | 'medium' | 'low' })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="high">High (Best quality)</SelectItem>
+                        <SelectItem value="medium">Medium (Balanced)</SelectItem>
+                        <SelectItem value="low">Low (Conserve bandwidth)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Jitter Buffer Size</Label>
+                    <Select
+                      value={settings.audioQuality.jitterBufferSize}
+                      onValueChange={(value) => updateAudioQuality({ jitterBufferSize: value as 'small' | 'medium' | 'large' })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="small">Small (Low latency)</SelectItem>
+                        <SelectItem value="medium">Medium (Balanced)</SelectItem>
+                        <SelectItem value="large">Large (Smooth audio)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-medium">Audio Processing</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="noise-suppression">Noise Suppression</Label>
+                      <Switch
+                        id="noise-suppression"
+                        checked={settings.audioQuality.noiseSuppression}
+                        onCheckedChange={(checked) => updateAudioQuality({ noiseSuppression: checked })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="echo-cancellation">Echo Cancellation</Label>
+                      <Switch
+                        id="echo-cancellation"
+                        checked={settings.audioQuality.echoCancellation}
+                        onCheckedChange={(checked) => updateAudioQuality({ echoCancellation: checked })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="auto-gain-control">Auto Gain Control</Label>
+                      <Switch
+                        id="auto-gain-control"
+                        checked={settings.audioQuality.autoGainControl}
+                        onCheckedChange={(checked) => updateAudioQuality({ autoGainControl: checked })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="devices" className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mic className="h-5 w-5" />
+                    Input Devices
+                  </CardTitle>
+                  <CardDescription>Select and test your microphone</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Microphone</Label>
+                    <Select
+                      value={settings.audioDevices.inputDeviceId || 'default'}
+                      onValueChange={(value) => updateAudioDevices({ inputDeviceId: value === 'default' ? null : value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">System Default</SelectItem>
+                        {inputDevices.map((device) => (
+                          <SelectItem key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Input Volume: {settings.audioDevices.inputVolume}%</Label>
+                    <Slider
+                      value={[settings.audioDevices.inputVolume]}
+                      onValueChange={([value]) => updateAudioDevices({ inputVolume: value })}
+                      max={100}
+                      step={5}
+                      className="w-full"
+                    />
+                  </div>
+
+                  {settings.audioDevices.inputDeviceId && (
+                    <Button
+                      onClick={() => testDevice(settings.audioDevices.inputDeviceId!, 'audioinput')}
+                      disabled={testingDevice === settings.audioDevices.inputDeviceId}
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                    >
+                      {testingDevice === settings.audioDevices.inputDeviceId ? 'Testing...' : 'Test Microphone'}
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Volume2 className="h-5 w-5" />
+                    Output Devices
+                  </CardTitle>
+                  <CardDescription>Select and test your speakers</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Speakers</Label>
+                    <Select
+                      value={settings.audioDevices.outputDeviceId || 'default'}
+                      onValueChange={(value) => updateAudioDevices({ outputDeviceId: value === 'default' ? null : value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">System Default</SelectItem>
+                        {outputDevices.map((device) => (
+                          <SelectItem key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Output Volume: {settings.audioDevices.outputVolume}%</Label>
+                    <Slider
+                      value={[settings.audioDevices.outputVolume]}
+                      onValueChange={([value]) => updateAudioDevices({ outputVolume: value })}
+                      max={100}
+                      step={5}
+                      className="w-full"
+                    />
+                  </div>
+
+                  {settings.audioDevices.outputDeviceId && (
+                    <Button
+                      onClick={() => testDevice(settings.audioDevices.outputDeviceId!, 'audiooutput')}
+                      disabled={testingDevice === settings.audioDevices.outputDeviceId}
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                    >
+                      {testingDevice === settings.audioDevices.outputDeviceId ? 'Testing...' : 'Test Speakers'}
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="advanced" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Advanced Settings</CardTitle>
+                <CardDescription>Import, export, and reset your settings</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={handleExportSettings} variant="outline">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export Settings
+                  </Button>
+                  
+                  <Button asChild variant="outline">
+                    <label>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Import Settings
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleImportSettings}
+                        className="hidden"
+                      />
+                    </label>
+                  </Button>
+
+                  <Button 
+                    onClick={resetToDefaults} 
+                    variant="outline"
+                    className="text-call-danger hover:text-call-danger-foreground hover:bg-call-danger"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset to Defaults
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="logs" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Application Logs</CardTitle>
+                <CardDescription>View and manage application logs for debugging</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2 items-center">
+                  <div className="flex items-center gap-2">
+                    <Search className="h-4 w-4" />
+                    <Input
+                      placeholder="Search logs..."
+                      value={logSearch}
+                      onChange={(e) => setLogSearch(e.target.value)}
+                      className="w-48"
+                    />
+                  </div>
+
+                  <Select value={logLevelFilter} onValueChange={(value) => setLogLevelFilter(value as LogLevel | 'all')}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Levels</SelectItem>
+                      <SelectItem value="debug">Debug</SelectItem>
+                      <SelectItem value="info">Info</SelectItem>
+                      <SelectItem value="warn">Warning</SelectItem>
+                      <SelectItem value="error">Error</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="auto-scroll">Auto-scroll</Label>
+                    <Switch
+                      id="auto-scroll"
+                      checked={settings.logs.autoScroll}
+                      onCheckedChange={(checked) => updateLogSettings({ autoScroll: checked })}
+                    />
+                  </div>
+
+                  <Button onClick={() => exportLogs('text')} variant="outline" size="sm">
+                    Export Text
+                  </Button>
+                  
+                  <Button onClick={() => exportLogs('json')} variant="outline" size="sm">
+                    Export JSON
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      logger.clearLogs();
+                      setLogs([]);
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="text-call-danger hover:text-call-danger-foreground hover:bg-call-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <ScrollArea className="h-96 w-full border rounded-md p-4">
+                  <div className="space-y-2 font-mono text-sm">
+                    {filteredLogs.map((log) => (
+                      <div key={log.id} className="flex items-start gap-2 py-1">
+                        <Badge variant="outline" className={`text-xs ${getLevelColor(log.level)}`}>
+                          {log.level.toUpperCase()}
+                        </Badge>
+                        <span className="text-muted-foreground text-xs">
+                          {log.timestamp.toLocaleTimeString()}
+                        </span>
+                        {log.source && (
+                          <Badge variant="secondary" className="text-xs">
+                            {log.source}
+                          </Badge>
+                        )}
+                        <span className="flex-1">{log.message}</span>
+                      </div>
+                    ))}
+                    <div ref={logsEndRef} />
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+};
+
+export default SettingsPage;

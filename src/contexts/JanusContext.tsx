@@ -4,6 +4,9 @@ import { ToastAction } from '@/components/ui/toast'
 import { Phone, PhoneOff } from 'lucide-react'
 import { loadJanus, getJanus } from '@/lib/janusLoader'
 import { AudioQualityOptimizer, getOptimalAudioConstraints } from '@/lib/audioQualityOptimizer'
+import { useSettings } from './SettingsContext'
+import { audioDeviceManager } from '@/lib/audioDeviceManager'
+import { logger } from '@/lib/logger'
 
 // Janus WebRTC Gateway types
 interface JanusConfig {
@@ -65,6 +68,7 @@ interface JanusProviderProps {
 }
 
 export const JanusProvider = ({ children }: JanusProviderProps) => {
+  const { settings } = useSettings()
   const [callState, setCallState] = useState<CallState>({
     status: 'disconnected',
     registered: false,
@@ -92,14 +96,14 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
       // Initialize Janus library
       Janus.init({
-        debug: "all",
+        debug: settings.logs.level === 'debug' ? "all" : false,
         callback: () => {
-          console.log("Janus initialized successfully")
+          logger.info("Janus initialized successfully", undefined, 'JanusContext')
           connectToJanus()
         }
       })
     } catch (error) {
-      console.error("Failed to initialize Janus:", error)
+      logger.error("Failed to initialize Janus", error, 'JanusContext')
       setCallState(prev => ({ ...prev, status: 'error', sipStatus: `Failed to initialize: ${error instanceof Error ? error.message : 'Unknown error'}` }))
       toast({
         title: "Connection Error",
@@ -602,12 +606,25 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
 
     try {
-      // Enhanced microphone access with optimized audio constraints
-      const audioConstraints = getOptimalAudioConstraints('high')
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: audioConstraints, 
-        video: false 
-      })
+      // Get optimal audio constraints based on settings and selected device
+      const deviceConstraints = await audioDeviceManager.getOptimalAudioConstraints(
+        settings.audioDevices.inputDeviceId || undefined
+      )
+      
+      // Override with user settings
+      const audioConstraints: MediaStreamConstraints = {
+        audio: {
+          deviceId: settings.audioDevices.inputDeviceId ? { exact: settings.audioDevices.inputDeviceId } : undefined,
+          sampleRate: settings.audioQuality.sampleRate,
+          noiseSuppression: settings.audioQuality.noiseSuppression,
+          echoCancellation: settings.audioQuality.echoCancellation,
+          autoGainControl: settings.audioQuality.autoGainControl,
+          channelCount: 1,
+        },
+        video: false,
+      }
+      
+      const stream = await navigator.mediaDevices.getUserMedia(audioConstraints)
 
       // Apply audio optimization if available
       const optimizedStream = audioOptimizerRef.current 
