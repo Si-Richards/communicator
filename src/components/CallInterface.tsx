@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
-import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
 import { useJanusContext } from '@/contexts/JanusContext';
 import { toast } from '@/hooks/use-toast';
 import { useCallTimer } from '@/hooks/useCallTimer';
+import { type PhoneNumberValidation } from '@/lib/phoneNumberUtils';
 
 export const CallInterface = () => {
   const {
@@ -20,6 +21,7 @@ export const CallInterface = () => {
     resumeCall
   } = useJanusContext();
   const [phoneNumber, setPhoneNumber] = useState('07880498653');
+  const [phoneValidation, setPhoneValidation] = useState<PhoneNumberValidation>({ isValid: false });
   const [isMuted, setIsMuted] = useState(false);
   const callTimer = useCallTimer(callState.status === 'incall');
   const handleCall = () => {
@@ -28,6 +30,14 @@ export const CallInterface = () => {
     } else if (callState.status === 'incoming') {
       acceptCall();
     } else {
+      if (!phoneValidation.isValid) {
+        toast({
+          title: "Invalid Phone Number",
+          description: phoneValidation.error || "Please enter a valid phone number",
+          variant: "destructive"
+        });
+        return;
+      }
       makeCall(phoneNumber);
     }
   };
@@ -56,17 +66,26 @@ export const CallInterface = () => {
     return 'call';
   };
   const isCallDisabled = () => {
-    return !callState.registered || callState.status === 'connecting' || callState.status === 'error';
+    return !callState.registered || callState.status === 'connecting' || callState.status === 'error' || (!phoneValidation.isValid && callState.status === 'connected');
   };
   const handleDialpadDigit = (digit: string) => {
     if (callState.status !== 'calling' && callState.status !== 'incall') {
-      setPhoneNumber(prev => prev + digit);
+      // Only allow numeric digits for phone number input
+      if (/^[0-9]$/.test(digit)) {
+        setPhoneNumber(prev => prev + digit);
+      }
     }
   };
+  
   const handleDialpadBackspace = () => {
     if (callState.status !== 'calling' && callState.status !== 'incall') {
       setPhoneNumber(prev => prev.slice(0, -1));
     }
+  };
+
+  const handlePhoneNumberChange = (value: string, validation: PhoneNumberValidation) => {
+    setPhoneNumber(value);
+    setPhoneValidation(validation);
   };
   return (
       <Card className="w-full max-w-md p-8 space-y-6 text-center mx-auto">
@@ -92,10 +111,26 @@ export const CallInterface = () => {
         {/* Phone Number Input */}
         <div className="space-y-4">
           <div className="relative">
-            <Input id="phone" type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="Enter phone number" className="text-center text-lg pr-10" disabled={callState.status === 'calling' || callState.status === 'incall'} />
-            {phoneNumber && <Button variant="ghost" size="sm" onClick={() => setPhoneNumber('')} className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0">
+            <PhoneInput 
+              value={phoneNumber} 
+              onChange={handlePhoneNumberChange}
+              defaultCountry="GB"
+              className="text-center text-lg"
+              disabled={callState.status === 'calling' || callState.status === 'incall'}
+            />
+            {phoneNumber && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => {
+                  setPhoneNumber('');
+                  setPhoneValidation({ isValid: false });
+                }} 
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
+              >
                 <X className="h-4 w-4" />
-              </Button>}
+              </Button>
+            )}
           </div>
           
           {/* Dialpad */}
