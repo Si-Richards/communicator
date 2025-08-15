@@ -14,8 +14,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { useJanusContext } from '@/contexts/JanusContext';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -23,7 +22,6 @@ const SettingsPage = () => {
     updateAudioDevices,
     updateLogSettings,
     updateRingtoneSettings,
-    updateSipAccount,
     resetToDefaults,
     exportSettings,
     importSettings
@@ -31,7 +29,6 @@ const SettingsPage = () => {
   const {
     toast
   } = useToast();
-  const { callState, reregisterSip } = useJanusContext();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -43,9 +40,6 @@ const SettingsPage = () => {
   const [logSearch, setLogSearch] = useState('');
   const [logLevelFilter, setLogLevelFilter] = useState<LogLevel | 'all'>('all');
   const logsEndRef = useRef<HTMLDivElement>(null);
-
-  // SIP Account state
-  const [showPassword, setShowPassword] = useState(false);
   useEffect(() => {
     // Load devices
     loadDevices();
@@ -194,7 +188,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -202,10 +196,6 @@ const SettingsPage = () => {
             <TabsTrigger value="devices" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               Devices
-            </TabsTrigger>
-            <TabsTrigger value="sip-account" className="flex items-center gap-2">
-              <Phone className="h-4 w-4" />
-              SIP Account
             </TabsTrigger>
             <TabsTrigger value="advanced" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
@@ -418,98 +408,6 @@ const SettingsPage = () => {
             </Card>
           </TabsContent>
 
-          <TabsContent value="sip-account" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Account Configuration</CardTitle>
-                <CardDescription>
-                  Configure your account credentials
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="sip-username">Username/Account ID</Label>
-                    <Input
-                      id="sip-username"
-                      placeholder="e.g., 16331*201"
-                      value={settings.sipAccount.username}
-                      onChange={(e) => updateSipAccount({ username: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Enter your account identifier
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="sip-password">Password</Label>
-                    <div className="relative">
-                      <Input
-                        id="sip-password"
-                        type={showPassword ? "text" : "password"}
-                        placeholder="Enter your SIP password"
-                        value={settings.sipAccount.password}
-                        onChange={(e) => updateSipAccount({ password: e.target.value })}
-                        className="pr-10"
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
-                        {showPassword ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Label>Registration Status</Label>
-                        <div className={`h-2 w-2 rounded-full ${
-                          callState.registered ? 'bg-green-500' : 'bg-red-500'
-                        }`} />
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {callState.sipStatus}
-                      </p>
-                    </div>
-                    <Button
-                      onClick={reregisterSip}
-                      disabled={!settings.sipAccount.username || !settings.sipAccount.password}
-                      variant="outline"
-                      size="sm"
-                    >
-                      Re-register
-                    </Button>
-                  </div>
-
-                  {(!settings.sipAccount.username || !settings.sipAccount.password) && (
-                    <div className="p-3 bg-warning/10 border border-warning/20 rounded-md">
-                      <p className="text-sm text-warning-foreground">
-                        Both username and password are required to enable calling.
-                      </p>
-                    </div>
-                  )}
-
-                  {settings.sipAccount.username && settings.sipAccount.password && (
-                    <div className="p-3 bg-primary/10 border border-primary/20 rounded-md">
-                      <p className="text-sm text-primary-foreground">
-                        Account configured successfully. Changes will take effect after reconnection.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
           <TabsContent value="advanced" className="space-y-4">
             <Card>
               <CardHeader>
@@ -642,6 +540,18 @@ const SettingsPage = () => {
 
                   <Separator />
 
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground mb-2">Features</h4>
+                    <ul className="text-sm text-muted-foreground space-y-1">
+                      <li>• Voice calling with WebRTC technology</li>
+                      <li>• Contact management and organization</li>
+                      <li>• Call history tracking and analytics</li>
+                      <li>• Advanced audio quality optimization</li>
+                      <li>• Real-time audio device management</li>
+                      <li>• Comprehensive logging and debugging</li>
+                    </ul>
+                  </div>
+
                   <Separator />
 
                   <div>
@@ -651,15 +561,15 @@ const SettingsPage = () => {
                       <div className="space-y-1">
                         <div>
                           <span className="text-foreground">Email:</span>
-                          <span className="ml-2">support@voicehost.co.uk</span>
+                          <span className="ml-2">support@voicehost.com</span>
                         </div>
                         <div>
                           <span className="text-foreground">Phone:</span>
-                          <span className="ml-2">0800 2 545454</span>
+                          <span className="ml-2">+1 (555) 123-4567</span>
                         </div>
                         <div>
                           <span className="text-foreground">Website:</span>
-                          <span className="ml-2">www.voicehost.co.uk</span>
+                          <span className="ml-2">www.voicehost.com</span>
                         </div>
                       </div>
                     </div>
@@ -669,27 +579,10 @@ const SettingsPage = () => {
 
                   <div>
                     <h4 className="text-sm font-medium text-foreground mb-2">Legal</h4>
-                    <div className="text-xs text-muted-foreground space-y-2">
-                      <p>© 2025 VoiceHost Limited. All rights reserved.</p>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>© 2024 VoiceHost Limited. All rights reserved.</p>
                       <p>This software is licensed under the MIT License.</p>
-                      
-                      <div className="mt-4">
-                        <h5 className="text-xs font-medium text-foreground mb-2">Third-party Licenses</h5>
-                        <div className="space-y-1">
-                          <p>• React (MIT License) - Meta Platforms, Inc.</p>
-                          <p>• Tailwind CSS (MIT License) - Tailwind Labs Inc.</p>
-                          <p>• Radix UI (MIT License) - WorkOS</p>
-                          <p>• Lucide React (ISC License) - Lucide Contributors</p>
-                          <p>• React Router (MIT License) - Remix Software Inc.</p>
-                          <p>• TypeScript (Apache License 2.0) - Microsoft Corporation</p>
-                          <p>• Vite (MIT License) - Evan You</p>
-                          <p>• Class Variance Authority (Apache License 2.0) - Joe Bell</p>
-                          <p>• Date-fns (MIT License) - Sasha Koss</p>
-                          <p>• React Hook Form (MIT License) - Bill Luo</p>
-                          <p>• Zod (MIT License) - Colin McDonnell</p>
-                          <p>• WebRTC technology provided by the WebRTC Foundation</p>
-                        </div>
-                      </div>
+                      <p>WebRTC technology provided by the WebRTC Foundation.</p>
                     </div>
                   </div>
                 </div>
