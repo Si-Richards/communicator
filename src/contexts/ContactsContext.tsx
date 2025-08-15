@@ -1,0 +1,158 @@
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+
+export interface Contact {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  email?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface ContactsContextType {
+  contacts: Contact[];
+  addContact: (contact: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateContact: (id: string, contact: Partial<Omit<Contact, 'id' | 'createdAt'>>) => void;
+  deleteContact: (id: string) => void;
+  getContactByPhoneNumber: (phoneNumber: string) => Contact | undefined;
+  searchContacts: (query: string) => Contact[];
+  exportContacts: () => string;
+  importContacts: (data: string) => boolean;
+  clearContacts: () => void;
+}
+
+const ContactsContext = createContext<ContactsContextType | undefined>(undefined);
+
+const STORAGE_KEY = 'app-contacts';
+
+export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [contacts, setContacts] = useState<Contact[]>([]);
+
+  // Load contacts from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Convert date strings back to Date objects
+        const contactsWithDates = parsed.map((contact: any) => ({
+          ...contact,
+          createdAt: new Date(contact.createdAt),
+          updatedAt: new Date(contact.updatedAt),
+        }));
+        setContacts(contactsWithDates);
+      }
+    } catch (error) {
+      console.error('Failed to load contacts from localStorage:', error);
+    }
+  }, []);
+
+  // Save contacts to localStorage whenever contacts change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(contacts));
+    } catch (error) {
+      console.error('Failed to save contacts to localStorage:', error);
+    }
+  }, [contacts]);
+
+  const addContact = (contactData: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const newContact: Contact = {
+      ...contactData,
+      id: crypto.randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    setContacts(prev => [...prev, newContact]);
+  };
+
+  const updateContact = (id: string, updates: Partial<Omit<Contact, 'id' | 'createdAt'>>) => {
+    setContacts(prev => prev.map(contact => 
+      contact.id === id 
+        ? { ...contact, ...updates, updatedAt: new Date() }
+        : contact
+    ));
+  };
+
+  const deleteContact = (id: string) => {
+    setContacts(prev => prev.filter(contact => contact.id !== id));
+  };
+
+  const getContactByPhoneNumber = (phoneNumber: string): Contact | undefined => {
+    // Clean phone number for comparison (remove spaces, dashes, etc.)
+    const cleanPhoneNumber = phoneNumber.replace(/\D/g, '');
+    return contacts.find(contact => {
+      const cleanContactNumber = contact.phoneNumber.replace(/\D/g, '');
+      return cleanContactNumber === cleanPhoneNumber;
+    });
+  };
+
+  const searchContacts = (query: string): Contact[] => {
+    if (!query.trim()) return contacts;
+    
+    const lowercaseQuery = query.toLowerCase();
+    return contacts.filter(contact =>
+      contact.name.toLowerCase().includes(lowercaseQuery) ||
+      contact.phoneNumber.includes(query) ||
+      contact.email?.toLowerCase().includes(lowercaseQuery) ||
+      contact.notes?.toLowerCase().includes(lowercaseQuery)
+    );
+  };
+
+  const exportContacts = (): string => {
+    return JSON.stringify(contacts, null, 2);
+  };
+
+  const importContacts = (data: string): boolean => {
+    try {
+      const importedContacts = JSON.parse(data);
+      if (!Array.isArray(importedContacts)) {
+        throw new Error('Invalid data format');
+      }
+      
+      // Validate and convert imported contacts
+      const validContacts = importedContacts.map((contact: any) => ({
+        id: contact.id || crypto.randomUUID(),
+        name: contact.name || '',
+        phoneNumber: contact.phoneNumber || '',
+        email: contact.email || undefined,
+        notes: contact.notes || undefined,
+        createdAt: contact.createdAt ? new Date(contact.createdAt) : new Date(),
+        updatedAt: contact.updatedAt ? new Date(contact.updatedAt) : new Date(),
+      }));
+      
+      setContacts(validContacts);
+      return true;
+    } catch (error) {
+      console.error('Failed to import contacts:', error);
+      return false;
+    }
+  };
+
+  const clearContacts = () => {
+    setContacts([]);
+  };
+
+  const value: ContactsContextType = {
+    contacts,
+    addContact,
+    updateContact,
+    deleteContact,
+    getContactByPhoneNumber,
+    searchContacts,
+    exportContacts,
+    importContacts,
+    clearContacts,
+  };
+
+  return <ContactsContext.Provider value={value}>{children}</ContactsContext.Provider>;
+};
+
+export const useContacts = () => {
+  const context = useContext(ContactsContext);
+  if (context === undefined) {
+    throw new Error('useContacts must be used within a ContactsProvider');
+  }
+  return context;
+};

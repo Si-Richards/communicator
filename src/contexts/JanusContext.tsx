@@ -6,6 +6,8 @@ import { loadJanus, getJanus } from '@/lib/janusLoader'
 import { AudioQualityOptimizer, getOptimalAudioConstraints } from '@/lib/audioQualityOptimizer'
 import { ringtoneManager } from '@/lib/ringtoneManager'
 import { useSettings } from './SettingsContext'
+import { useContacts } from './ContactsContext'
+import { useCallHistory } from './CallHistoryContext'
 import { audioDeviceManager } from '@/lib/audioDeviceManager'
 import { logger } from '@/lib/logger'
 
@@ -42,6 +44,8 @@ interface CallState {
   incomingCallerId?: string
   incomingCallId?: string
   remoteJsep?: any
+  direction?: 'incoming' | 'outgoing'
+  callerId?: string
 }
 
 interface JanusContextType {
@@ -73,6 +77,8 @@ interface JanusProviderProps {
 
 export const JanusProvider = ({ children }: JanusProviderProps) => {
   const { settings } = useSettings()
+  const { getContactByPhoneNumber } = useContacts()
+  const { addCallRecord } = useCallHistory()
   const [callState, setCallState] = useState<CallState>({
     status: 'disconnected',
     registered: false,
@@ -80,6 +86,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     doNotDisturb: false,
     isOnHold: false
   })
+  
+  // Track call timing for history
+  const callStartTimeRef = useRef<Date | null>(null)
   
   const { dismiss } = useToast()
   const janusRef = useRef<any>(null)
@@ -283,13 +292,16 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         incomingCallToastRef.current = null
       }
       
+      callStartTimeRef.current = new Date()
       setCallState(prev => ({ 
         ...prev, 
         status: 'incoming', 
         sipStatus: `Incoming call from ${phoneNumber}`,
         incomingCallerId: callerId,
         incomingCallId: msg.call_id || msg.result?.call_id,
-        remoteJsep: jsep
+        remoteJsep: jsep,
+        direction: 'incoming',
+        callerId: phoneNumber
       }))
       
       // Play incoming ringtone if enabled
@@ -322,6 +334,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       })
       console.log("Toast created with ref:", incomingCallToastRef.current)
     } else if (event === "calling") {
+      if (!callStartTimeRef.current) {
+        callStartTimeRef.current = new Date()
+      }
       setCallState(prev => ({ ...prev, status: 'calling', sipStatus: 'Calling...' }))
       // Play outgoing ringtone if enabled
       if (settings.ringtones.enabled) {
@@ -349,6 +364,24 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         incomingCallToastRef.current.dismiss()
         incomingCallToastRef.current = null
       }
+      
+      // Log call to history when call ends
+      if (callState.callerId && callStartTimeRef.current) {
+        const endTime = new Date()
+        const duration = Math.floor((endTime.getTime() - callStartTimeRef.current.getTime()) / 1000)
+        const contact = getContactByPhoneNumber(callState.callerId)
+        
+        addCallRecord({
+          phoneNumber: callState.callerId,
+          contactName: contact?.name,
+          duration: duration,
+          timestamp: callStartTimeRef.current,
+          type: callState.direction === 'outgoing' ? 'outgoing' : 'incoming',
+          answered: callState.status === 'incall'
+        })
+      }
+      
+      callStartTimeRef.current = null
       
       // Handle specific SIP error codes
       if (sipCode) {
@@ -563,6 +596,21 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         incomingCallToastRef.current = null
       }
       
+      // Log missed call for incoming calls
+      if (callState.direction === 'incoming' && callState.callerId && callStartTimeRef.current) {
+        const contact = getContactByPhoneNumber(callState.callerId)
+        
+        addCallRecord({
+          phoneNumber: callState.callerId,
+          contactName: contact?.name,
+          duration: 0,
+          timestamp: callStartTimeRef.current,
+          type: 'missed',
+          answered: false
+        })
+      }
+      
+      callStartTimeRef.current = null
       setCallState(prev => ({ 
         ...prev, 
         status: 'connected', 
@@ -869,6 +917,21 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     const decline = { request: "decline" }
     sipPluginRef.current.send({ message: decline })
     
+    // Log rejected call for incoming calls
+    if (callState.direction === 'incoming' && callState.callerId && callStartTimeRef.current) {
+      const contact = getContactByPhoneNumber(callState.callerId)
+      
+      addCallRecord({
+        phoneNumber: callState.callerId,
+        contactName: contact?.name,
+        duration: 0,
+        timestamp: callStartTimeRef.current,
+        type: 'missed',
+        answered: false
+      })
+    }
+    
+    callStartTimeRef.current = null
     setCallState(prev => ({ 
       ...prev, 
       status: 'connected', 
@@ -946,6 +1009,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       sipPluginRef.current.createOffer({
         tracks: [{ type: "audio", capture: true, recv: true }],
         success: (jsep: any) => {
+          callStartTimeRef.current = new Date()
+          setCallState(prev => ({ 
+            ...prev, 
+            direction: 'outgoing',
+            callerId: processedNumber 
+          }))
           sipPluginRef.current.send({ message: call, jsep })
         },
         error: (error: any) => {
@@ -976,15 +1045,32 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const hangupCall = useCallback(() => {
     if (!sipPluginRef.current) return
 
+    // Log call to history before hanging up
+    if (callState.callerId && callStartTimeRef.current) {
+      const endTime = new Date()
+      const duration = Math.floor((endTime.getTime() - callStartTimeRef.current.getTime()) / 1000)
+      const contact = getContactByPhoneNumber(callState.callerId)
+      
+      addCallRecord({
+        phoneNumber: callState.callerId,
+        contactName: contact?.name,
+        duration: duration,
+        timestamp: callStartTimeRef.current,
+        type: callState.direction === 'outgoing' ? 'outgoing' : 'incoming',
+        answered: callState.status === 'incall'
+      })
+    }
+
     const hangup = { request: "hangup" }
     sipPluginRef.current.send({ message: hangup })
     
+    callStartTimeRef.current = null
     setCallState(prev => ({ 
       ...prev, 
       status: 'connected',
       isOnHold: false
     }))
-  }, [])
+  }, [callState, getContactByPhoneNumber, addCallRecord])
 
   const holdCall = useCallback(() => {
     if (!sipPluginRef.current) return
