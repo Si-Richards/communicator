@@ -14,7 +14,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, User, Eye, EyeOff } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -202,7 +202,7 @@ const SettingsPage = () => {
               Devices
             </TabsTrigger>
             <TabsTrigger value="sip-account" className="flex items-center gap-2">
-              <User className="h-4 w-4" />
+              <Phone className="h-4 w-4" />
               SIP Account
             </TabsTrigger>
             <TabsTrigger value="advanced" className="flex items-center gap-2">
