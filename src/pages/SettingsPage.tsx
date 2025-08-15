@@ -466,14 +466,6 @@ const SettingsPage = () => {
                     </div>
                   </div>
 
-                  {settings.sipAccount.username && (
-                    <div className="space-y-2">
-                      <Label>SIP URI Preview</Label>
-                      <div className="p-3 bg-muted rounded-md font-mono text-sm">
-                        sip:{settings.sipAccount.username}@hpbx.sipconvergence.co.uk:5060
-                      </div>
-                    </div>
-                  )}
 
                   {(!settings.sipAccount.username || !settings.sipAccount.password) && (
                     <div className="p-3 bg-warning/10 border border-warning/20 rounded-md">
@@ -627,18 +619,6 @@ const SettingsPage = () => {
 
                   <Separator />
 
-                  <div>
-                    <h4 className="text-sm font-medium text-foreground mb-2">Features</h4>
-                    <ul className="text-sm text-muted-foreground space-y-1">
-                      <li>• Voice calling with WebRTC technology</li>
-                      <li>• Contact management and organization</li>
-                      <li>• Call history tracking and analytics</li>
-                      <li>• Advanced audio quality optimization</li>
-                      <li>• Real-time audio device management</li>
-                      <li>• Comprehensive logging and debugging</li>
-                    </ul>
-                  </div>
-
                   <Separator />
 
                   <div>
@@ -666,10 +646,27 @@ const SettingsPage = () => {
 
                   <div>
                     <h4 className="text-sm font-medium text-foreground mb-2">Legal</h4>
-                    <div className="text-xs text-muted-foreground space-y-1">
+                    <div className="text-xs text-muted-foreground space-y-2">
                       <p>© 2025 VoiceHost Limited. All rights reserved.</p>
                       <p>This software is licensed under the MIT License.</p>
-                      <p>WebRTC technology provided by the WebRTC Foundation.</p>
+                      
+                      <div className="mt-4">
+                        <h5 className="text-xs font-medium text-foreground mb-2">Third-party Licenses</h5>
+                        <div className="space-y-1">
+                          <p>• React (MIT License) - Meta Platforms, Inc.</p>
+                          <p>• Tailwind CSS (MIT License) - Tailwind Labs Inc.</p>
+                          <p>• Radix UI (MIT License) - WorkOS</p>
+                          <p>• Lucide React (ISC License) - Lucide Contributors</p>
+                          <p>• React Router (MIT License) - Remix Software Inc.</p>
+                          <p>• TypeScript (Apache License 2.0) - Microsoft Corporation</p>
+                          <p>• Vite (MIT License) - Evan You</p>
+                          <p>• Class Variance Authority (Apache License 2.0) - Joe Bell</p>
+                          <p>• Date-fns (MIT License) - Sasha Koss</p>
+                          <p>• React Hook Form (MIT License) - Bill Luo</p>
+                          <p>• Zod (MIT License) - Colin McDonnell</p>
+                          <p>• WebRTC technology provided by the WebRTC Foundation</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
