@@ -683,6 +683,17 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     })
   }, [retryCount])
 
+  // Create a stable message handler ref that always uses current functions
+  const messageHandlerRef = useRef<((msg: any, jsep?: any) => void) | null>(null)
+  
+  // Update the message handler ref whenever handleSipMessage changes
+  useEffect(() => {
+    messageHandlerRef.current = (msg: any, jsep?: any) => {
+      console.log("SIP message received:", msg)
+      handleSipMessage(msg, jsep)
+    }
+  }, [handleSipMessage])
+
   const attachSipPlugin = useCallback(() => {
     if (!janusRef.current) return;
     
@@ -704,8 +715,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         })
       },
       onmessage: (msg: any, jsep?: any) => {
-        console.log("SIP message received:", msg)
-        handleSipMessage(msg, jsep)
+        // Use the stable ref to always call the current handler
+        if (messageHandlerRef.current) {
+          messageHandlerRef.current(msg, jsep)
+        }
       },
       onlocaltrack: (track: MediaStreamTrack, on: boolean) => {
         console.log("Local track:", track, on)
