@@ -46,9 +46,6 @@ interface CallState {
   remoteJsep?: any
   direction?: 'incoming' | 'outgoing'
   callerId?: string
-  transferInProgress?: boolean
-  transferId?: string
-  consultationCall?: string
 }
 
 interface JanusContextType {
@@ -59,8 +56,6 @@ interface JanusContextType {
   hangupCall: () => void
   holdCall: () => void
   resumeCall: () => void
-  blindTransfer: (targetNumber: string) => Promise<void>
-  attendedTransfer: (targetNumber: string) => Promise<void>
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
@@ -113,18 +108,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const extractPhoneNumber = useCallback((sipUri: string): string => {
     if (!sipUri) return "Unknown"
     
-    // Handle different SIP URI formats
-    // sip:07880498653@185.91.41.21
-    // sip:16331*201@hpbx.sipconvergence.co.uk
+    // Extract number from SIP URI format like "sip:16331*201@hpbx.sipconvergence.co.uk"
     const match = sipUri.match(/^sip:([^@]+)@/)
     if (match && match[1]) {
-      let number = match[1]
-      // For internal extensions (contains asterisk), extract the extension part
-      if (number.includes('*')) {
-        number = number.split('*')[1]
-      }
-      // For external numbers, keep them as is (don't remove non-digits for international format)
-      return number
+      // Remove asterisk and other special characters, keep only digits
+      return match[1].replace(/[^0-9]/g, '')
     }
     
     return sipUri
@@ -363,27 +351,6 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         title: "Call Connected",
         description: "Call is now active",
       })
-    } else if (event === "transferring") {
-      // Handle transfer initiation response
-      logger.info('Transfer request acknowledged', undefined, 'JanusContext')
-      setCallState(prev => ({ ...prev, transferInProgress: true }))
-      toast({
-        title: "Transfer Initiated",
-        description: "Transfer request sent",
-      })
-    } else if (event === "transfer") {
-      // Handle incoming REFER (transfer request)
-      const { refer_id, refer_to, replaces } = msg.result || {}
-      logger.info(`Incoming transfer request: ${refer_to}, refer_id: ${refer_id}`, undefined, 'JanusContext')
-      
-      // For now, auto-accept transfers (can be made configurable later)
-      if (refer_id && refer_to) {
-        // This would require creating a new handle for the transferred call
-        toast({
-          title: "Transfer Received",
-          description: `Transfer request to ${refer_to}`,
-        })
-      }
     } else if (event === "hangup") {
       // Handle SIP response codes for call failures
       const sipCode = msg.result?.code || msg.code
@@ -415,14 +382,6 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       }
       
       callStartTimeRef.current = null
-      
-      // Reset transfer state on hangup
-      setCallState(prev => ({ 
-        ...prev, 
-        transferInProgress: false,
-        transferId: undefined,
-        consultationCall: undefined
-      }))
       
       // Handle specific SIP error codes
       if (sipCode) {
@@ -1147,89 +1106,6 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }))
   }, [])
 
-  const blindTransfer = useCallback(async (targetNumber: string) => {
-    if (!sipPluginRef.current || callState.status !== 'incall') {
-      toast({
-        title: "Cannot Transfer",
-        description: "No active call to transfer",
-        variant: "destructive"
-      })
-      return
-    }
-
-    try {
-      const processedNumber = preprocessPhoneNumber(targetNumber)
-      logger.info(`Blind transfer to: ${targetNumber} -> ${processedNumber}`, undefined, 'JanusContext')
-
-      const transfer = {
-        request: "transfer",
-        uri: `sip:${processedNumber}@hpbx.sipconvergence.co.uk`,
-        replace: ""  // Empty string for blind transfer
-      }
-
-      sipPluginRef.current.send({ message: transfer })
-      
-      setCallState(prev => ({ ...prev, transferInProgress: true }))
-      
-      logger.info(`Blind transfer initiated to ${processedNumber}`, undefined, 'JanusContext')
-    } catch (error) {
-      console.error("Blind transfer failed:", error)
-      toast({
-        title: "Transfer Failed",
-        description: "Could not complete transfer",
-        variant: "destructive"
-      })
-    }
-  }, [callState.status, preprocessPhoneNumber])
-
-  const attendedTransfer = useCallback(async (targetNumber: string) => {
-    if (!sipPluginRef.current || callState.status !== 'incall') {
-      toast({
-        title: "Cannot Transfer",
-        description: "No active call to transfer",
-        variant: "destructive"
-      })
-      return
-    }
-
-    try {
-      const processedNumber = preprocessPhoneNumber(targetNumber)
-      logger.info(`Attended transfer to: ${targetNumber} -> ${processedNumber}`, undefined, 'JanusContext')
-
-      // For attended transfer, we need to place the current call on hold
-      // and initiate a consultation call first
-      holdCall()
-      
-      // Store the transfer target for later completion
-      setCallState(prev => ({ 
-        ...prev, 
-        transferInProgress: true,
-        consultationCall: processedNumber
-      }))
-      
-      toast({
-        title: "Attended Transfer Initiated",
-        description: `Call placed on hold. To complete, use a second line to call ${targetNumber}, then complete the transfer.`,
-        variant: "default"
-      })
-      
-      // Note: Full attended transfer requires multiple call handles
-      // This is a simplified implementation - in production, you would:
-      // 1. Create a second handle
-      // 2. Make a consultation call to the target
-      // 3. Allow conversation with the target
-      // 4. Send transfer request with the consultation call's call-ID in 'replace'
-      
-    } catch (error) {
-      console.error("Attended transfer failed:", error)
-      toast({
-        title: "Transfer Failed",
-        description: "Could not initiate attended transfer",
-        variant: "destructive"
-      })
-    }
-  }, [callState.status, holdCall, preprocessPhoneNumber])
-
   const disconnect = useCallback(() => {
     // Clear any pending retry timeout
     if (retryTimeoutRef.current) {
@@ -1297,8 +1173,6 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     hangupCall,
     holdCall,
     resumeCall,
-    blindTransfer,
-    attendedTransfer,
     disconnect,
     reconnect,
     setDoNotDisturb
