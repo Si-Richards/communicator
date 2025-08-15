@@ -14,6 +14,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
+import { useJanusContext } from '@/contexts/JanusContext';
 import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff } from 'lucide-react';
 const SettingsPage = () => {
   const {
@@ -30,6 +31,7 @@ const SettingsPage = () => {
   const {
     toast
   } = useToast();
+  const { callState, reregisterSip } = useJanusContext();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -466,6 +468,27 @@ const SettingsPage = () => {
                     </div>
                   </div>
 
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Label>Registration Status</Label>
+                        <div className={`h-2 w-2 rounded-full ${
+                          callState.registered ? 'bg-green-500' : 'bg-red-500'
+                        }`} />
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {callState.sipStatus}
+                      </p>
+                    </div>
+                    <Button
+                      onClick={reregisterSip}
+                      disabled={!settings.sipAccount.username || !settings.sipAccount.password}
+                      variant="outline"
+                      size="sm"
+                    >
+                      Re-register
+                    </Button>
+                  </div>
 
                   {(!settings.sipAccount.username || !settings.sipAccount.password) && (
                     <div className="p-3 bg-warning/10 border border-warning/20 rounded-md">

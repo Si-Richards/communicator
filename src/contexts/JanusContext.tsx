@@ -58,6 +58,7 @@ interface JanusContextType {
   resumeCall: () => void
   disconnect: () => void
   reconnect: () => Promise<void>
+  reregisterSip: () => void
   setDoNotDisturb: (enabled: boolean) => void
 }
 
@@ -1182,6 +1183,40 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     await initJanus()
   }, [initJanus])
 
+  const reregisterSip = useCallback(() => {
+    if (!sipPluginRef.current) {
+      toast({
+        title: "Cannot Re-register",
+        description: "SIP connection not established",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    if (!settings.sipAccount.username || !settings.sipAccount.password) {
+      toast({
+        title: "Cannot Re-register",
+        description: "Username and password are required",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    registerSipAccount()
+    toast({
+      title: "Re-registering",
+      description: "Attempting to re-register SIP account...",
+    })
+  }, [registerSipAccount, settings.sipAccount.username, settings.sipAccount.password])
+
+  // Automatically re-register when SIP credentials change
+  useEffect(() => {
+    if (sipPluginRef.current && settings.sipAccount.username && settings.sipAccount.password) {
+      logger.info('SIP credentials changed, attempting re-registration', undefined, 'JanusContext')
+      registerSipAccount()
+    }
+  }, [settings.sipAccount.username, settings.sipAccount.password, registerSipAccount])
+
   const value: JanusContextType = {
     callState,
     makeCall,
@@ -1192,6 +1227,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     resumeCall,
     disconnect,
     reconnect,
+    reregisterSip,
     setDoNotDisturb
   }
 
