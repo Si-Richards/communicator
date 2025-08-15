@@ -95,201 +95,6 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const maxRetries = 3
   const retryDelay = 3000
 
-  // Initialize Janus
-  const initJanus = useCallback(async () => {
-    try {
-      setCallState(prev => ({ ...prev, status: 'connecting', sipStatus: 'Initializing...' }))
-
-      // Load Janus library first
-      await loadJanus()
-      const Janus = getJanus()
-
-      // Initialize Janus library
-      Janus.init({
-        debug: settings.logs.level === 'debug' ? "all" : false,
-        callback: () => {
-          logger.info("Janus initialized successfully", undefined, 'JanusContext')
-          connectToJanus()
-        }
-      })
-    } catch (error) {
-      logger.error("Failed to initialize Janus", error, 'JanusContext')
-      setCallState(prev => ({ ...prev, status: 'error', sipStatus: `Failed to initialize: ${error instanceof Error ? error.message : 'Unknown error'}` }))
-      toast({
-        title: "Connection Error",
-        description: "Failed to initialize WebRTC library",
-        variant: "destructive"
-      })
-    }
-  }, [])
-
-  const connectToJanus = useCallback(() => {
-    // Create Janus session with optimized settings for audio quality
-    const Janus = getJanus()
-    janusRef.current = new Janus({
-      server: "wss://devrtc.voicehost.io:443",
-      apisecret: "overlord",
-      // ICE servers for better connectivity
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
-      ],
-      // Jitter buffer configuration for audio quality
-      jitterBuffer: {
-        minDelay: 20,
-        maxDelay: 250,
-        targetDelay: 50
-      },
-      // Network adaptation settings
-      rtcConfiguration: {
-        iceConnectionPolicy: "all",
-        iceCandidatePoolSize: 10,
-        bundlePolicy: "max-bundle",
-        rtcpMuxPolicy: "require"
-      },
-      success: () => {
-        console.log("Connected to Janus Gateway with optimized settings")
-        // Reset retry state on successful connection
-        setRetryCount(0)
-        setIsRetrying(false)
-        if (retryTimeoutRef.current) {
-          clearTimeout(retryTimeoutRef.current)
-          retryTimeoutRef.current = null
-        }
-        setCallState(prev => ({ ...prev, status: 'connected', sipStatus: 'Connected to server' }))
-        attachSipPlugin()
-      },
-      error: (error: any) => {
-        console.error("Failed to connect to Janus:", error)
-        
-        // Check if we can retry
-        if (retryCount < maxRetries) {
-          setIsRetrying(true)
-          setRetryCount(prev => prev + 1)
-          setCallState(prev => ({ 
-            ...prev, 
-            status: 'connecting', 
-            sipStatus: `Retrying connection... (${retryCount + 1}/${maxRetries})` 
-          }))
-          
-          // Retry after delay
-          retryTimeoutRef.current = setTimeout(() => {
-            console.log(`Retrying connection attempt ${retryCount + 1}/${maxRetries}`)
-            connectToJanus()
-          }, retryDelay)
-        } else {
-          // All retries exhausted
-          setIsRetrying(false)
-          setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'Connection failed after retries' }))
-          toast({
-            title: "Connection Error",
-            description: `Failed to connect to Janus server after ${maxRetries} attempts`,
-            variant: "destructive"
-          })
-        }
-      },
-      destroyed: () => {
-        console.log("Janus session destroyed")
-        setCallState(prev => ({ ...prev, status: 'disconnected', sipStatus: 'Disconnected' }))
-      }
-    })
-  }, [])
-
-  const attachSipPlugin = useCallback(() => {
-    if (!janusRef.current) return;
-    
-    janusRef.current.attach({
-      plugin: "janus.plugin.sip",
-      success: (pluginHandle: any) => {
-        console.log("SIP plugin attached successfully")
-        sipPluginRef.current = pluginHandle
-        setCallState(prev => ({ ...prev, sipStatus: 'SIP plugin ready' }))
-        registerSipAccount()
-      },
-      error: (error: any) => {
-        console.error("Failed to attach SIP plugin:", error)
-        setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'SIP plugin failed' }))
-        toast({
-          title: "SIP Error",
-          description: "Failed to attach SIP plugin",
-          variant: "destructive"
-        })
-      },
-      onmessage: (msg: any, jsep?: any) => {
-        console.log("SIP message received:", msg)
-        handleSipMessage(msg, jsep)
-      },
-      onlocaltrack: (track: MediaStreamTrack, on: boolean) => {
-        console.log("Local track:", track, on)
-        if (track.kind === 'audio' && on) {
-          const stream = new MediaStream([track])
-          setCallState(prev => ({ ...prev, localStream: stream }))
-        }
-      },
-      onremotetrack: (track: MediaStreamTrack, mindex: number, on: boolean) => {
-        console.log("Remote track:", track, mindex, on)
-        if (track.kind === 'audio' && on) {
-          const stream = new MediaStream([track])
-          setCallState(prev => ({ ...prev, remoteStream: stream }))
-          
-          // Enhanced audio playback with optimized settings
-          const audioElement = document.createElement('audio')
-          audioElement.srcObject = stream
-          audioElement.autoplay = true
-          audioElement.controls = false
-          audioElement.muted = false
-          
-          // Optimize for low latency and quality
-          audioElement.setAttribute('playsinline', 'true')
-          audioElement.setAttribute('webkit-playsinline', 'true')
-          
-          // Set audio context for better processing
-          try {
-            if ('audioTracks' in stream) {
-              const audioTracks = stream.getAudioTracks()
-              if (audioTracks.length > 0) {
-                const audioTrack = audioTracks[0]
-                const settings = audioTrack.getSettings()
-                console.log("Remote audio track settings:", settings)
-              }
-            }
-          } catch (error) {
-            console.warn("Could not access audio track settings:", error)
-          }
-          
-          audioElement.play().catch(error => {
-            console.error("Failed to play remote audio:", error)
-          })
-        }
-      },
-      oncleanup: () => {
-        console.log("SIP plugin cleanup - call ended")
-        setCallState(prev => ({ 
-          ...prev, 
-          // Keep registration status unchanged during call cleanup
-          sipStatus: prev.registered ? 'Online' : prev.sipStatus,
-          localStream: undefined,
-          remoteStream: undefined
-        }))
-      }
-    })
-  }, [])
-
-  const registerSipAccount = useCallback(() => {
-    if (!sipPluginRef.current) return
-
-    const register = {
-      request: "register",
-      username: "sip:16331*201@hpbx.sipconvergence.co.uk",
-      secret: "am4tsQwM53YYT!cw",
-      host: "hpbx.sipconvergence.co.uk:5060",
-      send_register: true
-    }
-
-    setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
-    sipPluginRef.current.send({ message: register })
-  }, [])
-
   // Utility function to extract phone number from SIP URI
   const extractPhoneNumber = useCallback((sipUri: string): string => {
     if (!sipUri) return "Unknown"
@@ -303,94 +108,6 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     
     return sipUri
   }, [])
-
-  const acceptCall = useCallback(async () => {
-    console.log("AcceptCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
-    
-    if (!sipPluginRef.current || callState.status !== 'incoming') {
-      console.log("Cannot accept call - Invalid state")
-      toast({
-        title: "Cannot Accept Call", 
-        description: "No incoming call to accept",
-        variant: "destructive"
-      })
-      return
-    }
-
-    if (!callState.remoteJsep) {
-      console.log("Cannot accept call - Missing remote JSEP")
-      toast({
-        title: "Call Failed",
-        description: "Missing remote session description", 
-        variant: "destructive"
-      })
-      return
-    }
-
-    try {
-      console.log("Getting user media for accept call")
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-          sampleSize: 16,
-          channelCount: 1
-        }, 
-        video: false 
-      })
-
-      const accept = { request: "accept" }
-
-      sipPluginRef.current.createAnswer({
-        jsep: callState.remoteJsep,
-        tracks: [{ type: "audio", capture: true, recv: true }],
-        success: (jsep: any) => {
-          console.log("Accept call - create answer success")
-          sipPluginRef.current.send({ message: accept, jsep })
-          setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
-        },
-        error: (error: any) => {
-          console.error("Create answer error:", error)
-          toast({
-            title: "Failed to Accept Call",
-            description: error.message || "Could not create answer",
-            variant: "destructive"
-          })
-        }
-      })
-    } catch (error) {
-      console.error("Failed to get microphone access:", error)
-      toast({
-        title: "Microphone Error",
-        description: "Cannot access microphone to accept call",
-        variant: "destructive"
-      })
-    }
-  }, [callState.status, callState.remoteJsep])
-
-  const rejectCall = useCallback(() => {
-    console.log("RejectCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
-    
-    if (!sipPluginRef.current || callState.status !== 'incoming') {
-      console.log("Cannot reject call - Invalid state")
-      return
-    }
-
-    console.log("Sending decline message")
-    const decline = { request: "decline" }
-    sipPluginRef.current.send({ message: decline })
-    
-    setCallState(prev => ({ 
-      ...prev, 
-      status: 'connected', 
-      sipStatus: callState.registered ? 'Online' : 'Offline',
-      incomingCallerId: undefined,
-      incomingCallId: undefined,
-      remoteJsep: undefined
-    }))
-  }, [callState.status, callState.registered])
 
   // Direct action functions that bypass state validation for toast handlers
   const directAcceptCall = useCallback(async () => {
@@ -841,7 +558,290 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     if (jsep) {
       sipPluginRef.current.handleRemoteJsep({ jsep })
     }
-  }, [callState.registered, extractPhoneNumber, handleToastAcceptCall, handleToastRejectCall])
+  }, [callState.registered, callState.doNotDisturb, extractPhoneNumber, handleToastAcceptCall, handleToastRejectCall, settings])
+
+  // Initialize Janus
+  const initJanus = useCallback(async () => {
+    try {
+      setCallState(prev => ({ ...prev, status: 'connecting', sipStatus: 'Initializing...' }))
+
+      // Load Janus library first
+      await loadJanus()
+      const Janus = getJanus()
+
+      // Initialize Janus library
+      Janus.init({
+        debug: settings.logs.level === 'debug' ? "all" : false,
+        callback: () => {
+          logger.info("Janus initialized successfully", undefined, 'JanusContext')
+          connectToJanus()
+        }
+      })
+    } catch (error) {
+      logger.error("Failed to initialize Janus", error, 'JanusContext')
+      setCallState(prev => ({ ...prev, status: 'error', sipStatus: `Failed to initialize: ${error instanceof Error ? error.message : 'Unknown error'}` }))
+      toast({
+        title: "Connection Error",
+        description: "Failed to initialize WebRTC library",
+        variant: "destructive"
+      })
+    }
+  }, [])
+
+  const connectToJanus = useCallback(() => {
+    // Create Janus session with optimized settings for audio quality
+    const Janus = getJanus()
+    janusRef.current = new Janus({
+      server: "wss://devrtc.voicehost.io:443",
+      apisecret: "overlord",
+      // ICE servers for better connectivity
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" }
+      ],
+      // Jitter buffer configuration for audio quality
+      jitterBuffer: {
+        minDelay: 20,
+        maxDelay: 250,
+        targetDelay: 50
+      },
+      // Network adaptation settings
+      rtcConfiguration: {
+        iceConnectionPolicy: "all",
+        iceCandidatePoolSize: 10,
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require"
+      },
+      success: () => {
+        console.log("Connected to Janus Gateway with optimized settings")
+        // Reset retry state on successful connection
+        setRetryCount(0)
+        setIsRetrying(false)
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current)
+          retryTimeoutRef.current = null
+        }
+        setCallState(prev => ({ ...prev, status: 'connected', sipStatus: 'Connected to server' }))
+        attachSipPlugin()
+      },
+      error: (error: any) => {
+        console.error("Failed to connect to Janus:", error)
+        
+        // Check if we can retry
+        if (retryCount < maxRetries) {
+          setIsRetrying(true)
+          setRetryCount(prev => prev + 1)
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'connecting', 
+            sipStatus: `Retrying connection... (${retryCount + 1}/${maxRetries})` 
+          }))
+          
+          // Retry after delay
+          retryTimeoutRef.current = setTimeout(() => {
+            console.log(`Retrying connection attempt ${retryCount + 1}/${maxRetries}`)
+            connectToJanus()
+          }, retryDelay)
+        } else {
+          // All retries exhausted
+          setIsRetrying(false)
+          setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'Connection failed after retries' }))
+          toast({
+            title: "Connection Error",
+            description: `Failed to connect to Janus server after ${maxRetries} attempts`,
+            variant: "destructive"
+          })
+        }
+      },
+      destroyed: () => {
+        console.log("Janus session destroyed")
+        setCallState(prev => ({ ...prev, status: 'disconnected', sipStatus: 'Disconnected' }))
+      }
+    })
+  }, [retryCount])
+
+  const attachSipPlugin = useCallback(() => {
+    if (!janusRef.current) return;
+    
+    janusRef.current.attach({
+      plugin: "janus.plugin.sip",
+      success: (pluginHandle: any) => {
+        console.log("SIP plugin attached successfully")
+        sipPluginRef.current = pluginHandle
+        setCallState(prev => ({ ...prev, sipStatus: 'SIP plugin ready' }))
+        registerSipAccount()
+      },
+      error: (error: any) => {
+        console.error("Failed to attach SIP plugin:", error)
+        setCallState(prev => ({ ...prev, status: 'error', sipStatus: 'SIP plugin failed' }))
+        toast({
+          title: "SIP Error",
+          description: "Failed to attach SIP plugin",
+          variant: "destructive"
+        })
+      },
+      onmessage: (msg: any, jsep?: any) => {
+        console.log("SIP message received:", msg)
+        handleSipMessage(msg, jsep)
+      },
+      onlocaltrack: (track: MediaStreamTrack, on: boolean) => {
+        console.log("Local track:", track, on)
+        if (track.kind === 'audio' && on) {
+          const stream = new MediaStream([track])
+          setCallState(prev => ({ ...prev, localStream: stream }))
+        }
+      },
+      onremotetrack: (track: MediaStreamTrack, mindex: number, on: boolean) => {
+        console.log("Remote track:", track, mindex, on)
+        if (track.kind === 'audio' && on) {
+          const stream = new MediaStream([track])
+          setCallState(prev => ({ ...prev, remoteStream: stream }))
+          
+          // Enhanced audio playback with optimized settings
+          const audioElement = document.createElement('audio')
+          audioElement.srcObject = stream
+          audioElement.autoplay = true
+          audioElement.controls = false
+          audioElement.muted = false
+          
+          // Optimize for low latency and quality
+          audioElement.setAttribute('playsinline', 'true')
+          audioElement.setAttribute('webkit-playsinline', 'true')
+          
+          // Set audio context for better processing
+          try {
+            if ('audioTracks' in stream) {
+              const audioTracks = stream.getAudioTracks()
+              if (audioTracks.length > 0) {
+                const audioTrack = audioTracks[0]
+                const settings = audioTrack.getSettings()
+                console.log("Remote audio track settings:", settings)
+              }
+            }
+          } catch (error) {
+            console.warn("Could not access audio track settings:", error)
+          }
+          
+          audioElement.play().catch(error => {
+            console.error("Failed to play remote audio:", error)
+          })
+        }
+      },
+      oncleanup: () => {
+        console.log("SIP plugin cleanup - call ended")
+        setCallState(prev => ({ 
+          ...prev, 
+          // Keep registration status unchanged during call cleanup
+          sipStatus: prev.registered ? 'Online' : prev.sipStatus,
+          localStream: undefined,
+          remoteStream: undefined
+        }))
+      }
+    })
+  }, [handleSipMessage])
+
+  const registerSipAccount = useCallback(() => {
+    if (!sipPluginRef.current) return
+
+    const register = {
+      request: "register",
+      username: "sip:16331*201@hpbx.sipconvergence.co.uk",
+      secret: "am4tsQwM53YYT!cw",
+      host: "hpbx.sipconvergence.co.uk:5060",
+      send_register: true
+    }
+
+    setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
+    sipPluginRef.current.send({ message: register })
+  }, [])
+
+  const acceptCall = useCallback(async () => {
+    console.log("AcceptCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
+    
+    if (!sipPluginRef.current || callState.status !== 'incoming') {
+      console.log("Cannot accept call - Invalid state")
+      toast({
+        title: "Cannot Accept Call", 
+        description: "No incoming call to accept",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!callState.remoteJsep) {
+      console.log("Cannot accept call - Missing remote JSEP")
+      toast({
+        title: "Call Failed",
+        description: "Missing remote session description", 
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      console.log("Getting user media for accept call")
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          sampleSize: 16,
+          channelCount: 1
+        }, 
+        video: false 
+      })
+
+      const accept = { request: "accept" }
+
+      sipPluginRef.current.createAnswer({
+        jsep: callState.remoteJsep,
+        tracks: [{ type: "audio", capture: true, recv: true }],
+        success: (jsep: any) => {
+          console.log("Accept call - create answer success")
+          sipPluginRef.current.send({ message: accept, jsep })
+          setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
+        },
+        error: (error: any) => {
+          console.error("Create answer error:", error)
+          toast({
+            title: "Failed to Accept Call",
+            description: error.message || "Could not create answer",
+            variant: "destructive"
+          })
+        }
+      })
+    } catch (error) {
+      console.error("Failed to get microphone access:", error)
+      toast({
+        title: "Microphone Error",
+        description: "Cannot access microphone to accept call",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status, callState.remoteJsep])
+
+  const rejectCall = useCallback(() => {
+    console.log("RejectCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
+    
+    if (!sipPluginRef.current || callState.status !== 'incoming') {
+      console.log("Cannot reject call - Invalid state")
+      return
+    }
+
+    console.log("Sending decline message")
+    const decline = { request: "decline" }
+    sipPluginRef.current.send({ message: decline })
+    
+    setCallState(prev => ({ 
+      ...prev, 
+      status: 'connected', 
+      sipStatus: callState.registered ? 'Online' : 'Offline',
+      incomingCallerId: undefined,
+      incomingCallId: undefined,
+      remoteJsep: undefined
+    }))
+  }, [callState.status, callState.registered])
 
   // Utility function to preprocess phone numbers for SIP extensions
   const preprocessPhoneNumber = useCallback((phoneNumber: string): string => {
@@ -929,7 +929,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         variant: "destructive"
       })
     }
-  }, [callState.registered])
+  }, [callState.registered, preprocessPhoneNumber, settings])
 
   const setDoNotDisturb = useCallback((enabled: boolean) => {
     setCallState(prev => ({ ...prev, doNotDisturb: enabled }))
