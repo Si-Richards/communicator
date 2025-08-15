@@ -877,17 +877,13 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     const register = {
       request: "register",
       username: `sip:${normalizedUsername}@hpbx.sipconvergence.co.uk`,
-      authuser: normalizedUsername,
       secret: settings.sip.password,
-      proxy: "sip:hpbx.sipconvergence.co.uk:5060;transport=udp",
       realm: "hpbx.sipconvergence.co.uk",
       send_register: true
     }
 
     console.log("Registering SIP account with:", { 
       username: register.username, 
-      authuser: register.authuser,
-      proxy: register.proxy,
       realm: register.realm
     })
 
