@@ -419,9 +419,9 @@ const SettingsPage = () => {
           <TabsContent value="sip-account" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>SIP Account Configuration</CardTitle>
+                <CardTitle>Account Configuration</CardTitle>
                 <CardDescription>
-                  Configure your SIP account credentials for voice calling
+                  Configure your account credentials
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -435,7 +435,7 @@ const SettingsPage = () => {
                       onChange={(e) => updateSipAccount({ username: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Enter your account identifier (the part before @hpbx.sipconvergence.co.uk)
+                      Enter your account identifier
                     </p>
                   </div>
 
@@ -478,7 +478,7 @@ const SettingsPage = () => {
                   {(!settings.sipAccount.username || !settings.sipAccount.password) && (
                     <div className="p-3 bg-warning/10 border border-warning/20 rounded-md">
                       <p className="text-sm text-warning-foreground">
-                        Both username and password are required to enable SIP calling.
+                        Both username and password are required to enable calling.
                       </p>
                     </div>
                   )}
@@ -486,7 +486,7 @@ const SettingsPage = () => {
                   {settings.sipAccount.username && settings.sipAccount.password && (
                     <div className="p-3 bg-primary/10 border border-primary/20 rounded-md">
                       <p className="text-sm text-primary-foreground">
-                        SIP account configured successfully. Changes will take effect after reconnection.
+                        Account configured successfully. Changes will take effect after reconnection.
                       </p>
                     </div>
                   )}
@@ -648,7 +648,7 @@ const SettingsPage = () => {
                       <div className="space-y-1">
                         <div>
                           <span className="text-foreground">Email:</span>
-                          <span className="ml-2">support@voicehost.com</span>
+                          <span className="ml-2">support@voicehost.co.uk</span>
                         </div>
                         <div>
                           <span className="text-foreground">Phone:</span>
