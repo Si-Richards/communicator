@@ -27,11 +27,17 @@ export interface RingtoneSettings {
   volume: number;
 }
 
+export interface SipAccountSettings {
+  username: string;
+  password: string;
+}
+
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
   logs: LogSettings;
   ringtones: RingtoneSettings;
+  sipAccount: SipAccountSettings;
   version: string;
 }
 
@@ -41,6 +47,7 @@ interface SettingsContextType {
   updateAudioDevices: (updates: Partial<AudioDeviceSettings>) => void;
   updateLogSettings: (updates: Partial<LogSettings>) => void;
   updateRingtoneSettings: (updates: Partial<RingtoneSettings>) => void;
+  updateSipAccount: (updates: Partial<SipAccountSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -69,6 +76,10 @@ const defaultSettings: AppSettings = {
   ringtones: {
     enabled: true,
     volume: 0.5,
+  },
+  sipAccount: {
+    username: '',
+    password: '',
   },
   version: '1.0.0',
 };
@@ -137,6 +148,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateSipAccount = (updates: Partial<SipAccountSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      sipAccount: { ...prev.sipAccount, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -166,6 +184,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateAudioDevices,
         updateLogSettings,
         updateRingtoneSettings,
+        updateSipAccount,
         resetToDefaults,
         exportSettings,
         importSettings,

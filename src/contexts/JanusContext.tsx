@@ -827,17 +827,26 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const registerSipAccount = useCallback(() => {
     if (!sipPluginRef.current) return
 
+    // Get SIP credentials from settings
+    const { sipAccount } = settings
+    
+    // Don't attempt registration if credentials are missing
+    if (!sipAccount.username || !sipAccount.password) {
+      setCallState(prev => ({ ...prev, sipStatus: 'SIP credentials not configured' }))
+      return
+    }
+
     const register = {
       request: "register",
-      username: "sip:16331*201@hpbx.sipconvergence.co.uk",
-      secret: "am4tsQwM53YYT!cw",
+      username: `sip:${sipAccount.username}@hpbx.sipconvergence.co.uk`,
+      secret: sipAccount.password,
       host: "hpbx.sipconvergence.co.uk:5060",
       send_register: true
     }
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
-  }, [])
+  }, [settings.sipAccount])
 
   const acceptCall = useCallback(async () => {
     console.log("AcceptCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)

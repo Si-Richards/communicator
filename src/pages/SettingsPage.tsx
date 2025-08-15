@@ -14,7 +14,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, User, Eye, EyeOff } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -22,6 +22,7 @@ const SettingsPage = () => {
     updateAudioDevices,
     updateLogSettings,
     updateRingtoneSettings,
+    updateSipAccount,
     resetToDefaults,
     exportSettings,
     importSettings
@@ -40,6 +41,9 @@ const SettingsPage = () => {
   const [logSearch, setLogSearch] = useState('');
   const [logLevelFilter, setLogLevelFilter] = useState<LogLevel | 'all'>('all');
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // SIP Account state
+  const [showPassword, setShowPassword] = useState(false);
   useEffect(() => {
     // Load devices
     loadDevices();
@@ -188,7 +192,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -196,6 +200,10 @@ const SettingsPage = () => {
             <TabsTrigger value="devices" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               Devices
+            </TabsTrigger>
+            <TabsTrigger value="sip-account" className="flex items-center gap-2">
+              <User className="h-4 w-4" />
+              SIP Account
             </TabsTrigger>
             <TabsTrigger value="advanced" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
@@ -404,6 +412,85 @@ const SettingsPage = () => {
                 </div>
 
                 
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="sip-account" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>SIP Account Configuration</CardTitle>
+                <CardDescription>
+                  Configure your SIP account credentials for voice calling
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sip-username">Username/Account ID</Label>
+                    <Input
+                      id="sip-username"
+                      placeholder="e.g., 16331*201"
+                      value={settings.sipAccount.username}
+                      onChange={(e) => updateSipAccount({ username: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Enter your account identifier (the part before @hpbx.sipconvergence.co.uk)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sip-password">Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="sip-password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter your SIP password"
+                        value={settings.sipAccount.password}
+                        onChange={(e) => updateSipAccount({ password: e.target.value })}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {settings.sipAccount.username && (
+                    <div className="space-y-2">
+                      <Label>SIP URI Preview</Label>
+                      <div className="p-3 bg-muted rounded-md font-mono text-sm">
+                        sip:{settings.sipAccount.username}@hpbx.sipconvergence.co.uk
+                      </div>
+                    </div>
+                  )}
+
+                  {(!settings.sipAccount.username || !settings.sipAccount.password) && (
+                    <div className="p-3 bg-warning/10 border border-warning/20 rounded-md">
+                      <p className="text-sm text-warning-foreground">
+                        Both username and password are required to enable SIP calling.
+                      </p>
+                    </div>
+                  )}
+
+                  {settings.sipAccount.username && settings.sipAccount.password && (
+                    <div className="p-3 bg-primary/10 border border-primary/20 rounded-md">
+                      <p className="text-sm text-primary-foreground">
+                        SIP account configured successfully. Changes will take effect after reconnection.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
