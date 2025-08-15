@@ -263,11 +263,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         }
       },
       oncleanup: () => {
-        console.log("SIP plugin cleanup")
+        console.log("SIP plugin cleanup - call ended")
         setCallState(prev => ({ 
           ...prev, 
-          registered: false, 
-          sipStatus: 'Disconnected',
+          // Keep registration status unchanged during call cleanup
+          sipStatus: prev.registered ? 'Online' : prev.sipStatus,
           localStream: undefined,
           remoteStream: undefined
         }))
