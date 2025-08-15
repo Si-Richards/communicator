@@ -652,11 +652,11 @@ const SettingsPage = () => {
                         </div>
                         <div>
                           <span className="text-foreground">Phone:</span>
-                          <span className="ml-2">+1 (555) 123-4567</span>
+                          <span className="ml-2">0800 2 545454</span>
                         </div>
                         <div>
                           <span className="text-foreground">Website:</span>
-                          <span className="ml-2">www.voicehost.com</span>
+                          <span className="ml-2">www.voicehost.co.uk</span>
                         </div>
                       </div>
                     </div>
@@ -667,7 +667,7 @@ const SettingsPage = () => {
                   <div>
                     <h4 className="text-sm font-medium text-foreground mb-2">Legal</h4>
                     <div className="text-xs text-muted-foreground space-y-1">
-                      <p>© 2024 VoiceHost Limited. All rights reserved.</p>
+                      <p>© 2025 VoiceHost Limited. All rights reserved.</p>
                       <p>This software is licensed under the MIT License.</p>
                       <p>WebRTC technology provided by the WebRTC Foundation.</p>
                     </div>
