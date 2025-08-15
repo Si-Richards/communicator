@@ -255,16 +255,18 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     } else if (event === "registering") {
       setCallState(prev => ({ ...prev, sipStatus: 'Registering...' }))
     } else if (event === "registration_failed") {
-      console.error("SIP registration failed:", msg.reason)
+      const reason = msg.result?.reason || msg.reason || "Unknown error"
+      const code = msg.result?.code || msg.code
+      console.error("SIP registration failed:", { reason, code, msg })
       setCallState(prev => ({ 
         ...prev, 
         registered: false, 
         status: 'error',
-        sipStatus: `Registration failed: ${msg.reason}` 
+        sipStatus: `Registration failed: ${reason}` 
       }))
       toast({
         title: "Registration Failed",
-        description: msg.reason || "SIP registration failed",
+        description: code ? `${reason} (${code})` : reason,
         variant: "destructive"
       })
     } else if (event === "incomingcall") {
@@ -843,13 +845,33 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       return
     }
 
+    // Normalize username (extract just the user part if it's a full SIP URI)
+    const normalizeUsername = (username: string) => {
+      if (username.startsWith('sip:')) {
+        const match = username.match(/sip:([^@]+)@/)
+        return match ? match[1] : username.replace('sip:', '').split('@')[0]
+      }
+      return username
+    }
+
+    const normalizedUsername = normalizeUsername(settings.sip.username)
+    
     const register = {
       request: "register",
-      username: `sip:${settings.sip.username}@hpbx.sipconvergence.co.uk`,
+      username: `sip:${normalizedUsername}@hpbx.sipconvergence.co.uk`,
+      authuser: normalizedUsername,
       secret: settings.sip.password,
-      host: "hpbx.sipconvergence.co.uk:5060",
+      proxy: "sip:hpbx.sipconvergence.co.uk:5060;transport=udp",
+      realm: "hpbx.sipconvergence.co.uk",
       send_register: true
     }
+
+    console.log("Registering SIP account with:", { 
+      username: register.username, 
+      authuser: register.authuser,
+      proxy: register.proxy,
+      realm: register.realm
+    })
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
