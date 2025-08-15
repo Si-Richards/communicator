@@ -15,6 +15,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarFooter,
+  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
 
@@ -118,6 +119,11 @@ export function AppSidebar() {
               Reconnect
             </Button>
           )}
+
+          {/* Sidebar Toggle at Bottom */}
+          <div className="flex justify-center pt-2">
+            <SidebarTrigger className="text-muted-foreground hover:text-foreground" />
+          </div>
         </div>
       </SidebarFooter>
     </Sidebar>

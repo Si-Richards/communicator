@@ -19,7 +19,7 @@ export const CallInterface = () => {
     holdCall,
     resumeCall
   } = useJanusContext();
-  const [phoneNumber, setPhoneNumber] = useState('07880498653');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const callTimer = useCallTimer(callState.status === 'incall');
   const handleCall = () => {

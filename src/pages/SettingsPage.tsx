@@ -14,7 +14,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -188,7 +188,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -204,6 +204,10 @@ const SettingsPage = () => {
             <TabsTrigger value="logs" className="flex items-center gap-2">
               <Activity className="h-4 w-4" />
               Logs
+            </TabsTrigger>
+            <TabsTrigger value="about" className="flex items-center gap-2">
+              <Info className="h-4 w-4" />
+              About
             </TabsTrigger>
           </TabsList>
 
@@ -500,6 +504,88 @@ const SettingsPage = () => {
                     <div ref={logsEndRef} />
                   </div>
                 </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="about" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>About VoiceHost Limited</CardTitle>
+                <CardDescription>Application information and details</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground mb-2">Application Details</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Version:</span>
+                        <span className="ml-2 font-mono">1.0.0</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Build:</span>
+                        <span className="ml-2 font-mono">2024.01.15</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">WebRTC Support:</span>
+                        <span className="ml-2">Enabled</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Protocol:</span>
+                        <span className="ml-2">SIP over WebRTC</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground mb-2">Features</h4>
+                    <ul className="text-sm text-muted-foreground space-y-1">
+                      <li>• Voice calling with WebRTC technology</li>
+                      <li>• Contact management and organization</li>
+                      <li>• Call history tracking and analytics</li>
+                      <li>• Advanced audio quality optimization</li>
+                      <li>• Real-time audio device management</li>
+                      <li>• Comprehensive logging and debugging</li>
+                    </ul>
+                  </div>
+
+                  <Separator />
+
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground mb-2">Support</h4>
+                    <div className="text-sm text-muted-foreground space-y-2">
+                      <p>For technical support and assistance, please contact our support team:</p>
+                      <div className="space-y-1">
+                        <div>
+                          <span className="text-foreground">Email:</span>
+                          <span className="ml-2">support@voicehost.com</span>
+                        </div>
+                        <div>
+                          <span className="text-foreground">Phone:</span>
+                          <span className="ml-2">+1 (555) 123-4567</span>
+                        </div>
+                        <div>
+                          <span className="text-foreground">Website:</span>
+                          <span className="ml-2">www.voicehost.com</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground mb-2">Legal</h4>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>© 2024 VoiceHost Limited. All rights reserved.</p>
+                      <p>This software is licensed under the MIT License.</p>
+                      <p>WebRTC technology provided by the WebRTC Foundation.</p>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
