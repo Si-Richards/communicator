@@ -109,75 +109,86 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     return sipUri
   }, [])
 
-  // Direct action functions that bypass state validation for toast handlers
+  // Direct action functions that access current call state dynamically
   const directAcceptCall = useCallback(async () => {
-    console.log("Direct accept call - bypassing state validation")
+    console.log("Direct accept call - accessing current state")
     
-    if (!sipPluginRef.current) {
-      console.log("Cannot accept call - No SIP plugin")
-      toast({
-        title: "Call Failed",
-        description: "SIP plugin not available",
-        variant: "destructive"
-      })
-      return
-    }
+    // Get current state dynamically
+    setCallState(currentState => {
+      console.log("Current call state for accept:", currentState)
+      
+      if (!sipPluginRef.current) {
+        console.log("Cannot accept call - No SIP plugin")
+        toast({
+          title: "Call Failed",
+          description: "SIP plugin not available",
+          variant: "destructive"
+        })
+        return currentState
+      }
 
-    if (!callState.remoteJsep) {
-      console.log("Cannot accept call - Missing remote JSEP")
-      toast({
-        title: "Call Failed",
-        description: "Missing remote session description", 
-        variant: "destructive"
-      })
-      return
-    }
+      if (!currentState.remoteJsep) {
+        console.log("Cannot accept call - Missing remote JSEP in current state")
+        toast({
+          title: "Call Failed",
+          description: "Missing remote session description", 
+          variant: "destructive"
+        })
+        return currentState
+      }
 
-    try {
-      console.log("Getting user media for direct accept call")
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-          sampleSize: 16,
-          channelCount: 1
-        }, 
-        video: false 
-      })
+      // Proceed with call acceptance using current state
+      (async () => {
 
-      const accept = { request: "accept" }
+        try {
+          console.log("Getting user media for direct accept call")
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: 48000,
+              sampleSize: 16,
+              channelCount: 1
+            }, 
+            video: false 
+          })
 
-      sipPluginRef.current.createAnswer({
-        jsep: callState.remoteJsep,
-        tracks: [{ type: "audio", capture: true, recv: true }],
-        success: (jsep: any) => {
-          console.log("Direct accept call - create answer success")
-          sipPluginRef.current.send({ message: accept, jsep })
-          setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
-        },
-        error: (error: any) => {
-          console.error("Direct accept create answer error:", error)
+          const accept = { request: "accept" }
+
+          sipPluginRef.current.createAnswer({
+            jsep: currentState.remoteJsep,
+            tracks: [{ type: "audio", capture: true, recv: true }],
+            success: (jsep: any) => {
+              console.log("Direct accept call - create answer success")
+              sipPluginRef.current.send({ message: accept, jsep })
+              setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
+            },
+            error: (error: any) => {
+              console.error("Direct accept create answer error:", error)
+              toast({
+                title: "Failed to Accept Call",
+                description: error.message || "Could not create answer",
+                variant: "destructive"
+              })
+            }
+          })
+        } catch (error) {
+          console.error("Direct accept failed to get microphone access:", error)
           toast({
-            title: "Failed to Accept Call",
-            description: error.message || "Could not create answer",
+            title: "Microphone Error",
+            description: "Cannot access microphone to accept call",
             variant: "destructive"
           })
         }
-      })
-    } catch (error) {
-      console.error("Direct accept failed to get microphone access:", error)
-      toast({
-        title: "Microphone Error",
-        description: "Cannot access microphone to accept call",
-        variant: "destructive"
-      })
-    }
-  }, [callState.remoteJsep])
+      })()
+      
+      return currentState
+    })
+  }, [])
 
   const directRejectCall = useCallback(() => {
-    console.log("Direct reject call - bypassing state validation")
+    console.log("Direct reject call - accessing current state")
     
     if (!sipPluginRef.current) {
       console.log("Cannot reject call - No SIP plugin")
@@ -196,6 +207,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       incomingCallId: undefined,
       remoteJsep: undefined
     }))
+    
+    // Stop ringtones
+    ringtoneManager.stopRinging()
   }, [])
 
   // Toast action handlers that use direct functions
@@ -262,6 +276,13 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         return
       }
       
+      // Dismiss any existing incoming call toast before creating new one
+      if (incomingCallToastRef.current) {
+        console.log("Dismissing existing incoming call toast")
+        incomingCallToastRef.current.dismiss()
+        incomingCallToastRef.current = null
+      }
+      
       setCallState(prev => ({ 
         ...prev, 
         status: 'incoming', 
@@ -276,6 +297,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         ringtoneManager.playIncomingRing()
       }
       
+      console.log("Creating new incoming call toast for:", phoneNumber)
       incomingCallToastRef.current = toast({
         title: phoneNumber,
         description: "Incoming call",
@@ -298,6 +320,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           </div>
         ),
       })
+      console.log("Toast created with ref:", incomingCallToastRef.current)
     } else if (event === "calling") {
       setCallState(prev => ({ ...prev, status: 'calling', sipStatus: 'Calling...' }))
       // Play outgoing ringtone if enabled
