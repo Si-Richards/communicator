@@ -59,6 +59,8 @@ interface JanusContextType {
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
+  registerSipAccount: () => void
+  unregisterSipAccount: () => void
   registerNow: () => void
 }
 
@@ -97,6 +99,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const sipPluginRef = useRef<any>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
+  const isRegisteringRef = useRef<boolean>(false)
+  const registrationCooldownRef = useRef<number>(0)
   const incomingCallToastRef = useRef<any>(null)
   const audioOptimizerRef = useRef<AudioQualityOptimizer | null>(null)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -754,8 +758,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         console.log("SIP plugin attached successfully")
         sipPluginRef.current = pluginHandle
         setCallState(prev => ({ ...prev, sipStatus: 'SIP plugin ready' }))
-        // Only auto-register if credentials are available
-        if (settings.sip.username && settings.sip.password) {
+        // Only auto-register if credentials are available and not already registering/registered
+        if (settings.sip.username && settings.sip.password && !isRegisteringRef.current && !callState.registered) {
           registerSipAccount()
         } else {
           setCallState(prev => ({ ...prev, sipStatus: 'SIP not configured' }))
@@ -845,6 +849,20 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       return
     }
 
+    // Prevent concurrent registrations
+    if (isRegisteringRef.current) {
+      console.log("Registration already in progress, skipping")
+      return
+    }
+
+    // Check cooldown
+    if (Date.now() < registrationCooldownRef.current) {
+      console.log("Registration in cooldown, skipping")
+      return
+    }
+
+    isRegisteringRef.current = true
+
     // Normalize username (extract just the user part if it's a full SIP URI)
     const normalizeUsername = (username: string) => {
       if (username.startsWith('sip:')) {
@@ -876,6 +894,26 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
   }, [settings.sip.username, settings.sip.password])
+
+  const unregisterSipAccount = useCallback(() => {
+    if (!sipPluginRef.current) return
+
+    const unregister = {
+      request: "unregister"
+    }
+
+    console.log("Unregistering SIP account")
+    setCallState(prev => ({ ...prev, sipStatus: 'Unregistering...' }))
+    sipPluginRef.current.send({ message: unregister })
+    
+    // Reset registration state
+    isRegisteringRef.current = false
+    setCallState(prev => ({ 
+      ...prev, 
+      registered: false,
+      sipStatus: 'Offline' 
+    }))
+  }, [])
 
   const registerNow = useCallback(() => {
     if (!settings.sip.username || !settings.sip.password) {
@@ -1236,6 +1274,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     disconnect,
     reconnect,
     setDoNotDisturb,
+    registerSipAccount,
+    unregisterSipAccount,
     registerNow
   }
 

@@ -29,7 +29,7 @@ const SettingsPage = () => {
     importSettings
   } = useSettings();
   const { toast } = useToast();
-  const { callState, registerNow } = useJanusContext();
+  const { callState, registerNow, unregisterSipAccount } = useJanusContext();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -509,23 +509,32 @@ const SettingsPage = () => {
                     Save Credentials
                   </Button>
                   
-                  <Button 
-                    variant="outline"
-                    onClick={() => {
-                      if (settings.sip.username && settings.sip.password) {
-                        registerNow();
-                      } else {
-                        toast({
-                          title: "No Credentials",
-                          description: "Please save your SIP credentials first",
-                          variant: "destructive"
-                        });
-                      }
-                    }}
-                    disabled={!settings.sip.username || !settings.sip.password}
-                  >
-                    Register Now
-                  </Button>
+                  {callState.registered ? (
+                    <Button 
+                      variant="outline"
+                      onClick={unregisterSipAccount}
+                    >
+                      Unregister
+                    </Button>
+                  ) : (
+                    <Button 
+                      variant="outline"
+                      onClick={() => {
+                        if (settings.sip.username && settings.sip.password) {
+                          registerNow();
+                        } else {
+                          toast({
+                            title: "No Credentials",
+                            description: "Please save your SIP credentials first",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                      disabled={!settings.sip.username || !settings.sip.password || callState.sipStatus.includes('Registering')}
+                    >
+                      {callState.sipStatus.includes('Registering') ? 'Registering...' : 'Register Now'}
+                    </Button>
+                  )}
                 </div>
 
                 <Separator />
