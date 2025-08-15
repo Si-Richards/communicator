@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, ArrowRightLeft } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
+import { TransferDialog } from '@/components/TransferDialog';
 import { useJanusContext } from '@/contexts/JanusContext';
 import { toast } from '@/hooks/use-toast';
 import { useCallTimer } from '@/hooks/useCallTimer';
@@ -21,6 +22,7 @@ export const CallInterface = () => {
   } = useJanusContext();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isMuted, setIsMuted] = useState(false);
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
   const callTimer = useCallTimer(callState.status === 'incall');
   const handleCall = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
@@ -116,7 +118,7 @@ export const CallInterface = () => {
               </CallButton>
             </>}
 
-          {/* Regular call controls */}
+              {/* Regular call controls */}
           {callState.status !== 'incoming' && <>
               {/* Call control buttons - only show during call */}
               {callState.status === 'incall' && (
@@ -130,6 +132,11 @@ export const CallInterface = () => {
                   <CallButton variant="secondary" size="lg" onClick={toggleHold} className="relative">
                     {callState.isOnHold ? <Play className="h-6 w-6" /> : <Pause className="h-6 w-6" />}
                   </CallButton>
+
+                  {/* Transfer Button */}
+                  <CallButton variant="secondary" size="lg" onClick={() => setShowTransferDialog(true)} className="relative">
+                    <ArrowRightLeft className="h-6 w-6" />
+                  </CallButton>
                 </div>
               )}
 
@@ -139,6 +146,12 @@ export const CallInterface = () => {
               </CallButton>
             </>}
         </div>
+
+        {/* Transfer Dialog */}
+        <TransferDialog
+          open={showTransferDialog}
+          onOpenChange={setShowTransferDialog}
+        />
 
       </Card>
     );
