@@ -39,7 +39,7 @@ export function AppSidebar() {
     isActive ? "bg-accent text-accent-foreground font-medium" : "hover:bg-accent/50"
 
   const getConnectionStatus = () => {
-    if (callState.registered && callState.status === 'connected') {
+    if (callState.registered) {
       return { text: 'Connected', color: 'text-green-600' }
     }
     return { text: 'Disconnected', color: 'text-red-500' }
