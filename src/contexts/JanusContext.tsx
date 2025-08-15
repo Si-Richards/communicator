@@ -838,11 +838,19 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     const register = {
       request: "register",
-      username: `sip:${sipAccount.username}@hpbx.sipconvergence.co.uk`,
+      username: `sip:${sipAccount.username}@hpbx.sipconvergence.co.uk:5060`,
       secret: sipAccount.password,
       host: "hpbx.sipconvergence.co.uk:5060",
       send_register: true
     }
+
+    // Enhanced debugging for SIP registration
+    console.log("Attempting SIP registration with:", {
+      username: register.username,
+      host: register.host,
+      hasPassword: !!sipAccount.password
+    })
+    logger.info(`Registering SIP account: ${register.username}`, undefined, 'JanusContext')
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })

@@ -470,7 +470,7 @@ const SettingsPage = () => {
                     <div className="space-y-2">
                       <Label>SIP URI Preview</Label>
                       <div className="p-3 bg-muted rounded-md font-mono text-sm">
-                        sip:{settings.sipAccount.username}@hpbx.sipconvergence.co.uk
+                        sip:{settings.sipAccount.username}@hpbx.sipconvergence.co.uk:5060
                       </div>
                     </div>
                   )}
