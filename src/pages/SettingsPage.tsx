@@ -11,10 +11,11 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useJanusContext } from '@/contexts/JanusContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -22,13 +23,13 @@ const SettingsPage = () => {
     updateAudioDevices,
     updateLogSettings,
     updateRingtoneSettings,
+    updateSipSettings,
     resetToDefaults,
     exportSettings,
     importSettings
   } = useSettings();
-  const {
-    toast
-  } = useToast();
+  const { toast } = useToast();
+  const { callState, registerNow } = useJanusContext();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -40,6 +41,21 @@ const SettingsPage = () => {
   const [logSearch, setLogSearch] = useState('');
   const [logLevelFilter, setLogLevelFilter] = useState<LogLevel | 'all'>('all');
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // SIP configuration state
+  const [showPassword, setShowPassword] = useState(false);
+  const [tempSipSettings, setTempSipSettings] = useState({
+    username: settings.sip.username,
+    password: settings.sip.password
+  });
+
+  // Sync temp settings when main settings change
+  useEffect(() => {
+    setTempSipSettings({
+      username: settings.sip.username,
+      password: settings.sip.password
+    });
+  }, [settings.sip.username, settings.sip.password]);
   useEffect(() => {
     // Load devices
     loadDevices();
@@ -188,7 +204,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -196,6 +212,10 @@ const SettingsPage = () => {
             <TabsTrigger value="devices" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               Devices
+            </TabsTrigger>
+            <TabsTrigger value="sip" className="flex items-center gap-2">
+              <Phone className="h-4 w-4" />
+              SIP
             </TabsTrigger>
             <TabsTrigger value="advanced" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
@@ -404,6 +424,123 @@ const SettingsPage = () => {
                 </div>
 
                 
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="sip" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="h-5 w-5" />
+                  SIP Account Configuration
+                </CardTitle>
+                <CardDescription>
+                  Configure your SIP credentials to connect to the server
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="sip-username">SIP Username</Label>
+                    <Input
+                      id="sip-username"
+                      type="text"
+                      placeholder="e.g., 16331*201"
+                      value={tempSipSettings.username}
+                      onChange={(e) => setTempSipSettings(prev => ({ ...prev, username: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Enter your SIP username (e.g., 16331*201)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sip-password">SIP Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="sip-password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter your SIP password"
+                        value={tempSipSettings.password}
+                        onChange={(e) => setTempSipSettings(prev => ({ ...prev, password: e.target.value }))}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Your SIP account password
+                    </p>
+                  </div>
+                </div>
+
+                {tempSipSettings.username && (
+                  <div className="p-4 bg-muted rounded-md">
+                    <Label className="text-sm font-medium">Preview SIP URI:</Label>
+                    <p className="text-sm text-muted-foreground mt-1 font-mono">
+                      sip:{tempSipSettings.username}@hpbx.sipconvergence.co.uk
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <Button 
+                    onClick={() => {
+                      updateSipSettings(tempSipSettings);
+                      toast({
+                        title: "SIP Settings Saved",
+                        description: "Your SIP credentials have been saved successfully"
+                      });
+                    }}
+                    disabled={!tempSipSettings.username || !tempSipSettings.password}
+                  >
+                    Save Credentials
+                  </Button>
+                  
+                  <Button 
+                    variant="outline"
+                    onClick={() => {
+                      if (settings.sip.username && settings.sip.password) {
+                        registerNow();
+                      } else {
+                        toast({
+                          title: "No Credentials",
+                          description: "Please save your SIP credentials first",
+                          variant: "destructive"
+                        });
+                      }
+                    }}
+                    disabled={!settings.sip.username || !settings.sip.password}
+                  >
+                    Register Now
+                  </Button>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Connection Status</Label>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      callState.registered ? 'bg-green-500' : 'bg-red-500'
+                    }`} />
+                    <span className="text-sm text-muted-foreground">
+                      {callState.sipStatus}
+                    </span>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

@@ -59,6 +59,7 @@ interface JanusContextType {
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
+  registerNow: () => void
 }
 
 const JanusContext = createContext<JanusContextType | undefined>(undefined)
@@ -751,7 +752,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         console.log("SIP plugin attached successfully")
         sipPluginRef.current = pluginHandle
         setCallState(prev => ({ ...prev, sipStatus: 'SIP plugin ready' }))
-        registerSipAccount()
+        // Only auto-register if credentials are available
+        if (settings.sip.username && settings.sip.password) {
+          registerSipAccount()
+        } else {
+          setCallState(prev => ({ ...prev, sipStatus: 'SIP not configured' }))
+        }
       },
       error: (error: any) => {
         console.error("Failed to attach SIP plugin:", error)
@@ -827,17 +833,49 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const registerSipAccount = useCallback(() => {
     if (!sipPluginRef.current) return
 
+    // Check if SIP credentials are configured
+    if (!settings.sip.username || !settings.sip.password) {
+      setCallState(prev => ({ 
+        ...prev, 
+        registered: false,
+        sipStatus: 'SIP not configured' 
+      }))
+      return
+    }
+
     const register = {
       request: "register",
-      username: "sip:16331*201@hpbx.sipconvergence.co.uk",
-      secret: "am4tsQwM53YYT!cw",
+      username: `sip:${settings.sip.username}@hpbx.sipconvergence.co.uk`,
+      secret: settings.sip.password,
       host: "hpbx.sipconvergence.co.uk:5060",
       send_register: true
     }
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
-  }, [])
+  }, [settings.sip.username, settings.sip.password])
+
+  const registerNow = useCallback(() => {
+    if (!settings.sip.username || !settings.sip.password) {
+      toast({
+        title: "Cannot Register",
+        description: "Please configure your SIP credentials first",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    if (!sipPluginRef.current) {
+      toast({
+        title: "Cannot Register",
+        description: "SIP plugin not available",
+        variant: "destructive"
+      })
+      return
+    }
+
+    registerSipAccount()
+  }, [settings.sip.username, settings.sip.password, registerSipAccount])
 
   const acceptCall = useCallback(async () => {
     console.log("AcceptCall called - Status:", callState.status, "SIP Plugin:", !!sipPluginRef.current)
@@ -1175,7 +1213,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     resumeCall,
     disconnect,
     reconnect,
-    setDoNotDisturb
+    setDoNotDisturb,
+    registerNow
   }
 
   return (
