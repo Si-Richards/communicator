@@ -686,6 +686,19 @@ const SettingsPage = () => {
 
                   <Separator />
 
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground mb-2">Features</h4>
+                    <ul className="text-sm text-muted-foreground space-y-1">
+                      <li>• Voice calling with WebRTC technology</li>
+                      <li>• Contact management and organization</li>
+                      <li>• Call history tracking and analytics</li>
+                      <li>• Advanced audio quality optimization</li>
+                      <li>• Real-time audio device management</li>
+                      <li>• Comprehensive logging and debugging</li>
+                    </ul>
+                  </div>
+
+                  <Separator />
 
                   <div>
                     <h4 className="text-sm font-medium text-foreground mb-2">Support</h4>
@@ -712,23 +725,10 @@ const SettingsPage = () => {
 
                   <div>
                     <h4 className="text-sm font-medium text-foreground mb-2">Legal</h4>
-                    <div className="text-xs text-muted-foreground space-y-2">
+                    <div className="text-xs text-muted-foreground space-y-1">
                       <p>© 2024 VoiceHost Limited. All rights reserved.</p>
                       <p>This software is licensed under the MIT License.</p>
-                      
-                      <div className="mt-4">
-                        <h5 className="text-sm font-medium text-foreground mb-2">Third-Party Libraries</h5>
-                        <div className="space-y-1">
-                          <p><strong>React:</strong> MIT License - Facebook, Inc.</p>
-                          <p><strong>Tailwind CSS:</strong> MIT License - Tailwind Labs</p>
-                          <p><strong>Radix UI:</strong> MIT License - WorkOS</p>
-                          <p><strong>Lucide React:</strong> ISC License - Lucide Contributors</p>
-                          <p><strong>React Router:</strong> MIT License - Remix Software</p>
-                          <p><strong>TypeScript:</strong> Apache License 2.0 - Microsoft</p>
-                          <p><strong>Vite:</strong> MIT License - Evan You</p>
-                          <p><strong>Janus Gateway:</strong> GPL-3.0 License - Meetecho</p>
-                        </div>
-                      </div>
+                      <p>WebRTC technology provided by the WebRTC Foundation.</p>
                     </div>
                   </div>
                 </div>
