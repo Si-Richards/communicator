@@ -46,6 +46,12 @@ interface CallState {
   remoteJsep?: any
   direction?: 'incoming' | 'outgoing'
   callerId?: string
+  waitingCall?: {
+    id: string
+    phoneNumber: string
+    callerId?: string
+    remoteJsep?: any
+  }
 }
 
 interface JanusContextType {
@@ -56,6 +62,9 @@ interface JanusContextType {
   hangupCall: () => void
   holdCall: () => void
   resumeCall: () => void
+  acceptWaitingCall: () => Promise<void>
+  declineWaitingCall: () => void
+  endCurrentAndAcceptWaiting: () => Promise<void>
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
@@ -292,6 +301,28 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         return
       }
       
+      // Check if we're already in a call - handle call waiting
+      if (callState.status === 'incall' || callState.status === 'calling' || callState.status === 'incoming') {
+        console.log("Call waiting: already in a call, storing waiting call")
+        
+        setCallState(prev => ({
+          ...prev,
+          waitingCall: {
+            id: msg.call_id || msg.result?.call_id || 'waiting-' + Date.now(),
+            phoneNumber,
+            callerId,
+            remoteJsep: jsep
+          }
+        }))
+        
+        toast({
+          title: "Call Waiting",
+          description: `Incoming call from ${phoneNumber}`,
+          variant: "default"
+        })
+        return
+      }
+      
       // Dismiss any existing incoming call toast before creating new one
       if (incomingCallToastRef.current) {
         console.log("Dismissing existing incoming call toast")
@@ -404,7 +435,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
             remoteStream: undefined,
             incomingCallerId: undefined,
             incomingCallId: undefined,
-            remoteJsep: undefined
+            remoteJsep: undefined,
+            waitingCall: undefined
           }))
           
           // Play busy tone
@@ -437,7 +469,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
             remoteStream: undefined,
             incomingCallerId: undefined,
             incomingCallId: undefined,
-            remoteJsep: undefined
+            remoteJsep: undefined,
+            waitingCall: undefined
           }))
           
           toast({
@@ -465,7 +498,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
             remoteStream: undefined,
             incomingCallerId: undefined,
             incomingCallId: undefined,
-            remoteJsep: undefined
+            remoteJsep: undefined,
+            waitingCall: undefined
           }))
           
           toast({
@@ -493,7 +527,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
             remoteStream: undefined,
             incomingCallerId: undefined,
             incomingCallId: undefined,
-            remoteJsep: undefined
+            remoteJsep: undefined,
+            waitingCall: undefined
           }))
           
           toast({
@@ -558,25 +593,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           }, 3000)
           
         } else {
-          // Normal hangup without error code
-          setCallState(prev => ({ 
-            ...prev, 
-            status: 'connected', 
-            sipStatus: prev.registered ? 'Online' : 'Offline',
-            localStream: undefined,
-            remoteStream: undefined,
-            incomingCallerId: undefined,
-            incomingCallId: undefined,
-            remoteJsep: undefined
-          }))
-          
-          toast({
-            title: "Call Ended",
-            description: "Call has been terminated",
-          })
-        }
-      } else {
-        // Normal hangup without SIP code
+        // Normal hangup without error code
         setCallState(prev => ({ 
           ...prev, 
           status: 'connected', 
@@ -585,8 +602,28 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           remoteStream: undefined,
           incomingCallerId: undefined,
           incomingCallId: undefined,
-          remoteJsep: undefined
+          remoteJsep: undefined,
+          waitingCall: undefined
         }))
+          
+          toast({
+            title: "Call Ended",
+            description: "Call has been terminated",
+          })
+        }
+      } else {
+      // Normal hangup without SIP code
+      setCallState(prev => ({ 
+        ...prev, 
+        status: 'connected', 
+        sipStatus: prev.registered ? 'Online' : 'Offline',
+        localStream: undefined,
+        remoteStream: undefined,
+        incomingCallerId: undefined,
+        incomingCallId: undefined,
+        remoteJsep: undefined,
+        waitingCall: undefined
+      }))
         
         toast({
           title: "Call Ended",
@@ -1259,6 +1296,107 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     await initJanus()
   }, [initJanus])
 
+  const acceptWaitingCall = useCallback(async () => {
+    if (!callState.waitingCall) return
+    
+    console.log("Accepting waiting call:", callState.waitingCall.phoneNumber)
+    
+    // End current call first
+    if (sipPluginRef.current && (callState.status === 'incall' || callState.status === 'calling')) {
+      const hangup = { request: "hangup" }
+      sipPluginRef.current.send({ message: hangup })
+    }
+    
+    // Set the waiting call as the new incoming call
+    setCallState(prev => ({
+      ...prev,
+      status: 'incoming',
+      sipStatus: `Incoming call from ${prev.waitingCall?.phoneNumber}`,
+      incomingCallerId: prev.waitingCall?.callerId,
+      incomingCallId: prev.waitingCall?.id,
+      remoteJsep: prev.waitingCall?.remoteJsep,
+      direction: 'incoming',
+      callerId: prev.waitingCall?.phoneNumber,
+      waitingCall: undefined
+    }))
+    
+    // Auto-accept the waiting call
+    setTimeout(() => {
+      directAcceptCall()
+    }, 100)
+  }, [callState.waitingCall, callState.status, directAcceptCall])
+
+  const declineWaitingCall = useCallback(() => {
+    if (!callState.waitingCall) return
+    
+    console.log("Declining waiting call:", callState.waitingCall.phoneNumber)
+    
+    // Send decline for the waiting call if we have the call ID
+    if (sipPluginRef.current && callState.waitingCall.id) {
+      const decline = { request: "decline", call_id: callState.waitingCall.id }
+      sipPluginRef.current.send({ message: decline })
+    }
+    
+    setCallState(prev => ({
+      ...prev,
+      waitingCall: undefined
+    }))
+    
+    toast({
+      title: "Call Declined",
+      description: `Declined call from ${callState.waitingCall.phoneNumber}`,
+    })
+  }, [callState.waitingCall])
+
+  const endCurrentAndAcceptWaiting = useCallback(async () => {
+    if (!callState.waitingCall) return
+    
+    console.log("Ending current call and accepting waiting call")
+    
+    // Store waiting call info before we clear it
+    const waitingCallInfo = callState.waitingCall
+    
+    // End current call
+    if (sipPluginRef.current && (callState.status === 'incall' || callState.status === 'calling')) {
+      const hangup = { request: "hangup" }
+      sipPluginRef.current.send({ message: hangup })
+      
+      // Log the ended call
+      if (callState.callerId && callStartTimeRef.current) {
+        const endTime = new Date()
+        const duration = Math.floor((endTime.getTime() - callStartTimeRef.current.getTime()) / 1000)
+        const contact = getContactByPhoneNumber(callState.callerId)
+        
+        addCallRecord({
+          phoneNumber: callState.callerId,
+          contactName: contact?.name,
+          duration: duration,
+          timestamp: callStartTimeRef.current,
+          type: callState.direction === 'outgoing' ? 'outgoing' : 'incoming',
+          answered: callState.status === 'incall'
+        })
+      }
+    }
+    
+    // Set the waiting call as the new incoming call and accept it
+    setCallState(prev => ({
+      ...prev,
+      status: 'incoming',
+      sipStatus: `Incoming call from ${waitingCallInfo.phoneNumber}`,
+      incomingCallerId: waitingCallInfo.callerId,
+      incomingCallId: waitingCallInfo.id,
+      remoteJsep: waitingCallInfo.remoteJsep,
+      direction: 'incoming',
+      callerId: waitingCallInfo.phoneNumber,
+      waitingCall: undefined
+    }))
+    
+    // Auto-accept the waiting call after a short delay
+    setTimeout(() => {
+      directAcceptCall()
+    }, 500)
+  }, [callState.waitingCall, callState.status, callState.callerId, callState.direction, directAcceptCall, getContactByPhoneNumber, addCallRecord])
+
   const value: JanusContextType = {
     callState,
     makeCall,
@@ -1267,6 +1405,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     hangupCall,
     holdCall,
     resumeCall,
+    acceptWaitingCall,
+    declineWaitingCall,
+    endCurrentAndAcceptWaiting,
     disconnect,
     reconnect,
     setDoNotDisturb,

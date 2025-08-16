@@ -35,9 +35,6 @@ export const useSimpleMultiCallContext = () => {
 export const SimpleMultiCallProvider = ({ children }: { children: ReactNode }) => {
   const janusContext = useJanusContext()
   
-  // Convert single call state to multi-call state
-  const [waitingCall, setWaitingCall] = useState<{ id: string; phoneNumber: string; callerId?: string; remoteJsep?: any } | undefined>()
-  
   const callsState: CallsState = {
     calls: janusContext.callState.status !== 'disconnected' && janusContext.callState.status !== 'connected' ? [{
       id: 'main-call',
@@ -50,7 +47,7 @@ export const SimpleMultiCallProvider = ({ children }: { children: ReactNode }) =
       isOnHold: janusContext.callState.isOnHold
     }] : [],
     activeCallId: janusContext.callState.status !== 'disconnected' && janusContext.callState.status !== 'connected' ? 'main-call' : undefined,
-    waitingCall,
+    waitingCall: janusContext.callState.waitingCall,
     registered: janusContext.callState.registered,
     sipStatus: janusContext.callState.sipStatus,
     doNotDisturb: janusContext.callState.doNotDisturb,
@@ -59,17 +56,6 @@ export const SimpleMultiCallProvider = ({ children }: { children: ReactNode }) =
              janusContext.callState.status === 'error' ? 'error' : 'connected',
     multiCallSupported: false // Single call for now
   }
-
-  const declineWaitingCall = useCallback(() => {
-    setWaitingCall(undefined)
-  }, [])
-
-  const endCurrentAndAcceptWaiting = useCallback(async () => {
-    if (waitingCall) {
-      janusContext.hangupCall()
-      setWaitingCall(undefined)
-    }
-  }, [waitingCall, janusContext])
 
   return (
     <SimpleMultiCallContext.Provider value={{
@@ -81,9 +67,9 @@ export const SimpleMultiCallProvider = ({ children }: { children: ReactNode }) =
       holdCall: janusContext.holdCall,
       resumeCall: janusContext.resumeCall,
       swapCalls: () => {}, // Not supported in single call mode
-      acceptWaitingCall: async () => {},
-      declineWaitingCall,
-      endCurrentAndAcceptWaiting,
+      acceptWaitingCall: janusContext.acceptWaitingCall,
+      declineWaitingCall: janusContext.declineWaitingCall,
+      endCurrentAndAcceptWaiting: janusContext.endCurrentAndAcceptWaiting,
       disconnect: janusContext.disconnect,
       reconnect: janusContext.reconnect,
       setDoNotDisturb: janusContext.setDoNotDisturb,
