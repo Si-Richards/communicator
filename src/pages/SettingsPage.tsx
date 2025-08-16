@@ -486,14 +486,6 @@ const SettingsPage = () => {
                   </div>
                 </div>
 
-                {tempSipSettings.username && (
-                  <div className="p-4 bg-muted rounded-md">
-                    <Label className="text-sm font-medium">Preview SIP URI:</Label>
-                    <p className="text-sm text-muted-foreground mt-1 font-mono">
-                      sip:{tempSipSettings.username}@hpbx.sipconvergence.co.uk
-                    </p>
-                  </div>
-                )}
 
                 <div className="flex gap-3">
                   <Button 
@@ -702,11 +694,26 @@ const SettingsPage = () => {
                   <Separator />
 
                   <div>
-                    <h4 className="text-sm font-medium text-foreground mb-2">Legal</h4>
-                    <div className="text-xs text-muted-foreground space-y-1">
+                    <h4 className="text-sm font-medium text-foreground mb-2">Legal & Licenses</h4>
+                    <div className="text-xs text-muted-foreground space-y-2">
                       <p>© 2024 VoiceHost Limited. All rights reserved.</p>
                       <p>This software is licensed under the MIT License.</p>
-                      <p>WebRTC technology provided by the WebRTC Foundation.</p>
+                      
+                      <div className="pt-2">
+                        <h5 className="text-xs font-medium text-foreground mb-1">Third Party Licenses:</h5>
+                        <ul className="space-y-1 pl-2">
+                          <li>• React (MIT License) - Meta Platforms, Inc.</li>
+                          <li>• TypeScript (Apache 2.0) - Microsoft Corporation</li>
+                          <li>• Tailwind CSS (MIT License) - Tailwind Labs Inc.</li>
+                          <li>• Radix UI (MIT License) - WorkOS</li>
+                          <li>• Lucide React (ISC License) - Lucide Contributors</li>
+                          <li>• Vite (MIT License) - Evan You</li>
+                          <li>• React Router (MIT License) - Remix Software Inc.</li>
+                          <li>• Class Variance Authority (Apache 2.0) - Joe Bell</li>
+                          <li>• Janus WebRTC Gateway (GPL v3/Commercial) - Meetecho</li>
+                          <li>• WebRTC (BSD 3-Clause) - Google Inc.</li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
                 </div>
