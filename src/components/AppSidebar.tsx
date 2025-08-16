@@ -51,6 +51,7 @@ export function AppSidebar() {
   return (
     <Sidebar
       collapsible="icon"
+      className="data-[state=collapsed]:w-16"
     >
       <SidebarContent>
         <SidebarGroup>
@@ -102,9 +103,11 @@ export function AppSidebar() {
           {/* Connection Status */}
           <div className="flex items-center gap-2 text-sm">
             <div className={`w-2 h-2 rounded-full ${callState.registered ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className={`font-medium ${connectionStatus.color}`}>
-              {connectionStatus.text}
-            </span>
+            {state !== "collapsed" && (
+              <span className={`font-medium ${connectionStatus.color}`}>
+                {connectionStatus.text}
+              </span>
+            )}
           </div>
           
           {/* Reconnect Button */}
