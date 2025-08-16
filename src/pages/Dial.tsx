@@ -1,12 +1,21 @@
-import { CallInterface } from '@/components/CallInterface'
+import { MultiCallInterface } from '@/components/MultiCallInterface'
+import { SimpleMultiCallProvider, useSimpleMultiCallContext } from '@/contexts/SimpleMultiCallContext'
 
-const Dial = () => {
+const DialContent = () => {
   return (
     <div className="min-h-full flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <CallInterface />
+        <MultiCallInterface />
       </div>
     </div>
+  )
+}
+
+const Dial = () => {
+  return (
+    <SimpleMultiCallProvider>
+      <DialContent />
+    </SimpleMultiCallProvider>
   )
 }
 
