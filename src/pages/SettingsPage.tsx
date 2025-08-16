@@ -200,7 +200,7 @@ const SettingsPage = () => {
       <div className="max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Settings</h1>
-          <p className="text-muted-foreground">Configure your WebRTC calling experience</p>
+          <p className="text-muted-foreground">Customise your experience</p>
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
@@ -673,29 +673,7 @@ const SettingsPage = () => {
                         <span className="text-muted-foreground">Build:</span>
                         <span className="ml-2 font-mono">2024.01.15</span>
                       </div>
-                      <div>
-                        <span className="text-muted-foreground">WebRTC Support:</span>
-                        <span className="ml-2">Enabled</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Protocol:</span>
-                        <span className="ml-2">SIP over WebRTC</span>
-                      </div>
                     </div>
-                  </div>
-
-                  <Separator />
-
-                  <div>
-                    <h4 className="text-sm font-medium text-foreground mb-2">Features</h4>
-                    <ul className="text-sm text-muted-foreground space-y-1">
-                      <li>• Voice calling with WebRTC technology</li>
-                      <li>• Contact management and organization</li>
-                      <li>• Call history tracking and analytics</li>
-                      <li>• Advanced audio quality optimization</li>
-                      <li>• Real-time audio device management</li>
-                      <li>• Comprehensive logging and debugging</li>
-                    </ul>
                   </div>
 
                   <Separator />
@@ -707,15 +685,15 @@ const SettingsPage = () => {
                       <div className="space-y-1">
                         <div>
                           <span className="text-foreground">Email:</span>
-                          <span className="ml-2">support@voicehost.com</span>
+                          <span className="ml-2">support@voicehost.co.uk</span>
                         </div>
                         <div>
                           <span className="text-foreground">Phone:</span>
-                          <span className="ml-2">+1 (555) 123-4567</span>
+                          <span className="ml-2">0800 2 545454</span>
                         </div>
                         <div>
                           <span className="text-foreground">Website:</span>
-                          <span className="ml-2">www.voicehost.com</span>
+                          <span className="ml-2">www.voicehost.co.uk</span>
                         </div>
                       </div>
                     </div>
