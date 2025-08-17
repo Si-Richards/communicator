@@ -41,6 +41,11 @@ interface CallState {
   isOnHold: boolean
   localStream?: MediaStream
   remoteStream?: MediaStream
+  localVideoStream?: MediaStream
+  remoteVideoStream?: MediaStream
+  videoEnabled: boolean
+  isVideoMuted: boolean
+  isScreenSharing: boolean
   incomingCallerId?: string
   incomingCallId?: string
   remoteJsep?: any
@@ -56,7 +61,7 @@ interface CallState {
 
 interface JanusContextType {
   callState: CallState
-  makeCall: (phoneNumber: string) => Promise<void>
+  makeCall: (phoneNumber: string, withVideo?: boolean) => Promise<void>
   acceptCall: () => Promise<void>
   rejectCall: () => void
   hangupCall: () => void
@@ -65,6 +70,12 @@ interface JanusContextType {
   acceptWaitingCall: () => Promise<void>
   declineWaitingCall: () => void
   endCurrentAndAcceptWaiting: () => Promise<void>
+  toggleVideo: () => Promise<void>
+  startVideo: () => Promise<void>
+  stopVideo: () => void
+  switchCamera: () => Promise<void>
+  startScreenShare: () => Promise<void>
+  stopScreenShare: () => void
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
@@ -96,7 +107,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     registered: false,
     sipStatus: 'Not connected',
     doNotDisturb: false,
-    isOnHold: false
+    isOnHold: false,
+    videoEnabled: false,
+    isVideoMuted: false,
+    isScreenSharing: false
   })
   
   // Track call timing for history
@@ -1480,6 +1494,55 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }, 500)
   }, [callState.waitingCall, callState.status, callState.callerId, callState.direction, directAcceptCall, getContactByPhoneNumber, addCallRecord])
 
+  // Video functions (placeholder implementations)
+  const toggleVideo = useCallback(async () => {
+    toast({
+      title: "Video Toggle",
+      description: "Video functionality coming soon",
+      variant: "default"
+    })
+  }, [])
+
+  const startVideo = useCallback(async () => {
+    toast({
+      title: "Start Video",
+      description: "Video functionality coming soon",
+      variant: "default"
+    })
+  }, [])
+
+  const stopVideo = useCallback(() => {
+    toast({
+      title: "Stop Video",
+      description: "Video functionality coming soon",
+      variant: "default"
+    })
+  }, [])
+
+  const switchCamera = useCallback(async () => {
+    toast({
+      title: "Switch Camera",
+      description: "Camera switching coming soon",
+      variant: "default"
+    })
+  }, [])
+
+  const startScreenShare = useCallback(async () => {
+    toast({
+      title: "Screen Share",
+      description: "Screen sharing coming soon",
+      variant: "default"
+    })
+  }, [])
+
+  const stopScreenShare = useCallback(() => {
+    toast({
+      title: "Stop Screen Share",
+      description: "Screen sharing functionality coming soon",
+      variant: "default"
+    })
+  }, [])
+
   const value: JanusContextType = {
     callState,
     makeCall,
@@ -1491,6 +1554,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     acceptWaitingCall,
     declineWaitingCall,
     endCurrentAndAcceptWaiting,
+    toggleVideo,
+    startVideo,
+    stopVideo,
+    switchCamera,
+    startScreenShare,
+    stopScreenShare,
     disconnect,
     reconnect,
     setDoNotDisturb,

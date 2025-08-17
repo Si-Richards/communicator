@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useJanusContext } from '@/contexts/JanusContext';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
+import { videoDeviceManager, VideoDevice, VideoDeviceTestResult } from '@/lib/videoDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
 import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff } from 'lucide-react';
@@ -24,6 +25,7 @@ const SettingsPage = () => {
     updateLogSettings,
     updateRingtoneSettings,
     updateSipSettings,
+    updateVideoSettings,
     resetToDefaults,
     exportSettings,
     importSettings
@@ -34,6 +36,7 @@ const SettingsPage = () => {
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
   const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
+  const [videoDevices, setVideoDevices] = useState<VideoDevice[]>([]);
   const [testingDevice, setTestingDevice] = useState<string | null>(null);
 
   // Logs state
@@ -86,9 +89,12 @@ const SettingsPage = () => {
   }, [logs, settings.logs.autoScroll]);
   const loadDevices = async () => {
     await audioDeviceManager.requestPermissions();
+    await videoDeviceManager.requestPermissions();
     const allDevices = await audioDeviceManager.enumerateDevices();
+    const videoDevs = await videoDeviceManager.enumerateDevices();
     setInputDevices(audioDeviceManager.getInputDevices());
     setOutputDevices(audioDeviceManager.getOutputDevices());
+    setVideoDevices(videoDevs);
   };
   const testDevice = async (deviceId: string, kind: 'audioinput' | 'audiooutput') => {
     setTestingDevice(deviceId);
@@ -204,7 +210,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -212,6 +218,10 @@ const SettingsPage = () => {
             <TabsTrigger value="devices" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               Devices
+            </TabsTrigger>
+            <TabsTrigger value="video" className="flex items-center gap-2">
+              <Eye className="h-4 w-4" />
+              Video
             </TabsTrigger>
             <TabsTrigger value="sip" className="flex items-center gap-2">
               <Phone className="h-4 w-4" />
@@ -424,6 +434,113 @@ const SettingsPage = () => {
                 </div>
 
                 
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="video" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Video Settings</CardTitle>
+                <CardDescription>
+                  Configure video preferences and devices for video calls
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label>Camera Device</Label>
+                    <Select 
+                      value={settings.video.cameraDeviceId || 'default'} 
+                      onValueChange={value => updateVideoSettings({
+                        cameraDeviceId: value === 'default' ? null : value
+                      })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default Camera</SelectItem>
+                        {videoDevices.map(device => (
+                          <SelectItem key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Video Resolution</Label>
+                    <Select 
+                      value={settings.video.resolution} 
+                      onValueChange={value => updateVideoSettings({
+                        resolution: value as '480p' | '720p' | '1080p'
+                      })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="480p">480p (Standard)</SelectItem>
+                        <SelectItem value="720p">720p (HD)</SelectItem>
+                        <SelectItem value="1080p">1080p (Full HD)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Frame Rate: {settings.video.frameRate} FPS</Label>
+                    <Slider 
+                      value={[settings.video.frameRate]} 
+                      onValueChange={([value]) => updateVideoSettings({
+                        frameRate: value
+                      })} 
+                      min={15} 
+                      max={60} 
+                      step={5} 
+                      className="w-full" 
+                    />
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-medium">Video Preferences</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="start-with-video">Start calls with video</Label>
+                      <Switch 
+                        id="start-with-video" 
+                        checked={settings.video.startWithVideo} 
+                        onCheckedChange={checked => updateVideoSettings({
+                          startWithVideo: checked
+                        })} 
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="mirror-local">Mirror self view</Label>
+                      <Switch 
+                        id="mirror-local" 
+                        checked={settings.video.mirrorLocal} 
+                        onCheckedChange={checked => updateVideoSettings({
+                          mirrorLocal: checked
+                        })} 
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="allow-screen-share">Allow screen sharing</Label>
+                      <Switch 
+                        id="allow-screen-share" 
+                        checked={settings.video.allowScreenShare} 
+                        onCheckedChange={checked => updateVideoSettings({
+                          allowScreenShare: checked
+                        })} 
+                      />
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

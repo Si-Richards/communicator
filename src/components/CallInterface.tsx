@@ -1,15 +1,33 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, PhoneForwarded } from 'lucide-react';
+import { 
+  Phone, 
+  PhoneOff, 
+  Mic, 
+  MicOff, 
+  PhoneIncoming, 
+  X, 
+  Pause, 
+  Play, 
+  PhoneForwarded,
+  Video,
+  VideoOff,
+  SwitchCamera,
+  Monitor,
+  MonitorOff
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialpad } from '@/components/ui/dialpad';
+import { VideoSurface } from '@/components/VideoSurface';
 import { useJanusContext } from '@/contexts/JanusContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import { toast } from '@/hooks/use-toast';
 import { useCallTimer } from '@/hooks/useCallTimer';
 import { useNavigate } from 'react-router-dom';
+import { cn } from '@/lib/utils';
 
 export const CallInterface = () => {
   const {
@@ -21,8 +39,15 @@ export const CallInterface = () => {
     holdCall,
     resumeCall,
     declineWaitingCall,
-    endCurrentAndAcceptWaiting
+    endCurrentAndAcceptWaiting,
+    toggleVideo,
+    startVideo,
+    stopVideo,
+    switchCamera,
+    startScreenShare,
+    stopScreenShare
   } = useJanusContext();
+  const { settings } = useSettings();
   const navigate = useNavigate();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isMuted, setIsMuted] = useState(false);
@@ -33,7 +58,7 @@ export const CallInterface = () => {
     } else if (callState.status === 'incoming') {
       acceptCall();
     } else {
-      makeCall(phoneNumber);
+      makeCall(phoneNumber, settings.video.startWithVideo);
     }
   };
   const toggleMute = () => {
@@ -105,6 +130,28 @@ export const CallInterface = () => {
           </div>
         )}
 
+        {/* Video surfaces */}
+        {(callState.videoEnabled || callState.localVideoStream || callState.remoteVideoStream) && (
+          <div className="grid grid-cols-1 gap-4 mb-4">
+            {callState.remoteVideoStream && (
+              <VideoSurface 
+                stream={callState.remoteVideoStream}
+                className="aspect-video h-48"
+                placeholder="Remote video"
+              />
+            )}
+            {callState.localVideoStream && (
+              <VideoSurface 
+                stream={callState.localVideoStream}
+                isLocal
+                isMirrored={settings.video.mirrorLocal}
+                className="aspect-video h-24"
+                placeholder="Your video"
+              />
+            )}
+          </div>
+        )}
+
         {/* Call Status - Moved above dialpad */}
         {(callState.status === 'calling' || callState.status === 'incall' || callState.status === 'incoming') && <div className="space-y-2">
             <div className="text-lg font-medium text-foreground">
@@ -155,16 +202,96 @@ export const CallInterface = () => {
           {callState.status !== 'incoming' && <>
               {/* Call control buttons - only show during call */}
               {callState.status === 'incall' && (
-                <div className="flex gap-4">
-                  {/* Mute Button */}
-                  <CallButton variant="secondary" size="lg" onClick={toggleMute} className="relative">
-                    {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-                  </CallButton>
+                <div className="space-y-4">
+                  {/* Primary controls */}
+                  <div className="grid grid-cols-4 gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleMute}
+                      className={cn(
+                        "h-12 p-0",
+                        isMuted && "bg-red-100 hover:bg-red-200 text-red-600"
+                      )}
+                    >
+                      {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleHold}
+                      className={cn(
+                        "h-12 p-0",
+                        callState.isOnHold && "bg-yellow-100 hover:bg-yellow-200 text-yellow-600"
+                      )}
+                    >
+                      {callState.isOnHold ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                    </Button>
 
-                  {/* Hold Button */}
-                  <CallButton variant="secondary" size="lg" onClick={toggleHold} className="relative">
-                    {callState.isOnHold ? <Play className="h-6 w-6" /> : <Pause className="h-6 w-6" />}
-                  </CallButton>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleVideo}
+                      className={cn(
+                        "h-12 p-0",
+                        callState.isVideoMuted && "bg-red-100 hover:bg-red-200 text-red-600"
+                      )}
+                    >
+                      {callState.isVideoMuted ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={switchCamera}
+                      className="h-12 p-0"
+                      disabled={!callState.localVideoStream}
+                    >
+                      <SwitchCamera className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Secondary video controls */}
+                  <div className="flex justify-center space-x-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={callState.isScreenSharing ? stopScreenShare : startScreenShare}
+                      className={cn(
+                        "h-10",
+                        callState.isScreenSharing && "bg-blue-100 hover:bg-blue-200 text-blue-600"
+                      )}
+                      disabled={!settings.video.allowScreenShare}
+                    >
+                      {callState.isScreenSharing ? (
+                        <>
+                          <MonitorOff className="h-4 w-4 mr-2" />
+                          Stop Sharing
+                        </>
+                      ) : (
+                        <>
+                          <Monitor className="h-4 w-4 mr-2" />
+                          Share Screen
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* Start video for audio-only calls */}
+                  {!callState.videoEnabled && !callState.localVideoStream && (
+                    <div className="flex justify-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={startVideo}
+                        className="h-10"
+                      >
+                        <Video className="h-4 w-4 mr-2" />
+                        Start Video
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 

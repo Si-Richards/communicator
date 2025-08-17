@@ -39,6 +39,15 @@ export interface DictationSettings {
   interimResults: boolean;
 }
 
+export interface VideoSettings {
+  startWithVideo: boolean;
+  cameraDeviceId: string | null;
+  resolution: '480p' | '720p' | '1080p';
+  frameRate: number;
+  mirrorLocal: boolean;
+  allowScreenShare: boolean;
+}
+
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
@@ -46,6 +55,7 @@ export interface AppSettings {
   ringtones: RingtoneSettings;
   sip: SipSettings;
   dictation: DictationSettings;
+  video: VideoSettings;
   version: string;
 }
 
@@ -57,6 +67,7 @@ interface SettingsContextType {
   updateRingtoneSettings: (updates: Partial<RingtoneSettings>) => void;
   updateSipSettings: (updates: Partial<SipSettings>) => void;
   updateDictationSettings: (updates: Partial<DictationSettings>) => void;
+  updateVideoSettings: (updates: Partial<VideoSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -95,6 +106,14 @@ const defaultSettings: AppSettings = {
     language: 'en-US',
     continuous: false,
     interimResults: true,
+  },
+  video: {
+    startWithVideo: false,
+    cameraDeviceId: null,
+    resolution: '720p',
+    frameRate: 30,
+    mirrorLocal: true,
+    allowScreenShare: true,
   },
   version: '1.0.0',
 };
@@ -177,6 +196,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateVideoSettings = (updates: Partial<VideoSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      video: { ...prev.video, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -208,6 +234,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateRingtoneSettings,
         updateSipSettings,
         updateDictationSettings,
+        updateVideoSettings,
         resetToDefaults,
         exportSettings,
         importSettings,
