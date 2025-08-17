@@ -9,6 +9,7 @@ import { useSettings } from './SettingsContext'
 import { useContacts } from './ContactsContext'
 import { useCallHistory } from './CallHistoryContext'
 import { audioDeviceManager } from '@/lib/audioDeviceManager'
+import { videoDeviceManager } from '@/lib/videoDeviceManager'
 import { logger } from '@/lib/logger'
 
 // Janus WebRTC Gateway types
@@ -915,14 +916,27 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         }
       },
       onlocaltrack: (track: MediaStreamTrack, on: boolean) => {
-        console.log("Local track:", track, on)
+        console.log("Local track:", track.kind, on)
         if (track.kind === 'audio' && on) {
           const stream = new MediaStream([track])
           setCallState(prev => ({ ...prev, localStream: stream }))
+        } else if (track.kind === 'video' && on) {
+          const stream = new MediaStream([track])
+          setCallState(prev => ({ 
+            ...prev, 
+            localVideoStream: stream,
+            videoEnabled: true
+          }))
+        } else if (track.kind === 'video' && !on) {
+          setCallState(prev => ({ 
+            ...prev, 
+            localVideoStream: undefined,
+            videoEnabled: false
+          }))
         }
       },
       onremotetrack: (track: MediaStreamTrack, mindex: number, on: boolean) => {
-        console.log("Remote track:", track, mindex, on)
+        console.log("Remote track:", track.kind, mindex, on)
         if (track.kind === 'audio' && on) {
           const stream = new MediaStream([track])
           setCallState(prev => ({ ...prev, remoteStream: stream }))
@@ -955,6 +969,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           audioElement.play().catch(error => {
             console.error("Failed to play remote audio:", error)
           })
+        } else if (track.kind === 'video' && on) {
+          const stream = new MediaStream([track])
+          setCallState(prev => ({ ...prev, remoteVideoStream: stream }))
+        } else if (track.kind === 'video' && !on) {
+          setCallState(prev => ({ ...prev, remoteVideoStream: undefined }))
         }
       },
       oncleanup: () => {
@@ -964,7 +983,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           // Keep registration status unchanged during call cleanup
           sipStatus: prev.registered ? 'Online' : prev.sipStatus,
           localStream: undefined,
-          remoteStream: undefined
+          remoteStream: undefined,
+          localVideoStream: undefined,
+          remoteVideoStream: undefined,
+          videoEnabled: false,
+          isVideoMuted: false,
+          isScreenSharing: false
         }))
       }
     })
@@ -1092,7 +1116,14 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     try {
       console.log("Getting user media for accept call")
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      
+      const accept = { request: "accept" }
+
+      // Check if we should answer with video
+      const answerWithVideo = settings.video.startWithVideo
+
+      // Get video constraints if answering with video
+      const mediaConstraints: MediaStreamConstraints = {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -1100,19 +1131,35 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           sampleRate: 48000,
           sampleSize: 16,
           channelCount: 1
-        }, 
-        video: false 
-      })
+        },
+        video: answerWithVideo ? {
+          deviceId: settings.video.cameraDeviceId ? { exact: settings.video.cameraDeviceId } : undefined,
+          width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
+          height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
+          frameRate: { ideal: settings.video.frameRate }
+        } : false
+      }
 
-      const accept = { request: "accept" }
+      const mediaStream = await navigator.mediaDevices.getUserMedia(mediaConstraints)
+
+      const tracks = [
+        { type: "audio", capture: true, recv: true },
+        { type: "video", capture: answerWithVideo, recv: true }
+      ]
 
       sipPluginRef.current.createAnswer({
         jsep: callState.remoteJsep,
-        tracks: [{ type: "audio", capture: true, recv: true }],
+        tracks,
         success: (jsep: any) => {
           console.log("Accept call - create answer success")
           sipPluginRef.current.send({ message: accept, jsep })
-          setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
+          setCallState(prev => ({ 
+            ...prev, 
+            status: 'incall', 
+            sipStatus: 'Call connected',
+            videoEnabled: answerWithVideo,
+            localVideoStream: answerWithVideo ? mediaStream : undefined
+          }))
         },
         error: (error: any) => {
           console.error("Create answer error:", error)
@@ -1187,7 +1234,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     return phoneNumber
   }, [])
 
-  const makeCall = useCallback(async (phoneNumber: string) => {
+  const makeCall = useCallback(async (phoneNumber: string, withVideo?: boolean) => {
     if (!sipPluginRef.current || !callState.registered) {
       toast({
         title: "Cannot Make Call",
@@ -1200,15 +1247,18 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     try {
       // Preprocess phone number for extensions
       const processedNumber = preprocessPhoneNumber(phoneNumber)
-      logger.info(`Making call: ${phoneNumber} -> ${processedNumber}`, undefined, 'JanusContext')
+      logger.info(`Making call: ${phoneNumber} -> ${processedNumber} with video: ${withVideo}`, undefined, 'JanusContext')
 
       // Get optimal audio constraints based on settings and selected device
       const deviceConstraints = await audioDeviceManager.getOptimalAudioConstraints(
         settings.audioDevices.inputDeviceId || undefined
       )
       
+      // Check if we should start with video
+      const startWithVideo = withVideo || settings.video.startWithVideo
+      
       // Override with user settings
-      const audioConstraints: MediaStreamConstraints = {
+      const mediaConstraints: MediaStreamConstraints = {
         audio: {
           deviceId: settings.audioDevices.inputDeviceId ? { exact: settings.audioDevices.inputDeviceId } : undefined,
           sampleRate: settings.audioQuality.sampleRate,
@@ -1217,10 +1267,15 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
           autoGainControl: settings.audioQuality.autoGainControl,
           channelCount: 1,
         },
-        video: false,
+        video: startWithVideo ? {
+          deviceId: settings.video.cameraDeviceId ? { exact: settings.video.cameraDeviceId } : undefined,
+          width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
+          height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
+          frameRate: { ideal: settings.video.frameRate }
+        } : false,
       }
       
-      const stream = await navigator.mediaDevices.getUserMedia(audioConstraints)
+      const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints)
 
       // Apply audio optimization if available
       const optimizedStream = audioOptimizerRef.current 
@@ -1234,14 +1289,22 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       
       logger.info(`SIP URI: ${call.uri}`, undefined, 'JanusContext')
 
+      // Prepare tracks for offer
+      const tracks = [
+        { type: "audio", capture: true, recv: true },
+        { type: "video", capture: startWithVideo, recv: true }
+      ]
+
       sipPluginRef.current.createOffer({
-        tracks: [{ type: "audio", capture: true, recv: true }],
+        tracks,
         success: (jsep: any) => {
           callStartTimeRef.current = new Date()
           setCallState(prev => ({ 
             ...prev, 
             direction: 'outgoing',
-            callerId: processedNumber 
+            callerId: processedNumber,
+            videoEnabled: startWithVideo,
+            localVideoStream: startWithVideo ? stream : undefined
           }))
           sipPluginRef.current.send({ message: call, jsep })
         },
@@ -1255,10 +1318,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         }
       })
     } catch (error) {
-      console.error("Failed to get microphone access:", error)
+      console.error("Failed to get media access:", error)
       toast({
-        title: "Microphone Error",
-        description: "Cannot access microphone",
+        title: "Media Error",
+        description: "Cannot access microphone or camera",
         variant: "destructive"
       })
     }
@@ -1494,54 +1557,280 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }, 500)
   }, [callState.waitingCall, callState.status, callState.callerId, callState.direction, directAcceptCall, getContactByPhoneNumber, addCallRecord])
 
-  // Video functions (placeholder implementations)
+  // Video functions
   const toggleVideo = useCallback(async () => {
-    toast({
-      title: "Video Toggle",
-      description: "Video functionality coming soon",
-      variant: "default"
-    })
-  }, [])
+    if (!sipPluginRef.current || callState.status !== 'incall') {
+      toast({
+        title: "Cannot Toggle Video",
+        description: "Must be in an active call",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (callState.videoEnabled) {
+      stopVideo()
+    } else {
+      await startVideo()
+    }
+  }, [callState.status, callState.videoEnabled])
 
   const startVideo = useCallback(async () => {
-    toast({
-      title: "Start Video",
-      description: "Video functionality coming soon",
-      variant: "default"
-    })
-  }, [])
+    if (!sipPluginRef.current || callState.status !== 'incall') {
+      toast({
+        title: "Cannot Start Video",
+        description: "Must be in an active call",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      const videoConstraints = {
+        deviceId: settings.video.cameraDeviceId ? { exact: settings.video.cameraDeviceId } : undefined,
+        width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
+        height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
+        frameRate: { ideal: settings.video.frameRate }
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: videoConstraints,
+        audio: false // We already have audio
+      })
+
+      // Send a re-INVITE with video enabled
+      sipPluginRef.current.createOffer({
+        tracks: [
+          { type: "audio", capture: true, recv: true },
+          { type: "video", capture: true, recv: true }
+        ],
+        success: (jsep: any) => {
+          const update = { request: "update" }
+          sipPluginRef.current.send({ message: update, jsep })
+          
+          setCallState(prev => ({
+            ...prev,
+            videoEnabled: true,
+            isVideoMuted: false,
+            localVideoStream: stream
+          }))
+
+          toast({
+            title: "Video Started",
+            description: "Video is now enabled",
+          })
+        },
+        error: (error: any) => {
+          console.error("Failed to create video offer:", error)
+          toast({
+            title: "Video Failed",
+            description: "Could not start video",
+            variant: "destructive"
+          })
+        }
+      })
+    } catch (error) {
+      console.error("Failed to get video access:", error)
+      toast({
+        title: "Camera Error",
+        description: "Cannot access camera",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status, settings.video])
 
   const stopVideo = useCallback(() => {
-    toast({
-      title: "Stop Video",
-      description: "Video functionality coming soon",
-      variant: "default"
+    if (!sipPluginRef.current || callState.status !== 'incall') {
+      return
+    }
+
+    // Send a re-INVITE with video disabled
+    sipPluginRef.current.createOffer({
+      tracks: [
+        { type: "audio", capture: true, recv: true },
+        { type: "video", capture: false, recv: true }
+      ],
+      success: (jsep: any) => {
+        const update = { request: "update" }
+        sipPluginRef.current.send({ message: update, jsep })
+        
+        // Stop local video tracks
+        if (callState.localVideoStream) {
+          callState.localVideoStream.getVideoTracks().forEach(track => track.stop())
+        }
+
+        setCallState(prev => ({
+          ...prev,
+          videoEnabled: false,
+          isVideoMuted: false,
+          localVideoStream: undefined
+        }))
+
+        toast({
+          title: "Video Stopped",
+          description: "Video has been disabled",
+        })
+      },
+      error: (error: any) => {
+        console.error("Failed to stop video:", error)
+      }
     })
-  }, [])
+  }, [callState.status, callState.localVideoStream])
 
   const switchCamera = useCallback(async () => {
-    toast({
-      title: "Switch Camera",
-      description: "Camera switching coming soon",
-      variant: "default"
-    })
-  }, [])
+    if (!callState.videoEnabled || !callState.localVideoStream) {
+      toast({
+        title: "Cannot Switch Camera",
+        description: "Video must be enabled first",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      // Get all video devices
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const videoDevices = devices.filter(device => device.kind === 'videoinput')
+      
+      if (videoDevices.length < 2) {
+        toast({
+          title: "Cannot Switch Camera",
+          description: "Only one camera available",
+          variant: "destructive"
+        })
+        return
+      }
+
+      // Find current device ID
+      const currentTrack = callState.localVideoStream.getVideoTracks()[0]
+      const currentSettings = currentTrack.getSettings()
+      const currentDeviceId = currentSettings.deviceId
+
+      // Find next device
+      const currentIndex = videoDevices.findIndex(device => device.deviceId === currentDeviceId)
+      const nextDevice = videoDevices[(currentIndex + 1) % videoDevices.length]
+
+      // Get new stream with the next camera
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: nextDevice.deviceId },
+          width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
+          height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
+          frameRate: { ideal: settings.video.frameRate }
+        },
+        audio: false
+      })
+
+      // Stop old video track
+      currentTrack.stop()
+
+      // Update local video stream
+      setCallState(prev => ({
+        ...prev,
+        localVideoStream: newStream
+      }))
+
+      toast({
+        title: "Camera Switched",
+        description: `Switched to ${nextDevice.label || 'Camera'}`,
+      })
+    } catch (error) {
+      console.error("Failed to switch camera:", error)
+      toast({
+        title: "Camera Switch Failed",
+        description: "Could not switch to another camera",
+        variant: "destructive"
+      })
+    }
+  }, [callState.videoEnabled, callState.localVideoStream, settings.video])
 
   const startScreenShare = useCallback(async () => {
-    toast({
-      title: "Screen Share",
-      description: "Screen sharing coming soon",
-      variant: "default"
-    })
-  }, [])
+    if (!sipPluginRef.current || callState.status !== 'incall') {
+      toast({
+        title: "Cannot Share Screen",
+        description: "Must be in an active call",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false
+      })
+
+      // Send a re-INVITE with screen share
+      sipPluginRef.current.createOffer({
+        tracks: [
+          { type: "audio", capture: true, recv: true },
+          { type: "video", capture: true, recv: true }
+        ],
+        success: (jsep: any) => {
+          const update = { request: "update" }
+          sipPluginRef.current.send({ message: update, jsep })
+          
+          // Stop current video if any
+          if (callState.localVideoStream) {
+            callState.localVideoStream.getVideoTracks().forEach(track => track.stop())
+          }
+
+          setCallState(prev => ({
+            ...prev,
+            videoEnabled: true,
+            isScreenSharing: true,
+            localVideoStream: stream
+          }))
+
+          // Handle screen share end
+          stream.getVideoTracks()[0].addEventListener('ended', () => {
+            stopScreenShare()
+          })
+
+          toast({
+            title: "Screen Share Started",
+            description: "You are now sharing your screen",
+          })
+        },
+        error: (error: any) => {
+          console.error("Failed to start screen share:", error)
+          toast({
+            title: "Screen Share Failed",
+            description: "Could not start screen sharing",
+            variant: "destructive"
+          })
+        }
+      })
+    } catch (error) {
+      console.error("Failed to get display media:", error)
+      toast({
+        title: "Screen Share Error",
+        description: "Cannot access screen sharing",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status, callState.localVideoStream])
 
   const stopScreenShare = useCallback(() => {
+    if (!callState.isScreenSharing) return
+
+    // Stop screen share tracks
+    if (callState.localVideoStream) {
+      callState.localVideoStream.getVideoTracks().forEach(track => track.stop())
+    }
+
+    setCallState(prev => ({
+      ...prev,
+      isScreenSharing: false,
+      localVideoStream: undefined,
+      videoEnabled: false
+    }))
+
     toast({
-      title: "Stop Screen Share",
-      description: "Screen sharing functionality coming soon",
-      variant: "default"
+      title: "Screen Share Stopped",
+      description: "Screen sharing has ended",
     })
-  }, [])
+  }, [callState.isScreenSharing, callState.localVideoStream])
 
   const value: JanusContextType = {
     callState,
