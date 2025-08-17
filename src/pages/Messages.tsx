@@ -1,10 +1,12 @@
-import { Send, Search } from 'lucide-react';
+import { Send, Search, Mic, MicOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
+import { useSettings } from '@/contexts/SettingsContext';
 
 // Mock conversations data
 const mockConversations = [
@@ -55,6 +57,21 @@ const Messages = () => {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const { settings } = useSettings();
+  
+  const {
+    isListening,
+    transcript,
+    interimTranscript,
+    isSupported,
+    start: startDictation,
+    stop: stopDictation,
+    reset: resetTranscript
+  } = useSpeechRecognition({
+    language: settings.dictation.language,
+    continuous: settings.dictation.continuous,
+    interimResults: settings.dictation.interimResults
+  });
 
   const filteredConversations = mockConversations.filter(conv =>
     conv.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -67,8 +84,31 @@ const Messages = () => {
     if (newMessage.trim()) {
       console.log('Sending message:', newMessage);
       setNewMessage('');
+      resetTranscript();
     }
   };
+
+  const toggleDictation = () => {
+    if (!settings.dictation.enabled) return;
+    
+    if (isListening) {
+      stopDictation();
+    } else {
+      resetTranscript();
+      startDictation();
+    }
+  };
+
+  // Update message when transcript changes
+  useEffect(() => {
+    if (transcript) {
+      setNewMessage(prev => {
+        const newText = prev + (prev ? ' ' : '') + transcript;
+        resetTranscript();
+        return newText;
+      });
+    }
+  }, [transcript, resetTranscript]);
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -170,12 +210,22 @@ const Messages = () => {
             <div className="p-4 border-t border-border">
               <div className="flex gap-2">
                 <Input
-                  placeholder="Type a message..."
-                  value={newMessage}
+                  placeholder={isListening ? "Listening..." : "Type a message..."}
+                  value={newMessage + (interimTranscript ? ` ${interimTranscript}` : '')}
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                   className="flex-1"
                 />
+                {isSupported && settings.dictation.enabled && (
+                  <Button
+                    onClick={toggleDictation}
+                    size="icon"
+                    variant={isListening ? "default" : "outline"}
+                    className={isListening ? "bg-red-600 hover:bg-red-700" : ""}
+                  >
+                    {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </Button>
+                )}
                 <Button onClick={handleSendMessage} size="icon">
                   <Send className="h-4 w-4" />
                 </Button>

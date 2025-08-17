@@ -1,4 +1,4 @@
-import { Send, Plus, User } from 'lucide-react';
+import { Send, Plus, User, Mic, MicOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +6,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
+import { useSettings } from '@/contexts/SettingsContext';
 
 // Mock SMS data
 const mockSMS = [
@@ -40,6 +42,21 @@ const SMS = () => {
   const [recipient, setRecipient] = useState('');
   const [message, setMessage] = useState('');
   const [isComposing, setIsComposing] = useState(false);
+  const { settings } = useSettings();
+  
+  const {
+    isListening,
+    transcript,
+    interimTranscript,
+    isSupported,
+    start: startDictation,
+    stop: stopDictation,
+    reset: resetTranscript
+  } = useSpeechRecognition({
+    language: settings.dictation.language,
+    continuous: settings.dictation.continuous,
+    interimResults: settings.dictation.interimResults
+  });
 
   const handleSendSMS = () => {
     if (recipient.trim() && message.trim()) {
@@ -47,8 +64,31 @@ const SMS = () => {
       setRecipient('');
       setMessage('');
       setIsComposing(false);
+      resetTranscript();
     }
   };
+
+  const toggleDictation = () => {
+    if (!settings.dictation.enabled) return;
+    
+    if (isListening) {
+      stopDictation();
+    } else {
+      resetTranscript();
+      startDictation();
+    }
+  };
+
+  // Update message when transcript changes
+  useEffect(() => {
+    if (transcript) {
+      setMessage(prev => {
+        const newText = prev + (prev ? ' ' : '') + transcript;
+        resetTranscript();
+        return newText;
+      });
+    }
+  }, [transcript, resetTranscript]);
 
   const getContactName = (number: string) => {
     const sms = mockSMS.find(s => s.to === number);
@@ -97,16 +137,29 @@ const SMS = () => {
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="message">Message</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="message">Message</Label>
+                  {isSupported && settings.dictation.enabled && (
+                    <Button
+                      onClick={toggleDictation}
+                      size="sm"
+                      variant={isListening ? "default" : "outline"}
+                      className={isListening ? "bg-red-600 hover:bg-red-700" : ""}
+                    >
+                      {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                      {isListening ? "Stop" : "Dictate"}
+                    </Button>
+                  )}
+                </div>
                 <Textarea
                   id="message"
-                  placeholder="Type your message..."
-                  value={message}
+                  placeholder={isListening ? "Listening..." : "Type your message..."}
+                  value={message + (interimTranscript ? ` ${interimTranscript}` : '')}
                   onChange={(e) => setMessage(e.target.value)}
                   rows={4}
                 />
                 <div className="text-sm text-muted-foreground text-right">
-                  {message.length}/160 characters
+                  {(message + (interimTranscript ? ` ${interimTranscript}` : '')).length}/160 characters
                 </div>
               </div>
               

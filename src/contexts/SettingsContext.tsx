@@ -32,12 +32,20 @@ export interface SipSettings {
   password: string;
 }
 
+export interface DictationSettings {
+  enabled: boolean;
+  language: string;
+  continuous: boolean;
+  interimResults: boolean;
+}
+
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
   logs: LogSettings;
   ringtones: RingtoneSettings;
   sip: SipSettings;
+  dictation: DictationSettings;
   version: string;
 }
 
@@ -48,6 +56,7 @@ interface SettingsContextType {
   updateLogSettings: (updates: Partial<LogSettings>) => void;
   updateRingtoneSettings: (updates: Partial<RingtoneSettings>) => void;
   updateSipSettings: (updates: Partial<SipSettings>) => void;
+  updateDictationSettings: (updates: Partial<DictationSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -80,6 +89,12 @@ const defaultSettings: AppSettings = {
   sip: {
     username: '',
     password: '',
+  },
+  dictation: {
+    enabled: true,
+    language: 'en-US',
+    continuous: false,
+    interimResults: true,
   },
   version: '1.0.0',
 };
@@ -155,6 +170,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateDictationSettings = (updates: Partial<DictationSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      dictation: { ...prev.dictation, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -185,6 +207,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateLogSettings,
         updateRingtoneSettings,
         updateSipSettings,
+        updateDictationSettings,
         resetToDefaults,
         exportSettings,
         importSettings,
