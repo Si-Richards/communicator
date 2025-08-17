@@ -329,12 +329,57 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
                 </ToastAction>
                 <ToastAction 
                   altText="End current and accept waiting"
-                  onClick={() => {
+                  onClick={async () => {
                     console.info("Ending current call and accepting waiting call")
                     // First hangup current call
                     const hangup = { request: "hangup" }
                     sipPluginRef.current?.send({ message: hangup })
-                    // Accept waiting call will be handled when hangup completes
+                    
+                    // Wait a moment then accept the waiting call
+                    setTimeout(async () => {
+                      const waitingCallData = callState.waitingCall
+                      if (waitingCallData && waitingCallData.remoteJsep) {
+                        try {
+                          const stream = await navigator.mediaDevices.getUserMedia({ 
+                            audio: true, 
+                            video: false 
+                          })
+
+                          const accept = { request: "accept" }
+
+                          sipPluginRef.current.createAnswer({
+                            jsep: waitingCallData.remoteJsep,
+                            tracks: [{ type: "audio", capture: true, recv: true }],
+                            success: (jsep: any) => {
+                              sipPluginRef.current.send({ message: accept, jsep })
+                              setCallState(prev => ({ 
+                                ...prev, 
+                                status: 'incall', 
+                                sipStatus: 'Call connected',
+                                waitingCall: undefined,
+                                callerId: waitingCallData.phoneNumber,
+                                direction: 'incoming'
+                              }))
+                            },
+                            error: (error: any) => {
+                              console.error("Failed to accept waiting call:", error)
+                              toast({
+                                title: "Failed to Accept Call",
+                                description: error.message || "Could not accept waiting call",
+                                variant: "destructive"
+                              })
+                            }
+                          })
+                        } catch (error) {
+                          console.error("Failed to get microphone access for waiting call:", error)
+                          toast({
+                            title: "Microphone Error",
+                            description: "Cannot access microphone",
+                            variant: "destructive"
+                          })
+                        }
+                      }
+                    }, 500)
                   }}
                   className="bg-green-600 hover:bg-green-700 text-white"
                 >

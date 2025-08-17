@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, PhoneForwarded } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Dialpad } from '@/components/ui/dialpad';
 import { useJanusContext } from '@/contexts/JanusContext';
 import { toast } from '@/hooks/use-toast';
 import { useCallTimer } from '@/hooks/useCallTimer';
+import { useNavigate } from 'react-router-dom';
 
 export const CallInterface = () => {
   const {
@@ -17,8 +19,11 @@ export const CallInterface = () => {
     rejectCall,
     hangupCall,
     holdCall,
-    resumeCall
+    resumeCall,
+    declineWaitingCall,
+    endCurrentAndAcceptWaiting
   } = useJanusContext();
+  const navigate = useNavigate();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const callTimer = useCallTimer(callState.status === 'incall');
@@ -70,6 +75,36 @@ export const CallInterface = () => {
   };
   return (
       <Card className="w-full max-w-md p-8 space-y-6 text-center mx-auto">
+        {/* Call Waiting Banner */}
+        {callState.waitingCall && (
+          <div className="bg-amber-100 dark:bg-amber-900 border border-amber-300 dark:border-amber-700 rounded-lg p-4 space-y-3">
+            <div className="text-amber-800 dark:text-amber-200">
+              <h3 className="font-semibold">Call Waiting</h3>
+              <p className="text-sm">Incoming call from {callState.waitingCall.phoneNumber}</p>
+            </div>
+            <div className="flex gap-2 justify-center">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={declineWaitingCall}
+                className="border-red-300 text-red-700 hover:bg-red-50"
+              >
+                <PhoneOff className="h-4 w-4 mr-1" />
+                Decline
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={endCurrentAndAcceptWaiting}
+                className="border-green-300 text-green-700 hover:bg-green-50"
+              >
+                <Phone className="h-4 w-4 mr-1" />
+                End & Accept
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Call Status - Moved above dialpad */}
         {(callState.status === 'calling' || callState.status === 'incall' || callState.status === 'incoming') && <div className="space-y-2">
             <div className="text-lg font-medium text-foreground">
@@ -138,6 +173,28 @@ export const CallInterface = () => {
                 {callState.status === 'incall' || callState.status === 'calling' ? <PhoneOff className="h-8 w-8" /> : <Phone className="h-8 w-8" />}
               </CallButton>
             </>}
+        </div>
+
+        {/* Multi-call Navigation */}
+        {callState.status === 'connected' && callState.registered && (
+          <div className="pt-4 border-t">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/dial')}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <PhoneForwarded className="h-4 w-4 mr-2" />
+              Multi-call Dialer
+            </Button>
+          </div>
+        )}
+
+        {/* SIP Status */}
+        <div className="text-xs text-muted-foreground">
+          <Badge variant={callState.registered ? "default" : "secondary"}>
+            {callState.sipStatus}
+          </Badge>
         </div>
 
       </Card>
