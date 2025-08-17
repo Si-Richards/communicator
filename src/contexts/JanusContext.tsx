@@ -302,24 +302,62 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       }
       
       // Check if we're already in a call - handle call waiting
-      if (callState.status === 'incall' || callState.status === 'calling' || callState.status === 'incoming') {
-        console.log("Call waiting: already in a call, storing waiting call")
-        
-        setCallState(prev => ({
-          ...prev,
-          waitingCall: {
-            id: msg.call_id || msg.result?.call_id || 'waiting-' + Date.now(),
-            phoneNumber,
-            callerId,
-            remoteJsep: jsep
+      // Use functional setState to access current state
+      let storedAsWaiting = false
+      setCallState(prev => {
+        if (prev.status === 'incall' || prev.status === 'calling' || prev.status === 'incoming') {
+          console.info("Call waiting: already in a call, storing waiting call from", phoneNumber)
+          storedAsWaiting = true
+          
+          // Show call waiting toast with actions
+          toast({
+            title: "Call Waiting",
+            description: `Incoming call from ${phoneNumber}`,
+            action: (
+              <div className="flex gap-2">
+                <ToastAction 
+                  altText="Decline waiting call"
+                  onClick={() => {
+                    console.info("Declining waiting call")
+                    const decline = { request: "decline" }
+                    sipPluginRef.current?.send({ message: decline })
+                    setCallState(current => ({ ...current, waitingCall: undefined }))
+                  }}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  <PhoneOff className="h-4 w-4" />
+                </ToastAction>
+                <ToastAction 
+                  altText="End current and accept waiting"
+                  onClick={() => {
+                    console.info("Ending current call and accepting waiting call")
+                    // First hangup current call
+                    const hangup = { request: "hangup" }
+                    sipPluginRef.current?.send({ message: hangup })
+                    // Accept waiting call will be handled when hangup completes
+                  }}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Phone className="h-4 w-4" />
+                </ToastAction>
+              </div>
+            ),
+          })
+          
+          return {
+            ...prev,
+            waitingCall: {
+              id: msg.call_id || msg.result?.call_id || 'waiting-' + Date.now(),
+              phoneNumber,
+              callerId,
+              remoteJsep: jsep
+            }
           }
-        }))
-        
-        toast({
-          title: "Call Waiting",
-          description: `Incoming call from ${phoneNumber}`,
-          variant: "default"
-        })
+        }
+        return prev
+      })
+      
+      if (storedAsWaiting) {
         return
       }
       
