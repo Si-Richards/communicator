@@ -1610,17 +1610,13 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
 
     try {
-      const videoConstraints = {
-        deviceId: settings.video.cameraDeviceId ? { exact: settings.video.cameraDeviceId } : undefined,
-        width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
-        height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
-        frameRate: { ideal: settings.video.frameRate }
-      }
+      // Use videoDeviceManager for optimal constraints
+      const constraints = await videoDeviceManager.getOptimalVideoConstraints(
+        settings.video.cameraDeviceId || undefined,
+        settings.video.resolution
+      )
 
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: videoConstraints,
-        audio: false // We already have audio
-      })
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
 
       // Send a re-INVITE with video enabled
       sipPluginRef.current.createOffer({
@@ -1734,16 +1730,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       const currentIndex = videoDevices.findIndex(device => device.deviceId === currentDeviceId)
       const nextDevice = videoDevices[(currentIndex + 1) % videoDevices.length]
 
-      // Get new stream with the next camera
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: { exact: nextDevice.deviceId },
-          width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
-          height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
-          frameRate: { ideal: settings.video.frameRate }
-        },
-        audio: false
-      })
+      // Get new stream with the next camera using videoDeviceManager
+      const constraints = await videoDeviceManager.getOptimalVideoConstraints(
+        nextDevice.deviceId,
+        settings.video.resolution
+      )
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints)
 
       // Stop old video track
       currentTrack.stop()

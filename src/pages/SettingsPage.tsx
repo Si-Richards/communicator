@@ -17,7 +17,7 @@ import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDe
 import { videoDeviceManager, VideoDevice, VideoDeviceTestResult } from '@/lib/videoDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff, Bell } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff, Bell, RefreshCw } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -103,6 +103,12 @@ const SettingsPage = () => {
     setOutputDevices(audioDeviceManager.getOutputDevices());
     setVideoDevices(videoDevs);
   };
+
+  const loadVideoDevices = async () => {
+    await videoDeviceManager.requestPermissions();
+    const videoDevs = await videoDeviceManager.enumerateDevices();
+    setVideoDevices(videoDevs);
+  };
   const testDevice = async (deviceId: string, kind: 'audioinput' | 'audiooutput') => {
     setTestingDevice(deviceId);
     try {
@@ -136,43 +142,37 @@ const SettingsPage = () => {
   };
 
   const testVideoDevice = async (deviceId: string) => {
-    setTestingVideoDevice(deviceId);
     try {
-      const result = await videoDeviceManager.testVideoDevice(deviceId);
-      if (result.success) {
-        // Get the video stream for preview
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: deviceId } },
-          audio: false,
-        });
-        setVideoTestStream(stream);
-        
-        // Set up video element
-        if (videoTestRef.current) {
-          videoTestRef.current.srcObject = stream;
-        }
-
-        toast({
-          title: 'Camera Test Started',
-          description: 'Camera is working correctly. Click "Stop Test" when done.'
-        });
-      } else {
-        toast({
-          title: 'Camera Test Failed',
-          description: result.error,
-          variant: 'destructive'
-        });
+      setTestingVideoDevice(deviceId)
+      
+      // Use videoDeviceManager for consistent constraints
+      const constraints = await videoDeviceManager.getOptimalVideoConstraints(
+        deviceId === 'default' ? undefined : deviceId,
+        settings.video.resolution
+      )
+      
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      
+      setVideoTestStream(stream)
+      if (videoTestRef.current) {
+        videoTestRef.current.srcObject = stream
       }
-    } catch (error) {
+      
       toast({
-        title: 'Test Error',
-        description: 'Failed to test camera',
-        variant: 'destructive'
-      });
+        title: "Camera Test",
+        description: "Camera is working properly",
+      })
+    } catch (error) {
+      console.error('Camera test failed:', error)
+      toast({
+        title: "Camera Test Failed", 
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: "destructive"
+      })
     } finally {
-      setTestingVideoDevice(null);
+      setTestingVideoDevice(null)
     }
-  };
+  }
 
   const stopVideoTest = () => {
     if (videoTestStream) {
@@ -605,41 +605,59 @@ const SettingsPage = () => {
                 <Separator />
 
                 <div className="space-y-4">
-                  <h4 className="text-sm font-medium">Camera Testing</h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium">Camera Testing</h4>
+                    <Button
+                      onClick={loadVideoDevices}
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Refresh
+                    </Button>
+                  </div>
                   
-                  {settings.video.cameraDeviceId && (
-                    <div className="space-y-4">
-                      <Button 
-                        onClick={() => testVideoDevice(settings.video.cameraDeviceId!)} 
-                        disabled={testingVideoDevice === settings.video.cameraDeviceId} 
-                        variant="outline" 
-                        size="sm" 
-                        className="w-full"
-                      >
-                        {testingVideoDevice === settings.video.cameraDeviceId ? 'Testing Camera...' : 'Test Camera'}
-                      </Button>
-                      
-                      {videoTestStream && (
-                        <div className="relative">
-                          <video
-                            ref={videoTestRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className="w-full h-48 bg-muted rounded-lg object-cover"
-                          />
-                          <Button
-                            onClick={stopVideoTest}
-                            variant="destructive"
-                            size="sm"
-                            className="absolute top-2 right-2"
-                          >
-                            Stop Test
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div className="space-y-4">
+                    <Button 
+                      onClick={() => testVideoDevice(settings.video.cameraDeviceId || 'default')} 
+                      disabled={testingVideoDevice !== null} 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full"
+                    >
+                      {testingVideoDevice ? 'Testing Camera...' : 'Test Camera'}
+                    </Button>
+                    
+                    {videoTestStream ? (
+                      <div className="relative">
+                        <video
+                          ref={videoTestRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-48 bg-muted rounded-lg object-cover"
+                        />
+                        <Button
+                          onClick={stopVideoTest}
+                          variant="destructive"
+                          size="sm"
+                          className="absolute top-2 right-2"
+                        >
+                          Stop Test
+                        </Button>
+                      </div>
+                    ) : videoDevices.length === 0 ? (
+                      <div className="p-4 bg-muted/50 rounded-lg text-center">
+                        <p className="text-sm text-muted-foreground mb-2">
+                          No cameras detected
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Click "Test Camera" to request camera permissions
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </CardContent>
             </Card>
