@@ -559,7 +559,7 @@ const SettingsPage = () => {
                   SIP Account Configuration
                 </CardTitle>
                 <CardDescription>
-                  Configure your SIP credentials to connect to the server
+                  Configure your credentials
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -574,7 +574,7 @@ const SettingsPage = () => {
                       onChange={(e) => setTempSipSettings(prev => ({ ...prev, username: e.target.value }))}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Enter your SIP username (e.g., 16331*201)
+                      Enter your SIP username
                     </p>
                   </div>
 
