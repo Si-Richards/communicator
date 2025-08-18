@@ -105,10 +105,12 @@ const SettingsPage = () => {
   };
 
   const loadVideoDevices = async () => {
+    console.log('loadVideoDevices called')
     await videoDeviceManager.requestPermissions();
     const videoDevs = await videoDeviceManager.enumerateDevices();
     setVideoDevices(videoDevs);
   };
+
   const testDevice = async (deviceId: string, kind: 'audioinput' | 'audiooutput') => {
     setTestingDevice(deviceId);
     try {
