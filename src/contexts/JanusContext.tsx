@@ -77,6 +77,7 @@ interface JanusContextType {
   switchCamera: () => Promise<void>
   startScreenShare: () => Promise<void>
   stopScreenShare: () => void
+  sendDtmf: (digit: string) => void
   disconnect: () => void
   reconnect: () => Promise<void>
   setDoNotDisturb: (enabled: boolean) => void
@@ -1832,6 +1833,25 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     })
   }, [callState.isScreenSharing, callState.localVideoStream])
 
+  const sendDtmf = useCallback((digit: string) => {
+    if (!sipPluginRef.current || (callState.status !== 'incall' && callState.status !== 'calling')) {
+      logger.warn('Cannot send DTMF: not in call or plugin not available')
+      return
+    }
+
+    try {
+      logger.info(`Sending DTMF digit: ${digit}`)
+      sipPluginRef.current.dtmf({ dtmf: { tones: digit } })
+    } catch (error) {
+      logger.error('Error sending DTMF:', error)
+      toast({
+        title: "DTMF Error",
+        description: "Failed to send keypad tone",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status])
+
   const value: JanusContextType = {
     callState,
     makeCall,
@@ -1849,6 +1869,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     switchCamera,
     startScreenShare,
     stopScreenShare,
+    sendDtmf,
     disconnect,
     reconnect,
     setDoNotDisturb,

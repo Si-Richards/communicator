@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 
 import {
   Sidebar,
@@ -74,25 +75,37 @@ export function AppSidebar() {
 
       {/* Do Not Disturb Toggle in Footer */}
       <SidebarFooter>
-        <div className="px-2 py-2 space-y-2">
+        <div className="px-2 py-2">
           {/* Do Not Disturb Toggle */}
-          <div className="flex items-center space-x-2">
-            <Switch
-              id="do-not-disturb"
-              checked={callState.doNotDisturb}
-              onCheckedChange={setDoNotDisturb}
-              className="data-[state=checked]:bg-muted-foreground"
-            />
-            <Label htmlFor="do-not-disturb" className="text-sm font-medium cursor-pointer flex items-center gap-2">
-              <Moon className="h-4 w-4" />
-              {state !== "collapsed" && "Do Not Disturb"}
-            </Label>
-          </div>
-
-          {/* Sidebar Toggle at Bottom */}
-          <div className="flex justify-center pt-2">
-            <SidebarTrigger className="text-muted-foreground hover:text-foreground" />
-          </div>
+          {state === "collapsed" ? (
+            <div className="flex justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDoNotDisturb(!callState.doNotDisturb)}
+                className={cn(
+                  "h-8 w-8 p-0",
+                  callState.doNotDisturb && "bg-muted text-muted-foreground"
+                )}
+                title={callState.doNotDisturb ? "Disable Do Not Disturb" : "Enable Do Not Disturb"}
+              >
+                <Moon className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="do-not-disturb"
+                checked={callState.doNotDisturb}
+                onCheckedChange={setDoNotDisturb}
+                className="data-[state=checked]:bg-muted-foreground"
+              />
+              <Label htmlFor="do-not-disturb" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                <Moon className="h-4 w-4" />
+                Do Not Disturb
+              </Label>
+            </div>
+          )}
         </div>
       </SidebarFooter>
     </Sidebar>
