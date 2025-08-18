@@ -7,6 +7,7 @@ import { JanusProvider } from "./contexts/JanusContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ContactsProvider } from "./contexts/ContactsContext";
 import { CallHistoryProvider } from "./contexts/CallHistoryContext";
+import { NotificationBootstrap } from "./components/NotificationBootstrap";
 import Layout from "./components/Layout";
 import Dial from "./pages/Dial";
 import Contacts from "./pages/Contacts";
@@ -22,12 +23,13 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <SettingsProvider>
-      <ContactsProvider>
-        <CallHistoryProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <JanusProvider>
+      <NotificationBootstrap>
+        <ContactsProvider>
+          <CallHistoryProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <JanusProvider>
               <BrowserRouter>
                 <Layout>
                   <Routes>
@@ -43,10 +45,11 @@ const App = () => (
                   </Routes>
                 </Layout>
               </BrowserRouter>
-            </JanusProvider>
-          </TooltipProvider>
-        </CallHistoryProvider>
-      </ContactsProvider>
+              </JanusProvider>
+            </TooltipProvider>
+          </CallHistoryProvider>
+        </ContactsProvider>
+      </NotificationBootstrap>
     </SettingsProvider>
   </QueryClientProvider>
 );

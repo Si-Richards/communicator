@@ -12,11 +12,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useJanusContext } from '@/contexts/JanusContext';
+import { notificationManager } from '@/lib/notificationManager';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { videoDeviceManager, VideoDevice, VideoDeviceTestResult } from '@/lib/videoDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff, Bell } from 'lucide-react';
 const SettingsPage = () => {
   const {
     settings,
@@ -26,6 +27,7 @@ const SettingsPage = () => {
     updateRingtoneSettings,
     updateSipSettings,
     updateVideoSettings,
+    updateNotificationSettings,
     resetToDefaults,
     exportSettings,
     importSettings
@@ -210,7 +212,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-8">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -226,6 +228,10 @@ const SettingsPage = () => {
             <TabsTrigger value="sip" className="flex items-center gap-2">
               <Phone className="h-4 w-4" />
               SIP
+            </TabsTrigger>
+            <TabsTrigger value="notifications" className="flex items-center gap-2">
+              <Bell className="h-4 w-4" />
+              Notifications
             </TabsTrigger>
             <TabsTrigger value="advanced" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
@@ -658,6 +664,148 @@ const SettingsPage = () => {
                       {callState.sipStatus}
                     </span>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="notifications" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bell className="h-5 w-5" />
+                  Desktop Notifications
+                </CardTitle>
+                <CardDescription>
+                  Configure desktop notifications for calls and app events
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="notifications-enabled">Enable Desktop Notifications</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Show system notifications when the app is minimized or in background
+                      </p>
+                    </div>
+                    <Switch 
+                      id="notifications-enabled" 
+                      checked={settings.notifications.enabled} 
+                      onCheckedChange={checked => updateNotificationSettings({
+                        enabled: checked
+                      })} 
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="ask-on-startup">Ask for Permission on Startup</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Request notification permission when the app starts (if not already granted)
+                      </p>
+                    </div>
+                    <Switch 
+                      id="ask-on-startup" 
+                      checked={settings.notifications.askOnStartup} 
+                      onCheckedChange={checked => updateNotificationSettings({
+                        askOnStartup: checked
+                      })} 
+                      disabled={!settings.notifications.enabled}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="show-preview">Show Caller Information</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Display caller name/number in notification preview text
+                      </p>
+                    </div>
+                    <Switch 
+                      id="show-preview" 
+                      checked={settings.notifications.showPreviewText} 
+                      onCheckedChange={checked => updateNotificationSettings({
+                        showPreviewText: checked
+                      })} 
+                      disabled={!settings.notifications.enabled}
+                    />
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-medium">Notification Status</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        notificationManager.getPermission() === 'granted' ? 'bg-green-500' : 
+                        notificationManager.getPermission() === 'denied' ? 'bg-red-500' : 'bg-yellow-500'
+                      }`} />
+                      <span className="text-sm text-muted-foreground">
+                        Browser Permission: {notificationManager.getPermission()}
+                      </span>
+                    </div>
+                    
+                    {notificationManager.getPermission() === 'denied' && (
+                      <p className="text-xs text-call-warning">
+                        Notifications are blocked. Please enable them in your browser settings.
+                      </p>
+                    )}
+                    
+                    {notificationManager.getPermission() === 'default' && (
+                      <Button 
+                        onClick={async () => {
+                          const permission = await notificationManager.requestPermission();
+                          if (permission === 'granted') {
+                            toast({
+                              title: "Notifications Enabled",
+                              description: "Desktop notifications are now allowed"
+                            });
+                          } else {
+                            toast({
+                              title: "Permission Denied",
+                              description: "Desktop notifications were not allowed",
+                              variant: "destructive"
+                            });
+                          }
+                        }}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Request Permission
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2">
+                  <Label>Test Notifications</Label>
+                  <Button 
+                    onClick={() => {
+                      const notification = notificationManager.showTest();
+                      if (notification) {
+                        toast({
+                          title: "Test Notification Sent",
+                          description: "Check your system notifications"
+                        });
+                      } else {
+                        toast({
+                          title: "Cannot Send Notification",
+                          description: "Please enable notifications first",
+                          variant: "destructive"
+                        });
+                      }
+                    }}
+                    variant="outline"
+                    size="sm"
+                    disabled={!settings.notifications.enabled || notificationManager.getPermission() !== 'granted'}
+                  >
+                    Send Test Notification
+                  </Button>
                 </div>
               </CardContent>
             </Card>

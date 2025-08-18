@@ -5,6 +5,7 @@ import { Phone, PhoneOff } from 'lucide-react'
 import { loadJanus, getJanus } from '@/lib/janusLoader'
 import { AudioQualityOptimizer, getOptimalAudioConstraints } from '@/lib/audioQualityOptimizer'
 import { ringtoneManager } from '@/lib/ringtoneManager'
+import { notificationManager } from '@/lib/notificationManager'
 import { useSettings } from './SettingsContext'
 import { useContacts } from './ContactsContext'
 import { useCallHistory } from './CallHistoryContext'
@@ -446,6 +447,19 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         ringtoneManager.playIncomingRing()
       }
       
+      // Show desktop notification if enabled and app is hidden
+      if (settings.notifications.enabled) {
+        const contact = getContactByPhoneNumber(phoneNumber)
+        const displayName = contact?.name || phoneNumber
+        
+        notificationManager.showWhenHidden({
+          title: 'Incoming Call',
+          body: settings.notifications.showPreviewText ? `Call from ${displayName}` : 'Incoming call',
+          tag: 'incoming-call',
+          requireInteraction: true,
+        })
+      }
+      
       console.log("Creating new incoming call toast for:", phoneNumber)
       incomingCallToastRef.current = toast({
         title: phoneNumber,
@@ -709,6 +723,15 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
             title: "Call Ended",
             description: "Call has been terminated",
           })
+          
+          // Show desktop notification for call end if enabled
+          if (settings.notifications.enabled) {
+            notificationManager.showWhenHidden({
+              title: 'Call Ended',
+              body: 'Your call has ended',
+              tag: 'call-ended',
+            })
+          }
         }
       } else {
       // Normal hangup without SIP code

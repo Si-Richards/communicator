@@ -48,6 +48,12 @@ export interface VideoSettings {
   allowScreenShare: boolean;
 }
 
+export interface NotificationSettings {
+  enabled: boolean;
+  askOnStartup: boolean;
+  showPreviewText: boolean;
+}
+
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
@@ -56,6 +62,7 @@ export interface AppSettings {
   sip: SipSettings;
   dictation: DictationSettings;
   video: VideoSettings;
+  notifications: NotificationSettings;
   version: string;
 }
 
@@ -68,6 +75,7 @@ interface SettingsContextType {
   updateSipSettings: (updates: Partial<SipSettings>) => void;
   updateDictationSettings: (updates: Partial<DictationSettings>) => void;
   updateVideoSettings: (updates: Partial<VideoSettings>) => void;
+  updateNotificationSettings: (updates: Partial<NotificationSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -114,6 +122,11 @@ const defaultSettings: AppSettings = {
     frameRate: 30,
     mirrorLocal: true,
     allowScreenShare: true,
+  },
+  notifications: {
+    enabled: true,
+    askOnStartup: true,
+    showPreviewText: true,
   },
   version: '1.0.0',
 };
@@ -203,6 +216,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateNotificationSettings = (updates: Partial<NotificationSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      notifications: { ...prev.notifications, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -235,6 +255,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateSipSettings,
         updateDictationSettings,
         updateVideoSettings,
+        updateNotificationSettings,
         resetToDefaults,
         exportSettings,
         importSettings,
