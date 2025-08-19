@@ -33,19 +33,19 @@ const App = () => (
               <JanusProvider>
                 <XmppProvider>
                   <BrowserRouter>
-                <Layout>
-                  <Routes>
-                    <Route path="/" element={<Dial />} />
-                    <Route path="/contacts" element={<Contacts />} />
-                    <Route path="/history" element={<History />} />
-                    <Route path="/voicemail" element={<Voicemail />} />
-                    <Route path="/messages" element={<Messages />} />
-                    <Route path="/sms" element={<SMS />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                    {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </Layout>
+                    <Layout>
+                      <Routes>
+                        <Route path="/" element={<Dial />} />
+                        <Route path="/contacts" element={<Contacts />} />
+                        <Route path="/history" element={<History />} />
+                        <Route path="/voicemail" element={<Voicemail />} />
+                        <Route path="/messages" element={<Messages />} />
+                        <Route path="/sms" element={<SMS />} />
+                        <Route path="/settings" element={<SettingsPage />} />
+                        {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </Layout>
                   </BrowserRouter>
                 </XmppProvider>
               </JanusProvider>
