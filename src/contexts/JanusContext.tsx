@@ -1019,15 +1019,49 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   }, [handleSipMessage])
 
   const registerSipAccount = useCallback(() => {
-    if (!sipPluginRef.current) return
+    // Validate SIP settings first
+    if (!settings.sip.username?.trim()) {
+      toast({
+        title: "SIP Configuration Error",
+        description: "Username is required for SIP registration",
+        variant: "destructive"
+      })
+      return
+    }
 
-    // Check if SIP credentials are configured
-    if (!settings.sip.username || !settings.sip.password) {
-      setCallState(prev => ({ 
-        ...prev, 
-        registered: false,
-        sipStatus: 'SIP not configured' 
-      }))
+    if (!settings.sip.password?.trim()) {
+      toast({
+        title: "SIP Configuration Error", 
+        description: "Password is required for SIP registration",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!settings.sip.server?.trim()) {
+      toast({
+        title: "SIP Configuration Error",
+        description: "Janus server URL is required for SIP registration", 
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!settings.sip.realm?.trim()) {
+      toast({
+        title: "SIP Configuration Error",
+        description: "SIP realm is required for SIP registration",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!sipPluginRef.current) {
+      toast({
+        title: "Connection Error",
+        description: "Not connected to Janus server",
+        variant: "destructive"
+      })
       return
     }
 
@@ -1071,7 +1105,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
-  }, [settings.sip.username, settings.sip.password])
+  }, [settings.sip.username, settings.sip.password, settings.sip.server, settings.sip.realm, toast])
 
   const unregisterSipAccount = useCallback(() => {
     if (!sipPluginRef.current) return

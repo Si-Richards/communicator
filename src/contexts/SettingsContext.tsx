@@ -149,13 +149,30 @@ interface SettingsProviderProps {
   children: ReactNode;
 }
 
+// Deep merge utility function
+const deepMerge = (target: any, source: any): any => {
+  const result = { ...target };
+  
+  for (const key in source) {
+    if (source.hasOwnProperty(key)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        result[key] = deepMerge(target[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+  }
+  
+  return result;
+};
+
 export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) => {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem('app-settings');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return { ...defaultSettings, ...parsed };
+        return deepMerge(defaultSettings, parsed);
       }
     } catch (error) {
       console.warn('Failed to load settings from localStorage:', error);
@@ -239,7 +256,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     try {
       const imported = JSON.parse(jsonString);
       if (imported && typeof imported === 'object') {
-        setSettings({ ...defaultSettings, ...imported });
+        setSettings(deepMerge(defaultSettings, imported));
         return true;
       }
     } catch (error) {

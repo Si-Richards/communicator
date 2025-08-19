@@ -62,6 +62,12 @@ const SettingsPage = () => {
     realm: settings.sip.realm
   });
 
+  // Check if all required SIP fields are populated
+  const isSipConfigValid = tempSipSettings.username?.trim() && 
+                          tempSipSettings.password?.trim() && 
+                          tempSipSettings.server?.trim() && 
+                          tempSipSettings.realm?.trim();
+
   // Sync temp settings when main settings change
   useEffect(() => {
     setTempSipSettings({
@@ -797,23 +803,25 @@ const SettingsPage = () => {
                       Unregister
                     </Button>
                   ) : (
-                    <Button 
-                      variant="outline"
-                      onClick={() => {
-                        if (settings.sip.username && settings.sip.password) {
-                          registerNow();
-                        } else {
-                          toast({
-                            title: "No Credentials",
-                            description: "Please save your SIP credentials first",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                      disabled={!settings.sip.username || !settings.sip.password || callState.sipStatus.includes('Registering')}
-                    >
-                      {callState.sipStatus.includes('Registering') ? 'Registering...' : 'Register Now'}
-                    </Button>
+                   <Button 
+                     variant="outline"
+                     onClick={() => {
+                       if (isSipConfigValid) {
+                         // Save current temp settings first, then register
+                         updateSipSettings(tempSipSettings);
+                         registerNow();
+                       } else {
+                         toast({
+                           title: "Incomplete Configuration",
+                           description: "Please fill in all required SIP fields",
+                           variant: "destructive"
+                         });
+                       }
+                     }}
+                     disabled={!isSipConfigValid || callState.sipStatus.includes('Registering')}
+                   >
+                     {callState.sipStatus.includes('Registering') ? 'Registering...' : 'Register Now'}
+                   </Button>
                   )}
                 </div>
 
