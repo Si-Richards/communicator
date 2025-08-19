@@ -262,17 +262,24 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimeout) return; // Already scheduled
     
-    const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); // Cap at 30s
-    const jitterMs = Math.random() * 1000; // 0-1s jitter
-    const delayMs = backoffMs + jitterMs;
+    // Limited retry attempts - max 2 attempts only
+    if (reconnectAttempts >= 2) {
+      console.error('XMPP Max reconnection attempts reached');
+      setLastError('Connection failed after 2 attempts. Please check your credentials.');
+      return;
+    }
     
-    console.log(`XMPP scheduling reconnect in ${Math.round(delayMs)}ms (attempt ${reconnectAttempts + 1})`);
+    const delayMs = reconnectAttempts === 0 ? 2000 : 5000; // 2s then 5s
+    const jitterMs = Math.random() * 500; // Small jitter
+    const totalDelay = delayMs + jitterMs;
+    
+    console.log(`XMPP scheduling reconnect in ${Math.round(totalDelay)}ms (attempt ${reconnectAttempts + 1})`);
     
     const timeout = setTimeout(() => {
       setReconnectAttempts(prev => prev + 1);
       setReconnectTimeout(null);
       connect();
-    }, delayMs);
+    }, totalDelay);
     
     setReconnectTimeout(timeout);
   }, [reconnectAttempts, reconnectTimeout, connect]);

@@ -99,8 +99,8 @@ const SettingsPage = () => {
 
   useEffect(() => {
     setTempXmppSettings({
-      websocketUrl: settings.xmpp.websocketUrl,
-      domain: settings.xmpp.domain,
+      websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
+      domain: 'ejabberd.voicehost.io',
       username: settings.xmpp.username,
       password: settings.xmpp.password,
       resource: settings.xmpp.resource,
@@ -863,33 +863,6 @@ const SettingsPage = () => {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-websocket-url">WebSocket URL</Label>
-                    <Input
-                      id="xmpp-websocket-url"
-                      type="url"
-                      placeholder="wss://ejabberd.voicehost.io:443/websocket"
-                      value={tempXmppSettings.websocketUrl}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, websocketUrl: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      XMPP WebSocket connection URL
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-domain">Domain</Label>
-                    <Input
-                      id="xmpp-domain"
-                      type="text"
-                      placeholder="voicehost.io"
-                      value={tempXmppSettings.domain}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, domain: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      XMPP server domain
-                    </p>
-                  </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="xmpp-username">Username</Label>
@@ -983,20 +956,22 @@ const SettingsPage = () => {
                 </div>
 
                 <div className="flex gap-3">
-                  <Button 
-                    onClick={() => {
-                      // Clear password from settings if remember password is disabled
-                      const settingsToSave = { 
-                        ...tempXmppSettings,
-                        password: tempXmppSettings.rememberPassword ? tempXmppSettings.password : ''
-                      };
-                      updateXmppSettings(settingsToSave);
-                      toast({
-                        title: "XMPP Settings Saved",
-                        description: "Your XMPP configuration has been saved successfully"
-                      });
-                    }}
-                    disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain}
+                   <Button 
+                     onClick={() => {
+                       // Clear password from settings if remember password is disabled
+                       const settingsToSave = { 
+                         ...tempXmppSettings,
+                         websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
+                         domain: 'ejabberd.voicehost.io',
+                         password: tempXmppSettings.rememberPassword ? tempXmppSettings.password : ''
+                       };
+                       updateXmppSettings(settingsToSave);
+                       toast({
+                         title: "XMPP Settings Saved",
+                         description: "Your XMPP configuration has been saved successfully"
+                       });
+                     }}
+                     disabled={!tempXmppSettings.username || !tempXmppSettings.password}
                   >
                     Save Configuration
                   </Button>
