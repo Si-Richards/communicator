@@ -40,6 +40,7 @@ interface XmppContextType {
   addContact: (jid: string) => void;
   removeContact: (jid: string) => void;
   setPresence: (show?: 'away' | 'dnd' | 'xa', status?: string) => void;
+  startConversation: (jid: string) => void;
 }
 
 const XmppContext = createContext<XmppContextType | undefined>(undefined);
@@ -249,6 +250,23 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     xmppClient.send(presenceStanza).catch(console.error);
   }, [xmppClient, connectionState]);
 
+  const startConversation = useCallback((jid: string) => {
+    setConversations(prev => {
+      const existingConv = prev.find(conv => conv.jid === jid);
+      if (existingConv) return prev;
+      
+      const newConv: XmppConversation = {
+        jid,
+        name: jid.split('@')[0],
+        messages: [],
+        unreadCount: 0,
+        lastActivity: new Date()
+      };
+      
+      return [newConv, ...prev];
+    });
+  }, []);
+
   const addMessageToConversation = (message: XmppMessage, sent = false) => {
     const contactJid = sent ? message.to : message.from;
     
@@ -339,7 +357,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       sendMessage,
       addContact,
       removeContact,
-      setPresence
+      setPresence,
+      startConversation
     }}>
       {children}
     </XmppContext.Provider>
