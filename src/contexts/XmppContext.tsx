@@ -142,9 +142,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         ).catch(console.error);
       });
 
-      // Message handling
+      // Message handling - accept both chat and normal message types
       newClient.on('stanza', (stanza: any) => {
-        if (stanza.is('message') && stanza.attrs.type === 'chat') {
+        if (stanza.is('message') && (stanza.attrs.type === 'chat' || stanza.attrs.type === 'normal' || !stanza.attrs.type)) {
           const from = stanza.attrs.from;
           const body = stanza.getChildText('body');
           

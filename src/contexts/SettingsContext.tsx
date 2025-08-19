@@ -149,7 +149,7 @@ const defaultSettings: AppSettings = {
     domain: 'voicehost.io',
     username: '',
     password: '',
-    resource: 'web-client',
+    resource: '', // Empty by default - will be auto-generated
     autoConnect: false,
     rememberPassword: true,
   },

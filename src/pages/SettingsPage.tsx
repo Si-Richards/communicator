@@ -941,7 +941,7 @@ const SettingsPage = () => {
                       onChange={(e) => setTempXmppSettings(prev => ({ ...prev, resource: e.target.value }))}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Client resource identifier
+                      Leave empty for auto-generated unique identifier (recommended)
                     </p>
                   </div>
                 </div>
