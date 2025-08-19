@@ -61,7 +61,6 @@ export interface XmppSettings {
   domain: string;
   username: string;
   password: string;
-  resource: string;
   autoConnect: boolean;
   rememberPassword: boolean;
 }
@@ -146,10 +145,9 @@ const defaultSettings: AppSettings = {
   },
   xmpp: {
     websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
-    domain: 'voicehost.io',
+    domain: 'ejabberd.voicehost.io',
     username: '',
     password: '',
-    resource: '', // Empty by default - will be auto-generated
     autoConnect: false,
     rememberPassword: true,
   },

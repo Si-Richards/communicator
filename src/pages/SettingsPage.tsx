@@ -72,7 +72,6 @@ const SettingsPage = () => {
     domain: settings.xmpp.domain,
     username: settings.xmpp.username,
     password: settings.xmpp.password,
-    resource: settings.xmpp.resource,
     autoConnect: settings.xmpp.autoConnect,
     rememberPassword: settings.xmpp.rememberPassword
   });
@@ -103,7 +102,6 @@ const SettingsPage = () => {
       domain: 'ejabberd.voicehost.io',
       username: settings.xmpp.username,
       password: settings.xmpp.password,
-      resource: settings.xmpp.resource,
       autoConnect: settings.xmpp.autoConnect,
       rememberPassword: settings.xmpp.rememberPassword
     });
@@ -908,19 +906,6 @@ const SettingsPage = () => {
                     </p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-resource">Resource Prefix</Label>
-                    <Input
-                      id="xmpp-resource"
-                      type="text"
-                      placeholder="web-client"
-                      value={tempXmppSettings.resource}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, resource: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Base name for this client. A unique suffix is added automatically to prevent conflicts.
-                    </p>
-                  </div>
                 </div>
 
                 <Separator />

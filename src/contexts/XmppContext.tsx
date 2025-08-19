@@ -45,6 +45,7 @@ interface XmppContextType {
   setPresence: (show?: 'away' | 'dnd' | 'xa', status?: string) => void;
   startConversation: (jid: string) => void;
   runWebSocketDiagnostics: () => Promise<{ success: boolean; details: string; }>;
+  ping: () => Promise<boolean>;
 }
 
 const XmppContext = createContext<XmppContextType | undefined>(undefined);
@@ -109,12 +110,11 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       setLastAttemptAt(new Date());
       setLastError(null);
       
-      // Generate unique resource with better entropy - always append unique suffix even if user defines resource
+      // Generate unique resource - always auto-generated per tab
       const timestamp = Date.now();
       const random = Math.random().toString(36).substr(2, 9);
       const tabId = crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
-      const baseResource = settings.xmpp.resource || 'web-client';
-      const resource = `${baseResource}-${timestamp}-${random}-${tabId}`;
+      const resource = `web-client-${timestamp}-${random}-${tabId}`;
       
       setCurrentResource(resource);
       console.log(`XMPP connecting with resource: ${resource}`);
@@ -265,9 +265,11 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         }
       });
 
-      await newClient.start();
+      // Initialize references before starting for immediate availability
       clientRef.current = newClient;
       setXmppClient(newClient);
+      
+      await newClient.start();
       setIsConnecting(false);
       return true;
     } catch (error) {
@@ -343,7 +345,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   }, [xmppClient, reconnectTimeout]);
 
   const sendMessage = useCallback(async (to: string, body: string): Promise<boolean> => {
-    if (!xmppClient || connectionState !== 'connected') {
+    // Use clientRef for more immediate connection check
+    if (!clientRef.current || connectionState !== 'connected') {
       toast({
         title: 'Cannot Send Message',
         description: 'Not connected to XMPP server',
@@ -359,7 +362,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         xml('body', {}, body)
       );
 
-      await xmppClient.send(message);
+      await clientRef.current.send(message);
       
       // Add to local conversation
       const sentMessage: XmppMessage = {
@@ -382,7 +385,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       });
       return false;
     }
-  }, [xmppClient, connectionState, settings.xmpp, toast]);
+  }, [connectionState, settings.xmpp, toast]);
 
   const addContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
@@ -576,6 +579,26 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     });
   }, [settings.xmpp.websocketUrl]);
 
+  const ping = useCallback(async (): Promise<boolean> => {
+    if (!clientRef.current || connectionState !== 'connected') {
+      return false;
+    }
+
+    try {
+      const pingIq = xml(
+        'iq',
+        { type: 'get', to: settings.xmpp.domain, id: `ping_${Date.now()}` },
+        xml('ping', { xmlns: 'urn:xmpp:ping' })
+      );
+
+      await clientRef.current.send(pingIq);
+      return true;
+    } catch (error) {
+      console.error('XMPP ping failed:', error);
+      return false;
+    }
+  }, [connectionState, settings.xmpp.domain]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -598,7 +621,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       removeContact,
       setPresence,
       startConversation,
-      runWebSocketDiagnostics
+      runWebSocketDiagnostics,
+      ping
     }}>
       {children}
     </XmppContext.Provider>
