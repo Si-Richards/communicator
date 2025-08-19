@@ -139,7 +139,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const extractPhoneNumber = useCallback((sipUri: string): string => {
     if (!sipUri) return "Unknown"
     
-    // Extract number from SIP URI format like "sip:16331*201@hpbx.sipconvergence.co.uk"
+    // Extract number from SIP URI format like "sip:16331*201@realm.com"
     const match = sipUri.match(/^sip:([^@]+)@/)
     if (match && match[1]) {
       // Remove asterisk and other special characters, keep only digits
@@ -823,13 +823,13 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         variant: "destructive"
       })
     }
-  }, [])
+  }, [settings.sip.server, settings.sip.realm])
 
   const connectToJanus = useCallback(() => {
     // Create Janus session with optimized settings for audio quality
     const Janus = getJanus()
     janusRef.current = new Janus({
-      server: "wss://devrtc.voicehost.io:443",
+      server: settings.sip.server || "wss://devrtc.voicehost.io:443",
       apisecret: "overlord",
       // ICE servers for better connectivity
       iceServers: [
@@ -1058,9 +1058,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     
     const register = {
       request: "register",
-      username: `sip:${normalizedUsername}@hpbx.sipconvergence.co.uk`,
+      username: `sip:${normalizedUsername}@${settings.sip.realm}`,
       secret: settings.sip.password,
-      realm: "hpbx.sipconvergence.co.uk",
+      realm: settings.sip.realm,
       send_register: true
     }
 
@@ -1308,7 +1308,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
       const call = {
         request: "call",
-        uri: `sip:${processedNumber}@hpbx.sipconvergence.co.uk`
+        uri: `sip:${processedNumber}@${settings.sip.realm}`
       }
       
       logger.info(`SIP URI: ${call.uri}`, undefined, 'JanusContext')

@@ -30,6 +30,8 @@ export interface RingtoneSettings {
 export interface SipSettings {
   username: string;
   password: string;
+  server: string;
+  realm: string;
 }
 
 export interface DictationSettings {
@@ -105,10 +107,12 @@ const defaultSettings: AppSettings = {
     enabled: true,
     volume: 0.5,
   },
-  sip: {
-    username: '',
-    password: '',
-  },
+    sip: {
+      username: '',
+      password: '',
+      server: 'wss://devrtc.voicehost.io:443',
+      realm: 'hpbx.sipconvergence.co.uk',
+    },
   dictation: {
     enabled: true,
     language: 'en-US',

@@ -17,6 +17,7 @@ import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDe
 import { videoDeviceManager, VideoDevice, VideoDeviceTestResult } from '@/lib/videoDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
+import { VideoSurface } from '@/components/VideoSurface';
 import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff, Bell, RefreshCw } from 'lucide-react';
 const SettingsPage = () => {
   const {
@@ -56,16 +57,20 @@ const SettingsPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [tempSipSettings, setTempSipSettings] = useState({
     username: settings.sip.username,
-    password: settings.sip.password
+    password: settings.sip.password,
+    server: settings.sip.server,
+    realm: settings.sip.realm
   });
 
   // Sync temp settings when main settings change
   useEffect(() => {
     setTempSipSettings({
       username: settings.sip.username,
-      password: settings.sip.password
+      password: settings.sip.password,
+      server: settings.sip.server,
+      realm: settings.sip.realm
     });
-  }, [settings.sip.username, settings.sip.password]);
+  }, [settings.sip.username, settings.sip.password, settings.sip.server, settings.sip.realm]);
   useEffect(() => {
     // Load devices
     loadDevices();
@@ -155,9 +160,19 @@ const SettingsPage = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       
+      // Ensure video element is ready before setting stream
       setVideoTestStream(stream)
+      
+      // Wait for next tick to ensure DOM updates
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
       if (videoTestRef.current) {
         videoTestRef.current.srcObject = stream
+        try {
+          await videoTestRef.current.play()
+        } catch (playError) {
+          console.warn('Video play failed:', playError)
+        }
       }
       
       toast({
@@ -633,12 +648,12 @@ const SettingsPage = () => {
                     
                     {videoTestStream ? (
                       <div className="relative">
-                        <video
-                          ref={videoTestRef}
-                          autoPlay
-                          playsInline
-                          muted
-                          className="w-full h-48 bg-muted rounded-lg object-cover"
+                        <VideoSurface 
+                          stream={videoTestStream}
+                          isLocal={true}
+                          isMirrored={settings.video.mirrorLocal}
+                          className="w-full h-48"
+                          placeholder="Testing camera..."
                         />
                         <Button
                           onClick={stopVideoTest}
@@ -648,6 +663,14 @@ const SettingsPage = () => {
                         >
                           Stop Test
                         </Button>
+                        {/* Keep hidden video element for compatibility */}
+                        <video
+                          ref={videoTestRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="hidden"
+                        />
                       </div>
                     ) : videoDevices.length === 0 ? (
                       <div className="p-4 bg-muted/50 rounded-lg text-center">
@@ -719,6 +742,34 @@ const SettingsPage = () => {
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Your SIP account password
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sip-server">Janus Server</Label>
+                    <Input
+                      id="sip-server"
+                      type="text"
+                      placeholder="wss://devrtc.voicehost.io:443"
+                      value={tempSipSettings.server}
+                      onChange={(e) => setTempSipSettings(prev => ({ ...prev, server: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      WebSocket URL of the Janus Gateway server
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sip-realm">SIP Realm</Label>
+                    <Input
+                      id="sip-realm"
+                      type="text"
+                      placeholder="hpbx.sipconvergence.co.uk"
+                      value={tempSipSettings.realm}
+                      onChange={(e) => setTempSipSettings(prev => ({ ...prev, realm: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      SIP realm/domain for authentication
                     </p>
                   </div>
                 </div>
