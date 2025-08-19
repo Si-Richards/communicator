@@ -84,7 +84,7 @@ export const TransferDialog = ({ open, onOpenChange }: TransferDialogProps) => {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[425px] bg-background border shadow-lg z-[100]">
         <DialogHeader>
           <DialogTitle>Transfer Call</DialogTitle>
         </DialogHeader>

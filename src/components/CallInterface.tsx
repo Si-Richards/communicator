@@ -198,24 +198,59 @@ export const CallInterface = () => {
         </div>
 
         {/* Call Controls */}
-        <div className="flex justify-center gap-4">
+        <div className="space-y-4">
           {/* Incoming call controls */}
-          {callState.status === 'incoming' && <>
+          {callState.status === 'incoming' && (
+            <div className="flex justify-center gap-4">
               <CallButton variant="hangup" size="lg" onClick={rejectCall} className="relative">
                 <PhoneOff className="h-6 w-6" />
               </CallButton>
               <CallButton variant="call" size="xl" onClick={acceptCall} className="relative animate-pulse">
                 <PhoneIncoming className="h-8 w-8" />
               </CallButton>
-            </>}
+            </div>
+          )}
 
           {/* Regular call controls */}
-          {callState.status !== 'incoming' && <>
-              {/* Call control buttons - only show during call */}
+          {callState.status !== 'incoming' && (
+            <>
+              {/* Main Call Controls Row */}
+              <div className="flex justify-center items-center gap-4">
+                {/* Transfer Button - Prominent placement */}
+                {(callState.status === 'calling' || callState.status === 'incall') && (
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={() => setTransferDialogOpen(true)}
+                    disabled={callState.status !== 'incall'}
+                    className="flex items-center gap-2 h-12 px-4"
+                    title="Blind or Attended Transfer"
+                  >
+                    <ArrowRightLeft className="h-4 w-4" />
+                    Transfer
+                  </Button>
+                )}
+
+                {/* Main Call Button */}
+                <CallButton 
+                  variant={getCallButtonVariant()} 
+                  size="xl" 
+                  onClick={handleCall} 
+                  disabled={isCallDisabled()} 
+                  className="relative"
+                >
+                  {callState.status === 'incall' || callState.status === 'calling' ? 
+                    <PhoneOff className="h-8 w-8" /> : 
+                    <Phone className="h-8 w-8" />
+                  }
+                </CallButton>
+              </div>
+
+              {/* Secondary call controls - only show during call */}
               {callState.status === 'incall' && (
                 <div className="space-y-4">
                    {/* Primary controls */}
-                   <div className="grid grid-cols-5 gap-2">
+                   <div className="grid grid-cols-4 gap-2">
                      <Button
                        variant="outline"
                        size="sm"
@@ -250,7 +285,7 @@ export const CallInterface = () => {
                            <Hash className="h-4 w-4" />
                          </Button>
                        </DialogTrigger>
-                       <DialogContent className="sm:max-w-[350px] bg-background border shadow-lg">
+                       <DialogContent className="sm:max-w-[350px] bg-background border shadow-lg z-[100]">
                          <DialogHeader>
                            <DialogTitle>Keypad</DialogTitle>
                          </DialogHeader>
@@ -281,15 +316,6 @@ export const CallInterface = () => {
                       >
                         {callState.isVideoMuted ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
                       </Button>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setTransferDialogOpen(true)}
-                        className="h-12 p-0"
-                      >
-                        <ArrowRightLeft className="h-4 w-4" />
-                      </Button>
                    </div>
 
                    {/* Secondary controls */}
@@ -318,7 +344,6 @@ export const CallInterface = () => {
                      </Button>
                    </div>
 
-
                    {/* Start video for audio-only calls */}
                    {!callState.videoEnabled && !callState.localVideoStream && (
                      <div className="flex justify-center">
@@ -335,12 +360,15 @@ export const CallInterface = () => {
                    )}
                 </div>
               )}
+            </>
+          )}
 
-              {/* Main Call Button */}
-              <CallButton variant={getCallButtonVariant()} size="xl" onClick={handleCall} disabled={isCallDisabled()} className="relative">
-                {callState.status === 'incall' || callState.status === 'calling' ? <PhoneOff className="h-8 w-8" /> : <Phone className="h-8 w-8" />}
-              </CallButton>
-            </>}
+          {/* Helper text for discoverability */}
+          {(callState.status === 'calling' || callState.status === 'incall') && (
+            <div className="text-xs text-center text-muted-foreground">
+              Use Transfer for blind or attended transfers
+            </div>
+          )}
         </div>
 
         {/* Multi-call Navigation */}
