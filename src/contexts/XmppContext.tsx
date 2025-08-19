@@ -98,14 +98,14 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       return connectionState === 'connected';
     }
 
-    // Clear any pending reconnect timeout
-    if (reconnectTimeout) {
-      clearTimeout(reconnectTimeout);
-      setReconnectTimeout(null);
-    }
+    return new Promise<boolean>((resolve) => {
+      // Clear any pending reconnect timeout
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        setReconnectTimeout(null);
+      }
 
-    try {
-      setIsConnecting(true);
+        setIsConnecting(true);
       setConnectionState('connecting');
       setLastAttemptAt(new Date());
       setLastError(null);
@@ -215,7 +215,14 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         }
       });
 
+      let connectionTimeout: NodeJS.Timeout | null = null;
+
       newClient.on('online', (address: any) => {
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout);
+          connectionTimeout = null;
+        }
+        
         const jidString = address.toString();
         console.log('XMPP online as', jidString);
         setConnectionState('connected');
@@ -223,6 +230,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         setReconnectAttempts(0); // Reset reconnect counter on successful connection
         setConflictCount(0); // Reset conflict counter on successful connection
         setLastError(null);
+        setIsConnecting(false);
         
         toast({
           title: 'XMPP Connected',
@@ -238,6 +246,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
             xml('query', { xmlns: 'jabber:iq:roster' })
           )
         ).catch(console.error);
+        
+        resolve(true);
       });
 
       // Message handling - accept both chat and normal message types
@@ -269,30 +279,45 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       clientRef.current = newClient;
       setXmppClient(newClient);
       
-      await newClient.start();
-      setIsConnecting(false);
-      return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      console.error('XMPP connection failed:', error);
-      setLastError(errorMsg);
-      setConnectionState('error');
-      setIsConnecting(false);
+      // Set connection timeout (10 seconds)
+      connectionTimeout = setTimeout(() => {
+        console.error('XMPP connection timeout');
+        setLastError('Connection timeout - server did not respond');
+        setConnectionState('error');
+        setIsConnecting(false);
+        newClient.stop().catch(console.error);
+        resolve(false);
+      }, 10000);
       
-      // Schedule reconnect on startup failure if auto-connect enabled
-      if (settings.xmpp.autoConnect) {
-        scheduleReconnect();
-      }
-      
-      toast({
-        title: 'XMPP Connection Failed',
-        description: errorMsg,
-        variant: 'destructive'
-      });
-      return false;
-    } finally {
-      setIsConnecting(false);
-    }
+      (async () => {
+        try {
+          await newClient.start();
+        } catch (error) {
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout);
+          connectionTimeout = null;
+        }
+        
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        console.error('XMPP connection failed:', error);
+        setLastError(errorMsg);
+        setConnectionState('error');
+        setIsConnecting(false);
+        
+        // Schedule reconnect on startup failure if auto-connect enabled
+        if (settings.xmpp.autoConnect) {
+          scheduleReconnect();
+        }
+        
+        toast({
+          title: 'XMPP Connection Failed',
+          description: errorMsg,
+          variant: 'destructive'
+        });
+          resolve(false);
+        }
+      })();
+    });
   }, [settings.xmpp, toast, isConnecting, connectionState, reconnectTimeout]);
 
   const scheduleReconnect = useCallback(() => {
@@ -345,14 +370,18 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   }, [xmppClient, reconnectTimeout]);
 
   const sendMessage = useCallback(async (to: string, body: string): Promise<boolean> => {
-    // Use clientRef for more immediate connection check
+    // Auto-ensure connectivity
     if (!clientRef.current || connectionState !== 'connected') {
-      toast({
-        title: 'Cannot Send Message',
-        description: 'Not connected to XMPP server',
-        variant: 'destructive'
-      });
-      return false;
+      console.log('XMPP sendMessage: Not connected, attempting to connect...');
+      const connected = await connect();
+      if (!connected) {
+        toast({
+          title: 'Cannot Send Message',
+          description: 'Unable to connect to XMPP server',
+          variant: 'destructive'
+        });
+        return false;
+      }
     }
 
     try {
