@@ -58,7 +58,7 @@ const Messages = () => {
   const selectedConv = conversations.find((conv) => conv.jid === selectedConversation);
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !selectedConv || connectionState !== 'connected') return;
+    if (!newMessage.trim() || !selectedConv) return;
 
     const success = await sendMessage(selectedConv.jid, newMessage.trim());
     if (success) {
@@ -346,7 +346,7 @@ const Messages = () => {
                   value={newMessage + (interimTranscript ? ` ${interimTranscript}` : '')}
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  disabled={connectionState !== 'connected'}
+                  
                   className="flex-1"
                 />
                 {isSupported && settings.dictation.enabled && connectionState === 'connected' && (
@@ -359,7 +359,7 @@ const Messages = () => {
                     {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                   </Button>
                 )}
-                <Button onClick={handleSendMessage} size="icon" disabled={connectionState !== 'connected' || !newMessage.trim()}>
+                <Button onClick={handleSendMessage} size="icon" disabled={!newMessage.trim()}>
                   <Send className="h-4 w-4" />
                 </Button>
               </div>

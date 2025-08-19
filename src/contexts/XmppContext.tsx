@@ -93,9 +93,21 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       return false;
     }
 
-    // Prevent multiple simultaneous connection attempts
-    if (isConnecting || (clientRef.current && connectionState === 'connected')) {
-      return connectionState === 'connected';
+    // Prevent multiple simultaneous connection attempts, but wait for in-flight connects
+    if (clientRef.current && connectionState === 'connected') {
+      return true;
+    }
+    if (isConnecting) {
+      // Wait up to 10s for existing connect to complete
+      return await new Promise<boolean>((resolve) => {
+        const start = Date.now();
+        const poll = () => {
+          if (connectionState === 'connected') return resolve(true);
+          if (Date.now() - start > 10000) return resolve(false);
+          setTimeout(poll, 250);
+        };
+        poll();
+      });
     }
 
     return new Promise<boolean>((resolve) => {
@@ -126,6 +138,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         password: settings.xmpp.password,
         resource
       });
+
+      // Window during which we keep "connecting" even if start() throws
+      const initialConnectDeadline = Date.now() + 10000;
 
       // Connection events with enhanced error handling
       newClient.on('error', (err: Error) => {
@@ -179,6 +194,11 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         
         // Handle other connection errors with exponential backoff
         if (errorMsg.includes('ECONNERROR') || errorMsg.includes('WebSocket')) {
+          // During initial connect window, stay in 'connecting' and wait for timeout/online
+          if (Date.now() < initialConnectDeadline) {
+            console.log('XMPP connection error during initial connect window; waiting for online/timeout');
+            return;
+          }
           console.log('XMPP connection error, scheduling reconnect with backoff');
           setConnectionState('error');
           setIsConnecting(false);
@@ -293,28 +313,10 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         try {
           await newClient.start();
         } catch (error) {
-        if (connectionTimeout) {
-          clearTimeout(connectionTimeout);
-          connectionTimeout = null;
-        }
-        
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        console.error('XMPP connection failed:', error);
-        setLastError(errorMsg);
-        setConnectionState('error');
-        setIsConnecting(false);
-        
-        // Schedule reconnect on startup failure if auto-connect enabled
-        if (settings.xmpp.autoConnect) {
-          scheduleReconnect();
-        }
-        
-        toast({
-          title: 'XMPP Connection Failed',
-          description: errorMsg,
-          variant: 'destructive'
-        });
-          resolve(false);
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          console.warn('XMPP start() error (will keep waiting for online within timeout):', errorMsg);
+          setLastError(errorMsg);
+          // Do not change state or schedule reconnect here; wait for online or timeout to handle resolution
         }
       })();
     });
@@ -385,9 +387,10 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     }
 
     try {
+      const normalizedTo = to.includes('@') ? to : `${to}@${settings.xmpp.domain}`;
       const message = xml(
         'message',
-        { type: 'chat', to },
+        { type: 'chat', to: normalizedTo },
         xml('body', {}, body)
       );
 
@@ -397,7 +400,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       const sentMessage: XmppMessage = {
         id: `${Date.now()}-${Math.random()}`,
         from: `${settings.xmpp.username}@${settings.xmpp.domain}`,
-        to,
+        to: normalizedTo,
         body,
         timestamp: new Date(),
         type: 'chat'
@@ -414,7 +417,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       });
       return false;
     }
-  }, [connectionState, settings.xmpp, toast]);
+  }, [connectionState, settings.xmpp, toast, connect]);
 
   const addContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
