@@ -79,7 +79,58 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const [conflictCount, setConflictCount] = useState(0);
   const [lastConflictTime, setLastConflictTime] = useState<number>(0);
   const [currentResource, setCurrentResource] = useState<string>('');
+  const [manualDisconnect, setManualDisconnect] = useState(false);
+  const [clientGeneration, setClientGeneration] = useState(0);
   const clientRef = useRef<any>(null);
+  const clientGenerationRef = useRef(0);
+
+  // Helper to ensure we have a connected client with robust checks
+  const ensureConnectedClient = useCallback(async (): Promise<any> => {
+    const maxAttempts = 3;
+    const pollIntervalMs = 250;
+    const maxWaitMs = 10000;
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`XMPP ensureConnectedClient attempt ${attempt}/${maxAttempts}`);
+      
+      // If we have a client and it's connected, verify it's still alive
+      if (clientRef.current && connectionState === 'connected') {
+        try {
+          // Quick ping test to verify client is alive
+          await clientRef.current.send(xml('iq', { type: 'get', to: settings.xmpp.domain, id: `ping-${Date.now()}` },
+            xml('ping', { xmlns: 'urn:xmpp:ping' })
+          ));
+          return clientRef.current;
+        } catch (error) {
+          console.warn(`XMPP client ping failed on attempt ${attempt}:`, error);
+          clientRef.current = null;
+        }
+      }
+      
+      // Try to connect if needed
+      if (!clientRef.current || connectionState !== 'connected') {
+        console.log(`XMPP triggering connect on attempt ${attempt}`);
+        const connected = await connect();
+        if (!connected) {
+          console.warn(`XMPP connect failed on attempt ${attempt}`);
+          continue;
+        }
+      }
+      
+      // Poll for the client to become available
+      const start = Date.now();
+      while (Date.now() - start < maxWaitMs) {
+        if (clientRef.current && connectionState === 'connected') {
+          return clientRef.current;
+        }
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      }
+      
+      console.warn(`XMPP timeout waiting for client on attempt ${attempt}`);
+    }
+    
+    throw new Error('Failed to ensure connected client after all attempts');
+  }, [connectionState, settings.xmpp.domain]);
 
   const connect = useCallback(async (): Promise<boolean> => {
     if (!settings.xmpp.username || !settings.xmpp.password) {
@@ -92,6 +143,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       });
       return false;
     }
+
+    // Reset manual disconnect flag
+    setManualDisconnect(false);
 
     // Prevent multiple simultaneous connection attempts, but wait for in-flight connects
     if (clientRef.current && connectionState === 'connected') {
@@ -225,12 +279,18 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       });
 
       newClient.on('offline', () => {
-        console.log('XMPP offline');
+        // Check if this event is for the current generation
+        if (clientGenerationRef.current !== newGeneration) {
+          console.log(`XMPP ignoring stale offline event from generation ${newGeneration}, current is ${clientGenerationRef.current}`);
+          return;
+        }
+        
+        console.log(`XMPP offline (generation ${newGeneration})`);
         setConnectionState('disconnected');
         setEffectiveJid('');
         
-        // Auto-reconnect on unexpected disconnection
-        if (settings.xmpp.autoConnect && connectionState === 'connected') {
+        // Auto-reconnect on unexpected disconnection (but not if manually disconnected)
+        if (settings.xmpp.autoConnect && connectionState === 'connected' && !manualDisconnect) {
           scheduleReconnect();
         }
       });
@@ -238,13 +298,19 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       let connectionTimeout: NodeJS.Timeout | null = null;
 
       newClient.on('online', (address: any) => {
+        // Check if this event is for the current generation
+        if (clientGenerationRef.current !== newGeneration) {
+          console.log(`XMPP ignoring stale online event from generation ${newGeneration}, current is ${clientGenerationRef.current}`);
+          return;
+        }
+        
         if (connectionTimeout) {
           clearTimeout(connectionTimeout);
           connectionTimeout = null;
         }
         
         const jidString = address.toString();
-        console.log('XMPP online as', jidString);
+        console.log(`XMPP online as ${jidString} (generation ${newGeneration})`);
         setConnectionState('connected');
         setEffectiveJid(jidString);
         setReconnectAttempts(0); // Reset reconnect counter on successful connection
@@ -295,9 +361,26 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         }
       });
 
-      // Initialize references before starting for immediate availability
+      // Increment generation and initialize references before starting for immediate availability
+      const newGeneration = clientGenerationRef.current + 1;
+      setClientGeneration(newGeneration);
+      clientGenerationRef.current = newGeneration;
+      
+      // Properly stop old client if exists
+      if (clientRef.current) {
+        (async () => {
+          try {
+            await clientRef.current.stop();
+          } catch (error) {
+            console.warn('Error stopping old client:', error);
+          }
+        })();
+      }
+      
       clientRef.current = newClient;
       setXmppClient(newClient);
+      
+      console.log(`XMPP client generation set to ${newGeneration}`);
       
       // Set connection timeout (10 seconds)
       connectionTimeout = setTimeout(() => {
@@ -348,6 +431,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   }, [reconnectAttempts, reconnectTimeout, connect]);
 
   const disconnect = useCallback(() => {
+    // Set manual disconnect flag to prevent auto-reconnect
+    setManualDisconnect(true);
+    
     // Clear any pending reconnect
     if (reconnectTimeout) {
       clearTimeout(reconnectTimeout);
@@ -369,55 +455,72 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     setReconnectAttempts(0);
     setConflictCount(0);
     setCurrentResource('');
+    
+    console.log('XMPP manually disconnected');
   }, [xmppClient, reconnectTimeout]);
 
   const sendMessage = useCallback(async (to: string, body: string): Promise<boolean> => {
-    // Auto-ensure connectivity
-    if (!clientRef.current || connectionState !== 'connected') {
-      console.log('XMPP sendMessage: Not connected, attempting to connect...');
-      const connected = await connect();
-      if (!connected) {
-        toast({
-          title: 'Cannot Send Message',
-          description: 'Unable to connect to XMPP server',
-          variant: 'destructive'
-        });
-        return false;
+    const maxRetries = 2;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`XMPP sendMessage attempt ${attempt}/${maxRetries}`);
+        
+        // Ensure we have a connected client
+        const client = await ensureConnectedClient();
+        
+        const normalizedTo = to.includes('@') ? to : `${to}@${settings.xmpp.domain}`;
+        const message = xml(
+          'message',
+          { type: 'chat', to: normalizedTo },
+          xml('body', {}, body)
+        );
+
+        await client.send(message);
+        
+        // Add to local conversation
+        const sentMessage: XmppMessage = {
+          id: `${Date.now()}-${Math.random()}`,
+          from: `${settings.xmpp.username}@${settings.xmpp.domain}`,
+          to: normalizedTo,
+          body,
+          timestamp: new Date(),
+          type: 'chat'
+        };
+        
+        addMessageToConversation(sentMessage, true);
+        console.log(`XMPP message sent successfully on attempt ${attempt}`);
+        return true;
+        
+      } catch (error) {
+        console.error(`XMPP sendMessage attempt ${attempt} failed:`, error);
+        
+        // Handle null reference errors specifically
+        if (error instanceof TypeError && error.message.includes("Cannot read properties of null")) {
+          console.warn(`XMPP client was null on attempt ${attempt}, clearing reference and retrying...`);
+          clientRef.current = null;
+          
+          if (attempt < maxRetries) {
+            // Wait a bit before retrying
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+        }
+        
+        // On final attempt or non-recoverable error, show toast and fail
+        if (attempt === maxRetries) {
+          toast({
+            title: 'Message Send Failed',
+            description: error instanceof Error ? error.message : 'Unknown error',
+            variant: 'destructive'
+          });
+          return false;
+        }
       }
     }
-
-    try {
-      const normalizedTo = to.includes('@') ? to : `${to}@${settings.xmpp.domain}`;
-      const message = xml(
-        'message',
-        { type: 'chat', to: normalizedTo },
-        xml('body', {}, body)
-      );
-
-      await clientRef.current.send(message);
-      
-      // Add to local conversation
-      const sentMessage: XmppMessage = {
-        id: `${Date.now()}-${Math.random()}`,
-        from: `${settings.xmpp.username}@${settings.xmpp.domain}`,
-        to: normalizedTo,
-        body,
-        timestamp: new Date(),
-        type: 'chat'
-      };
-      
-      addMessageToConversation(sentMessage, true);
-      return true;
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      toast({
-        title: 'Message Send Failed',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
-      });
-      return false;
-    }
-  }, [connectionState, settings.xmpp, toast, connect]);
+    
+    return false;
+  }, [ensureConnectedClient, settings.xmpp, toast]);
 
   const addContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
