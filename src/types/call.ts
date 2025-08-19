@@ -30,6 +30,13 @@ export interface CallsState {
   multiCallSupported: boolean;
 }
 
+export interface DialogInfo {
+  callId?: string;
+  fromTag?: string;
+  toTag?: string;
+  remoteUri?: string;
+}
+
 export interface SipHandle {
   id: string;
   plugin: any;

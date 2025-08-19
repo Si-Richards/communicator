@@ -21,6 +21,10 @@ interface SimpleMultiCallContextType {
   unregisterSipAccount: () => void
   registerNow: () => void
   sendDtmf: (digit: string) => void
+  transferBlind: (destination: string) => Promise<void>
+  startAttendedTransfer: (destination: string) => Promise<void>
+  completeAttendedTransfer: () => Promise<void>
+  cancelAttendedTransfer: () => void
 }
 
 const SimpleMultiCallContext = createContext<SimpleMultiCallContextType | undefined>(undefined)
@@ -77,7 +81,11 @@ export const SimpleMultiCallProvider = ({ children }: { children: ReactNode }) =
       registerSipAccount: janusContext.registerSipAccount,
       unregisterSipAccount: janusContext.unregisterSipAccount,
       registerNow: janusContext.registerNow,
-      sendDtmf: janusContext.sendDtmf
+      sendDtmf: janusContext.sendDtmf,
+      transferBlind: janusContext.transferBlind,
+      startAttendedTransfer: janusContext.startAttendedTransfer,
+      completeAttendedTransfer: janusContext.completeAttendedTransfer,
+      cancelAttendedTransfer: janusContext.cancelAttendedTransfer
     }}>
       {children}
     </SimpleMultiCallContext.Provider>

@@ -59,6 +59,19 @@ interface CallState {
     callerId?: string
     remoteJsep?: any
   }
+  // Transfer state
+  consultCall?: {
+    id: string
+    phoneNumber: string
+    status: 'calling' | 'connected'
+    handleId: string
+  }
+  dialogInfo?: {
+    callId?: string
+    fromTag?: string
+    toTag?: string
+    remoteUri?: string
+  }
 }
 
 interface JanusContextType {
@@ -85,6 +98,11 @@ interface JanusContextType {
   registerSipAccount: () => void
   unregisterSipAccount: () => void
   registerNow: () => void
+  // Transfer methods
+  transferBlind: (destination: string) => Promise<void>
+  startAttendedTransfer: (destination: string) => Promise<void>
+  completeAttendedTransfer: () => Promise<void>
+  cancelAttendedTransfer: () => void
 }
 
 const JanusContext = createContext<JanusContextType | undefined>(undefined)
@@ -123,6 +141,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
   const janusRef = useRef<any>(null)
   const sessionRef = useRef<JanusSession | null>(null)
   const sipPluginRef = useRef<any>(null)
+  const consultSipPluginRef = useRef<any>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const isRegisteringRef = useRef<boolean>(false)
@@ -497,7 +516,20 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       // Stop any ringing sounds
       ringtoneManager.stopRinging()
       
-      setCallState(prev => ({ ...prev, status: 'incall', sipStatus: 'Call connected' }))
+      // Capture dialog information for transfers
+      const dialogInfo = {
+        callId: msg.call_id || msg.result?.call_id,
+        fromTag: msg.from_tag || msg.result?.from_tag,
+        toTag: msg.to_tag || msg.result?.to_tag,
+        remoteUri: msg.remote_uri || msg.result?.remote_uri
+      }
+      
+      setCallState(prev => ({ 
+        ...prev, 
+        status: 'incall', 
+        sipStatus: 'Call connected',
+        dialogInfo 
+      }))
       toast({
         title: "Call Connected",
         description: "Call is now active",
@@ -1901,6 +1933,275 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     }
   }, [callState.status])
 
+  // Transfer methods
+  const transferBlind = useCallback(async (destination: string) => {
+    if (!sipPluginRef.current || callState.status !== 'incall') {
+      toast({
+        title: "Transfer Failed",
+        description: "Must be in an active call to transfer",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!callState.dialogInfo?.callId) {
+      toast({
+        title: "Transfer Failed", 
+        description: "Missing call dialog information",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      logger.info(`Starting blind transfer to: ${destination}`)
+      
+      const transferMessage = {
+        request: "transfer",
+        uri: `sip:${destination}@${settings.sip.realm}`,
+        call_id: callState.dialogInfo.callId,
+        from_tag: callState.dialogInfo.fromTag,
+        to_tag: callState.dialogInfo.toTag
+      }
+
+      sipPluginRef.current.send({ message: transferMessage })
+      
+      toast({
+        title: "Transfer Initiated",
+        description: `Transferring call to ${destination}`,
+      })
+    } catch (error) {
+      logger.error('Blind transfer failed:', error)
+      toast({
+        title: "Transfer Failed",
+        description: "Could not initiate transfer",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status, callState.dialogInfo, settings.sip.realm])
+
+  const startAttendedTransfer = useCallback(async (destination: string) => {
+    if (!sipPluginRef.current || callState.status !== 'incall') {
+      toast({
+        title: "Transfer Failed",
+        description: "Must be in an active call to start consultation",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      logger.info(`Starting attended transfer consultation to: ${destination}`)
+      
+      // First put current call on hold
+      const hold = { request: "hold" }
+      sipPluginRef.current.send({ message: hold })
+      
+      // Attach second SIP plugin for consultation call
+      if (!sessionRef.current) {
+        throw new Error("No Janus session available")
+      }
+
+      sessionRef.current.attach({
+        plugin: "janus.plugin.sip",
+        success: (plugin: any) => {
+          logger.info("Consult SIP plugin attached successfully")
+          consultSipPluginRef.current = plugin
+          
+          // Register consult handle
+          const register = {
+            request: "register",
+            username: settings.sip.username,
+            display_name: settings.sip.username,
+            secret: settings.sip.password,
+            proxy: `sip:${settings.sip.realm}`,
+            user_agent: "Lovable WebRTC Phone"
+          }
+          
+          plugin.send({ message: register })
+          
+          // Make consultation call after brief delay for registration
+          setTimeout(() => {
+            const call = {
+              request: "call",
+              uri: `sip:${destination}@${settings.sip.realm}`
+            }
+            
+            plugin.createOffer({
+              tracks: [{ type: "audio", capture: true, recv: true }],
+              success: (jsep: any) => {
+                plugin.send({ message: call, jsep })
+                
+                setCallState(prev => ({
+                  ...prev,
+                  consultCall: {
+                    id: 'consult-' + Date.now(),
+                    phoneNumber: destination,
+                    status: 'calling',
+                    handleId: plugin.getId()
+                  }
+                }))
+                
+                toast({
+                  title: "Consultation Started",
+                  description: `Calling ${destination} for consultation`,
+                })
+              },
+              error: (error: any) => {
+                logger.error('Failed to create consult offer:', error)
+                toast({
+                  title: "Consultation Failed",
+                  description: "Could not start consultation call",
+                  variant: "destructive"
+                })
+              }
+            })
+          }, 1000)
+        },
+        error: (error: any) => {
+          logger.error('Failed to attach consult SIP plugin:', error)
+          toast({
+            title: "Transfer Failed",
+            description: "Could not attach consultation handle",
+            variant: "destructive"
+          })
+        },
+        onmessage: (msg: any, jsep?: any) => {
+          const event = msg.result?.event || msg.sip
+          logger.info('Consult handle message:', { event, msg, jsep })
+          
+          if (event === "calling") {
+            setCallState(prev => ({
+              ...prev,
+              consultCall: prev.consultCall ? { ...prev.consultCall, status: 'calling' } : undefined
+            }))
+          } else if (event === "accepted") {
+            setCallState(prev => ({
+              ...prev,
+              consultCall: prev.consultCall ? { ...prev.consultCall, status: 'connected' } : undefined
+            }))
+            toast({
+              title: "Consultation Connected",
+              description: "You can now speak with the consultation party",
+            })
+          } else if (event === "hangup") {
+            // Clean up consultation call
+            setCallState(prev => ({ ...prev, consultCall: undefined }))
+            if (consultSipPluginRef.current) {
+              consultSipPluginRef.current.detach()
+              consultSipPluginRef.current = null
+            }
+          }
+        },
+        onlocaltrack: () => {},
+        onremotetrack: () => {},
+        oncleanup: () => {
+          logger.info('Consult plugin cleanup')
+          consultSipPluginRef.current = null
+        }
+      })
+    } catch (error) {
+      logger.error('Failed to start attended transfer:', error)
+      toast({
+        title: "Transfer Failed",
+        description: "Could not start consultation",
+        variant: "destructive"
+      })
+    }
+  }, [callState.status, settings.sip])
+
+  const completeAttendedTransfer = useCallback(async () => {
+    if (!sipPluginRef.current || !consultSipPluginRef.current) {
+      toast({
+        title: "Transfer Failed",
+        description: "Missing call handles for transfer",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!callState.consultCall || callState.consultCall.status !== 'connected') {
+      toast({
+        title: "Transfer Failed",
+        description: "Consultation call must be connected first",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      logger.info('Completing attended transfer')
+      
+      const transferMessage = {
+        request: "transfer",
+        call_id: callState.dialogInfo?.callId,
+        from_tag: callState.dialogInfo?.fromTag,
+        to_tag: callState.dialogInfo?.toTag,
+        refer_id: callState.consultCall.id
+      }
+
+      sipPluginRef.current.send({ message: transferMessage })
+      
+      toast({
+        title: "Transfer Completed",
+        description: "Calls have been connected",
+      })
+      
+      // Clean up both handles
+      setTimeout(() => {
+        setCallState(prev => ({
+          ...prev,
+          status: 'connected',
+          sipStatus: prev.registered ? 'Online' : 'Offline',
+          consultCall: undefined,
+          dialogInfo: undefined
+        }))
+        
+        if (consultSipPluginRef.current) {
+          consultSipPluginRef.current.detach()
+          consultSipPluginRef.current = null
+        }
+      }, 1000)
+    } catch (error) {
+      logger.error('Failed to complete attended transfer:', error)
+      toast({
+        title: "Transfer Failed",
+        description: "Could not complete transfer",
+        variant: "destructive"
+      })
+    }
+  }, [callState.consultCall, callState.dialogInfo])
+
+  const cancelAttendedTransfer = useCallback(() => {
+    if (consultSipPluginRef.current) {
+      logger.info('Cancelling attended transfer')
+      
+      // Hangup consultation call
+      const hangup = { request: "hangup" }
+      consultSipPluginRef.current.send({ message: hangup })
+      
+      consultSipPluginRef.current.detach()
+      consultSipPluginRef.current = null
+    }
+    
+    // Resume main call
+    if (sipPluginRef.current && callState.isOnHold) {
+      const unhold = { request: "unhold" }
+      sipPluginRef.current.send({ message: unhold })
+    }
+    
+    setCallState(prev => ({
+      ...prev,
+      consultCall: undefined,
+      isOnHold: false
+    }))
+    
+    toast({
+      title: "Transfer Cancelled",
+      description: "Consultation call ended, main call resumed",
+    })
+  }, [callState.isOnHold])
+
   const value: JanusContextType = {
     callState,
     makeCall,
@@ -1924,7 +2225,11 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     setDoNotDisturb,
     registerSipAccount,
     unregisterSipAccount,
-    registerNow
+    registerNow,
+    transferBlind,
+    startAttendedTransfer,
+    completeAttendedTransfer,
+    cancelAttendedTransfer
   }
 
   return (

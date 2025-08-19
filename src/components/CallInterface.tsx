@@ -14,7 +14,8 @@ import {
   SwitchCamera,
   Monitor,
   MonitorOff,
-  Hash
+  Hash,
+  ArrowRightLeft
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
@@ -24,6 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialpad } from '@/components/ui/dialpad';
 import { VideoSurface } from '@/components/VideoSurface';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { TransferDialog } from '@/components/TransferDialog';
 import { useJanusContext } from '@/contexts/JanusContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { toast } from '@/hooks/use-toast';
@@ -55,6 +57,7 @@ export const CallInterface = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const [keypadOpen, setKeypadOpen] = useState(false);
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const callTimer = useCallTimer(callState.status === 'incall');
   const handleCall = () => {
     if (callState.status === 'incall' || callState.status === 'calling') {
@@ -212,7 +215,7 @@ export const CallInterface = () => {
               {callState.status === 'incall' && (
                 <div className="space-y-4">
                    {/* Primary controls */}
-                   <div className="grid grid-cols-4 gap-2">
+                   <div className="grid grid-cols-5 gap-2">
                      <Button
                        variant="outline"
                        size="sm"
@@ -267,17 +270,26 @@ export const CallInterface = () => {
                        </DialogContent>
                      </Dialog>
 
-                     <Button
-                       variant="outline"
-                       size="sm"
-                       onClick={toggleVideo}
-                       className={cn(
-                         "h-12 p-0",
-                         callState.isVideoMuted && "bg-red-100 hover:bg-red-200 text-red-600"
-                       )}
-                     >
-                       {callState.isVideoMuted ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                     </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={toggleVideo}
+                        className={cn(
+                          "h-12 p-0",
+                          callState.isVideoMuted && "bg-red-100 hover:bg-red-200 text-red-600"
+                        )}
+                      >
+                        {callState.isVideoMuted ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTransferDialogOpen(true)}
+                        className="h-12 p-0"
+                      >
+                        <ArrowRightLeft className="h-4 w-4" />
+                      </Button>
                    </div>
 
                    {/* Secondary controls */}
@@ -352,6 +364,12 @@ export const CallInterface = () => {
             {callState.sipStatus}
           </Badge>
         </div>
+
+        {/* Transfer Dialog */}
+        <TransferDialog 
+          open={transferDialogOpen}
+          onOpenChange={setTransferDialogOpen}
+        />
 
       </Card>
     );
