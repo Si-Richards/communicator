@@ -37,7 +37,7 @@ const SettingsPage = () => {
   } = useSettings();
   const { toast } = useToast();
   const { callState, registerNow, unregisterSipAccount } = useJanusContext();
-  const { connectionState, connect, disconnect } = useXmpp();
+  const { connectionState, connect, disconnect, effectiveJid, lastError, lastAttemptAt, runWebSocketDiagnostics } = useXmpp();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -76,6 +76,10 @@ const SettingsPage = () => {
     autoConnect: settings.xmpp.autoConnect,
     rememberPassword: settings.xmpp.rememberPassword
   });
+
+  // XMPP diagnostics state
+  const [isRunningDiagnostics, setIsRunningDiagnostics] = useState(false);
+  const [diagnosticsResults, setDiagnosticsResults] = useState<{ success: boolean; details: string; } | null>(null);
 
   // Check if all required SIP fields are populated
   const isSipConfigValid = tempSipSettings.username?.trim() && 
@@ -981,7 +985,12 @@ const SettingsPage = () => {
                 <div className="flex gap-3">
                   <Button 
                     onClick={() => {
-                      updateXmppSettings(tempXmppSettings);
+                      // Clear password from settings if remember password is disabled
+                      const settingsToSave = { 
+                        ...tempXmppSettings,
+                        password: tempXmppSettings.rememberPassword ? tempXmppSettings.password : ''
+                      };
+                      updateXmppSettings(settingsToSave);
                       toast({
                         title: "XMPP Settings Saved",
                         description: "Your XMPP configuration has been saved successfully"
@@ -1023,28 +1032,102 @@ const SettingsPage = () => {
 
                 <Separator />
 
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">Connection Status</Label>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${
-                      connectionState === 'connected' ? 'bg-green-500' : 
-                      connectionState === 'connecting' ? 'bg-yellow-500' :
-                      connectionState === 'error' ? 'bg-red-500' : 'bg-gray-500'
-                    }`} />
-                    <span className="text-sm text-muted-foreground capitalize">
-                      {connectionState}
-                    </span>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Connection Status</Label>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        connectionState === 'connected' ? 'bg-green-500' : 
+                        connectionState === 'connecting' ? 'bg-yellow-500' :
+                        connectionState === 'error' ? 'bg-red-500' : 'bg-gray-500'
+                      }`} />
+                      <span className="text-sm text-muted-foreground capitalize">
+                        {connectionState}
+                      </span>
+                    </div>
+                    {effectiveJid && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Effective JID</Label>
+                        <p className="text-xs text-green-600 font-mono">
+                          {effectiveJid}
+                        </p>
+                      </div>
+                    )}
+                    {lastError && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Last Error</Label>
+                        <p className="text-xs text-red-600">
+                          {lastError}
+                        </p>
+                      </div>
+                    )}
+                    {lastAttemptAt && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Last Attempt</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {lastAttemptAt.toLocaleString()}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  {connectionState === 'connected' && (
-                    <p className="text-xs text-green-600">
-                      Ready to send and receive messages
-                    </p>
-                  )}
-                  {connectionState === 'error' && (
-                    <p className="text-xs text-red-600">
-                      Connection failed. Check your credentials and network.
-                    </p>
-                  )}
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">WebSocket Diagnostics</Label>
+                      <Button 
+                        onClick={async () => {
+                          setIsRunningDiagnostics(true);
+                          try {
+                            const result = await runWebSocketDiagnostics();
+                            setDiagnosticsResults(result);
+                          } catch (error) {
+                            setDiagnosticsResults({
+                              success: false,
+                              details: `Diagnostics failed: ${error}`
+                            });
+                          } finally {
+                            setIsRunningDiagnostics(false);
+                          }
+                        }}
+                        disabled={isRunningDiagnostics || !tempXmppSettings.websocketUrl}
+                        variant="outline"
+                        size="sm"
+                      >
+                        {isRunningDiagnostics ? 'Testing...' : 'Run Diagnostics'}
+                      </Button>
+                    </div>
+                    
+                    {diagnosticsResults && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${
+                            diagnosticsResults.success ? 'bg-green-500' : 'bg-red-500'
+                          }`} />
+                          <span className="text-xs font-medium">
+                            {diagnosticsResults.success ? 'WebSocket OK' : 'WebSocket Failed'}
+                          </span>
+                        </div>
+                        <div className="bg-muted/50 rounded-md p-3">
+                          <pre className="text-xs whitespace-pre-wrap font-mono">
+                            {diagnosticsResults.details}
+                          </pre>
+                        </div>
+                        {!diagnosticsResults.success && (
+                          <div className="bg-blue-50 dark:bg-blue-950/50 rounded-md p-3 space-y-2">
+                            <h4 className="text-xs font-medium text-blue-900 dark:text-blue-100">
+                              🔧 Server Configuration Hints
+                            </h4>
+                            <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                              <li>• Ensure ejabberd WebSocket listener is enabled on the correct path (/websocket)</li>
+                              <li>• Check CORS/Origin policy allows your domain ({window.location.origin})</li>
+                              <li>• Verify TLS certificate matches hostname and supports SNI</li>
+                              <li>• Confirm XMPP domain matches server virtual host configuration</li>
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
