@@ -8,6 +8,7 @@ import { SettingsProvider } from "./contexts/SettingsContext";
 import { ContactsProvider } from "./contexts/ContactsContext";
 import { CallHistoryProvider } from "./contexts/CallHistoryContext";
 import { NotificationBootstrap } from "./components/NotificationBootstrap";
+import { XmppProvider } from "./contexts/XmppContext";
 import Layout from "./components/Layout";
 import Dial from "./pages/Dial";
 import Contacts from "./pages/Contacts";
@@ -30,7 +31,8 @@ const App = () => (
               <Toaster />
               <Sonner />
               <JanusProvider>
-              <BrowserRouter>
+                <XmppProvider>
+                  <BrowserRouter>
                 <Layout>
                   <Routes>
                     <Route path="/" element={<Dial />} />
@@ -44,7 +46,8 @@ const App = () => (
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Layout>
-              </BrowserRouter>
+                  </BrowserRouter>
+                </XmppProvider>
               </JanusProvider>
             </TooltipProvider>
           </CallHistoryProvider>

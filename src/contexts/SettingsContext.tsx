@@ -56,6 +56,16 @@ export interface NotificationSettings {
   showPreviewText: boolean;
 }
 
+export interface XmppSettings {
+  websocketUrl: string;
+  domain: string;
+  username: string;
+  password: string;
+  resource: string;
+  autoConnect: boolean;
+  rememberPassword: boolean;
+}
+
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
@@ -65,6 +75,7 @@ export interface AppSettings {
   dictation: DictationSettings;
   video: VideoSettings;
   notifications: NotificationSettings;
+  xmpp: XmppSettings;
   version: string;
 }
 
@@ -78,6 +89,7 @@ interface SettingsContextType {
   updateDictationSettings: (updates: Partial<DictationSettings>) => void;
   updateVideoSettings: (updates: Partial<VideoSettings>) => void;
   updateNotificationSettings: (updates: Partial<NotificationSettings>) => void;
+  updateXmppSettings: (updates: Partial<XmppSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -131,6 +143,15 @@ const defaultSettings: AppSettings = {
     enabled: true,
     askOnStartup: true,
     showPreviewText: true,
+  },
+  xmpp: {
+    websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
+    domain: 'voicehost.io',
+    username: '',
+    password: '',
+    resource: 'web-client',
+    autoConnect: false,
+    rememberPassword: true,
   },
   version: '1.0.0',
 };
@@ -244,6 +265,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateXmppSettings = (updates: Partial<XmppSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      xmpp: { ...prev.xmpp, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -277,6 +305,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateDictationSettings,
         updateVideoSettings,
         updateNotificationSettings,
+        updateXmppSettings,
         resetToDefaults,
         exportSettings,
         importSettings,

@@ -1,4 +1,4 @@
-import { Send, Search, Mic, MicOff } from 'lucide-react';
+import { Send, Search, Mic, MicOff, Wifi, WifiOff, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { useState, useEffect } from 'react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useXmpp } from '@/contexts/XmppContext';
 
 // Mock conversations data
 const mockConversations = [
@@ -58,6 +59,14 @@ const Messages = () => {
   const [newMessage, setNewMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const { settings } = useSettings();
+  const { 
+    connectionState, 
+    conversations, 
+    contacts, 
+    connect, 
+    disconnect, 
+    sendMessage 
+  } = useXmpp();
   
   const {
     isListening,
@@ -73,15 +82,33 @@ const Messages = () => {
     interimResults: settings.dictation.interimResults
   });
 
-  const filteredConversations = mockConversations.filter(conv =>
-    conv.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.number.includes(searchTerm)
-  );
+  // Use XMPP conversations if connected, otherwise fallback to mock data
+  const activeConversations = connectionState === 'connected' ? conversations : mockConversations;
+  
+  const filteredConversations = activeConversations.filter((conv: any) => {
+    const name = 'name' in conv ? conv.name : conv.jid?.split('@')[0] || '';
+    const identifier = 'number' in conv ? conv.number : conv.jid || '';
+    return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           identifier.includes(searchTerm);
+  });
 
-  const selectedConv = mockConversations.find(conv => conv.id === selectedConversation);
+  const selectedConv = activeConversations.find((conv: any) => {
+    const id = 'id' in conv ? conv.id : conv.jid;
+    return id === selectedConversation;
+  });
 
-  const handleSendMessage = () => {
-    if (newMessage.trim()) {
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !selectedConv) return;
+
+    if (connectionState === 'connected') {
+      const to = 'jid' in selectedConv ? selectedConv.jid : (selectedConv as any).number;
+      const success = await sendMessage(to, newMessage.trim());
+      if (success) {
+        setNewMessage('');
+        resetTranscript();
+      }
+    } else {
+      // Mock mode - just log
       console.log('Sending message:', newMessage);
       setNewMessage('');
       resetTranscript();
@@ -119,7 +146,26 @@ const Messages = () => {
       {/* Conversations List */}
       <div className="w-1/3 border-r border-border">
         <div className="p-4 border-b border-border">
-          <h1 className="text-xl font-bold mb-4">Messages</h1>
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-xl font-bold">Messages</h1>
+            <div className="flex items-center gap-2">
+              {connectionState === 'connected' ? (
+                <Badge variant="default" className="text-xs">
+                  <Wifi className="h-3 w-3 mr-1" />
+                  XMPP Connected
+                </Badge>
+              ) : connectionState === 'connecting' ? (
+                <Badge variant="secondary" className="text-xs">
+                  Connecting...
+                </Badge>
+              ) : (
+                <Badge variant="destructive" className="text-xs">
+                  <WifiOff className="h-3 w-3 mr-1" />
+                  Offline
+                </Badge>
+              )}
+            </div>
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -132,35 +178,48 @@ const Messages = () => {
         </div>
         
         <div className="overflow-y-auto h-[calc(100vh-8rem)]">
-          {filteredConversations.map((conversation) => (
-            <div
-              key={conversation.id}
-              onClick={() => setSelectedConversation(conversation.id)}
-              className={`p-4 border-b border-border cursor-pointer hover:bg-muted/50 ${
-                selectedConversation === conversation.id ? 'bg-muted' : ''
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Avatar className="h-10 w-10">
-                  <AvatarFallback>{getInitials(conversation.name)}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-medium truncate">{conversation.name}</h3>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">{conversation.timestamp}</span>
-                      {conversation.unreadCount > 0 && (
-                        <Badge variant="default" className="text-xs">
-                          {conversation.unreadCount}
-                        </Badge>
-                      )}
+          {filteredConversations.map((conversation: any) => {
+            const conversationId = 'id' in conversation ? conversation.id : conversation.jid;
+            const conversationName = 'name' in conversation ? conversation.name : conversation.jid?.split('@')[0] || 'Unknown';
+            const lastMessage = 'lastMessage' in conversation 
+              ? conversation.lastMessage 
+              : conversation.messages.length > 0 
+                ? conversation.messages[conversation.messages.length - 1].body
+                : 'No messages';
+            const timestamp = 'timestamp' in conversation 
+              ? conversation.timestamp 
+              : conversation.lastActivity.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            return (
+              <div
+                key={conversationId}
+                onClick={() => setSelectedConversation(conversationId)}
+                className={`p-4 border-b border-border cursor-pointer hover:bg-muted/50 ${
+                  selectedConversation === conversationId ? 'bg-muted' : ''
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-10 w-10">
+                    <AvatarFallback>{getInitials(conversationName)}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium truncate">{conversationName}</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{timestamp}</span>
+                        {conversation.unreadCount > 0 && (
+                          <Badge variant="default" className="text-xs">
+                            {conversation.unreadCount}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
+                    <p className="text-sm text-muted-foreground truncate">{lastMessage}</p>
                   </div>
-                  <p className="text-sm text-muted-foreground truncate">{conversation.lastMessage}</p>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -172,38 +231,44 @@ const Messages = () => {
             <div className="p-4 border-b border-border">
               <div className="flex items-center gap-3">
                 <Avatar className="h-10 w-10">
-                  <AvatarFallback>{getInitials(selectedConv.name)}</AvatarFallback>
+                  <AvatarFallback>{getInitials('name' in selectedConv ? selectedConv.name : (selectedConv as any).jid?.split('@')[0] || 'Unknown')}</AvatarFallback>
                 </Avatar>
                 <div>
-                  <h2 className="font-medium">{selectedConv.name}</h2>
-                  <p className="text-sm text-muted-foreground">{selectedConv.number}</p>
+                  <h2 className="font-medium">{'name' in selectedConv ? selectedConv.name : (selectedConv as any).jid?.split('@')[0] || 'Unknown'}</h2>
+                  <p className="text-sm text-muted-foreground">{'number' in selectedConv ? (selectedConv as any).number : (selectedConv as any).jid || ''}</p>
                 </div>
               </div>
             </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {selectedConv.messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.sent ? 'justify-end' : 'justify-start'}`}
-                >
+              {selectedConv.messages.map((message) => {
+                const messageText = 'text' in message ? message.text : message.body;
+                const messageTimestamp = 'timestamp' in message ? message.timestamp : message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const isSent = 'sent' in message ? message.sent : message.from === `${settings.xmpp.username}@${settings.xmpp.domain}`;
+                
+                return (
                   <div
-                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                      message.sent
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
-                    }`}
+                    key={message.id}
+                    className={`flex ${isSent ? 'justify-end' : 'justify-start'}`}
                   >
-                    <p className="text-sm">{message.text}</p>
-                    <p className={`text-xs mt-1 ${
-                      message.sent ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                    }`}>
-                      {message.timestamp}
-                    </p>
+                    <div
+                      className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                        isSent
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted'
+                      }`}
+                    >
+                      <p className="text-sm">{messageText}</p>
+                      <p className={`text-xs mt-1 ${
+                        isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                      }`}>
+                        {messageTimestamp}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Message Input */}
