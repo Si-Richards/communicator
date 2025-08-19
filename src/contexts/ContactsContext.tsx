@@ -37,9 +37,11 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        // Convert date strings back to Date objects
+        // Convert date strings back to Date objects and migrate old format
         const contactsWithDates = parsed.map((contact: any) => ({
           ...contact,
+          // Migrate from old phoneNumber format to new phoneNumbers array format
+          phoneNumbers: contact.phoneNumbers || (contact.phoneNumber ? [contact.phoneNumber] : []),
           createdAt: new Date(contact.createdAt),
           updatedAt: new Date(contact.updatedAt),
         }));
