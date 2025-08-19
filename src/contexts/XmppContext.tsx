@@ -65,6 +65,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const [conversations, setConversations] = useState<XmppConversation[]>([]);
   const [contacts, setContacts] = useState<XmppContact[]>([]);
   const [xmppClient, setXmppClient] = useState<any>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const connect = useCallback(async (): Promise<boolean> => {
     if (!settings.xmpp.username || !settings.xmpp.password) {
@@ -76,21 +77,40 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       return false;
     }
 
+    // Prevent multiple simultaneous connection attempts
+    if (isConnecting || (xmppClient && connectionState === 'connected')) {
+      return connectionState === 'connected';
+    }
+
     try {
+      setIsConnecting(true);
       setConnectionState('connecting');
+      
+      // Generate unique resource if not specified
+      const resource = settings.xmpp.resource || `web-client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
       const newClient = client({
         service: settings.xmpp.websocketUrl,
         domain: settings.xmpp.domain,
         username: settings.xmpp.username,
         password: settings.xmpp.password,
-        resource: settings.xmpp.resource || 'web-client'
+        resource
       });
 
       // Connection events
       newClient.on('error', (err: Error) => {
         console.error('XMPP Error:', err);
+        
+        // Handle conflict errors gracefully - don't set error state
+        if (err.message?.includes('conflict')) {
+          console.log('XMPP connection conflict detected, will retry with new resource');
+          setConnectionState('disconnected');
+          setIsConnecting(false);
+          return;
+        }
+        
         setConnectionState('error');
+        setIsConnecting(false);
         toast({
           title: 'XMPP Connection Error',
           description: err.message,
@@ -149,18 +169,22 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
 
       await newClient.start();
       setXmppClient(newClient);
+      setIsConnecting(false);
       return true;
     } catch (error) {
       console.error('XMPP connection failed:', error);
       setConnectionState('error');
+      setIsConnecting(false);
       toast({
         title: 'XMPP Connection Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive'
       });
       return false;
+    } finally {
+      setIsConnecting(false);
     }
-  }, [settings.xmpp, toast]);
+  }, [settings.xmpp, toast, isConnecting, xmppClient, connectionState]);
 
   const disconnect = useCallback(() => {
     if (xmppClient) {
