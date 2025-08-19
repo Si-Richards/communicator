@@ -909,7 +909,7 @@ const SettingsPage = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="xmpp-resource">Resource</Label>
+                    <Label htmlFor="xmpp-resource">Resource Prefix</Label>
                     <Input
                       id="xmpp-resource"
                       type="text"
@@ -918,7 +918,7 @@ const SettingsPage = () => {
                       onChange={(e) => setTempXmppSettings(prev => ({ ...prev, resource: e.target.value }))}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Leave empty for auto-generated unique identifier (recommended)
+                      Base name for this client. A unique suffix is added automatically to prevent conflicts.
                     </p>
                   </div>
                 </div>
@@ -1022,9 +1022,12 @@ const SettingsPage = () => {
                     </div>
                     {effectiveJid && (
                       <div className="space-y-1">
-                        <Label className="text-xs font-medium">Effective JID</Label>
-                        <p className="text-xs text-green-600 font-mono">
+                        <Label className="text-xs font-medium">Connected as</Label>
+                        <p className="text-xs text-green-600 font-mono break-all">
                           {effectiveJid}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Resource: {effectiveJid.split('/')[1] || 'none'}
                         </p>
                       </div>
                     )}

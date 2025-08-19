@@ -75,6 +75,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [reconnectTimeout, setReconnectTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [conflictCount, setConflictCount] = useState(0);
+  const [lastConflictTime, setLastConflictTime] = useState<number>(0);
+  const [currentResource, setCurrentResource] = useState<string>('');
   const clientRef = useRef<any>(null);
 
   const connect = useCallback(async (): Promise<boolean> => {
@@ -106,12 +109,14 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       setLastAttemptAt(new Date());
       setLastError(null);
       
-      // Generate unique resource with better entropy
+      // Generate unique resource with better entropy - always append unique suffix even if user defines resource
       const timestamp = Date.now();
       const random = Math.random().toString(36).substr(2, 9);
       const tabId = crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
-      const resource = settings.xmpp.resource || `web-${timestamp}-${random}-${tabId}`;
+      const baseResource = settings.xmpp.resource || 'web-client';
+      const resource = `${baseResource}-${timestamp}-${random}-${tabId}`;
       
+      setCurrentResource(resource);
       console.log(`XMPP connecting with resource: ${resource}`);
       
       const newClient = client({
@@ -128,17 +133,45 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         console.error('XMPP Error:', err);
         setLastError(errorMsg);
         
-        // Handle conflict errors - immediately regenerate resource and reconnect
+        // Handle conflict errors with flood protection
         if (errorMsg.includes('conflict')) {
-          console.log('XMPP conflict detected, regenerating resource and reconnecting...');
+          const currentTime = Date.now();
+          const timeSinceLastConflict = currentTime - lastConflictTime;
+          
+          // Update conflict tracking
+          setLastConflictTime(currentTime);
+          if (timeSinceLastConflict < 30000) { // Within 30 seconds
+            setConflictCount(prev => prev + 1);
+          } else {
+            setConflictCount(1); // Reset if more than 30s
+          }
+          
+          console.log(`XMPP conflict detected (${conflictCount + 1}/2 in 30s), resource was: ${currentResource}`);
+          
+          // Stop reconnecting if too many conflicts in short time
+          if (conflictCount >= 1) { // Max 2 conflicts in 30s
+            console.error('XMPP Too many conflicts, stopping auto-reconnect to prevent flood');
+            setLastError('Too many resource conflicts. Please check if another session is active.');
+            setConnectionState('error');
+            setIsConnecting(false);
+            toast({
+              title: 'XMPP Resource Conflict',
+              description: 'Too many conflicts detected. Please check if you have another session open.',
+              variant: 'destructive'
+            });
+            return;
+          }
+          
           setConnectionState('disconnected');
           setIsConnecting(false);
           
-          // Auto-reconnect with new resource after short delay
+          // Auto-reconnect with new resource after delay
           if (settings.xmpp.autoConnect) {
+            const jitterDelay = 1000 + Math.random() * 2000; // 1-3s jitter
+            console.log(`XMPP regenerating resource and reconnecting in ${Math.round(jitterDelay)}ms...`);
             const timeout = setTimeout(() => {
               connect();
-            }, 500 + Math.random() * 1000); // 0.5-1.5s jitter
+            }, jitterDelay);
             setReconnectTimeout(timeout);
           }
           return;
@@ -188,6 +221,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         setConnectionState('connected');
         setEffectiveJid(jidString);
         setReconnectAttempts(0); // Reset reconnect counter on successful connection
+        setConflictCount(0); // Reset conflict counter on successful connection
         setLastError(null);
         
         toast({
@@ -304,6 +338,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     setConversations([]);
     setContacts([]);
     setReconnectAttempts(0);
+    setConflictCount(0);
+    setCurrentResource('');
   }, [xmppClient, reconnectTimeout]);
 
   const sendMessage = useCallback(async (to: string, body: string): Promise<boolean> => {
