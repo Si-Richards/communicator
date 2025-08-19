@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, ArrowUpDown } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, ArrowUpDown, Hash } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialpad } from '@/components/ui/dialpad';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useSimpleMultiCallContext } from '@/contexts/SimpleMultiCallContext';
 import { toast } from '@/hooks/use-toast';
 import { useCallTimer } from '@/hooks/useCallTimer';
@@ -22,11 +23,13 @@ export const MultiCallInterface = () => {
     swapCalls,
     acceptWaitingCall,
     declineWaitingCall,
-    endCurrentAndAcceptWaiting
+    endCurrentAndAcceptWaiting,
+    sendDtmf
   } = useSimpleMultiCallContext();
   
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isMuted, setIsMuted] = useState(false);
+  const [keypadOpen, setKeypadOpen] = useState(false);
   
   const activeCalls = callsState.calls.filter(call => 
     call.status === 'incall' || call.status === 'held' || call.status === 'calling' || call.status === 'incoming'
@@ -191,14 +194,44 @@ export const MultiCallInterface = () => {
                             {call.isOnHold ? <Play className="h-6 w-6" /> : <Pause className="h-6 w-6" />}
                           </CallButton>
                           
-                          {call.id === callsState.activeCallId && (
-                            <CallButton 
-                              variant="secondary" 
-                              size="lg" 
-                              onClick={toggleMute}
-                            >
-                              {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-                            </CallButton>
+                           {call.id === callsState.activeCallId && (
+                            <>
+                              <CallButton 
+                                variant="secondary" 
+                                size="lg" 
+                                onClick={toggleMute}
+                              >
+                                {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+                              </CallButton>
+                              
+                              <Dialog open={keypadOpen} onOpenChange={setKeypadOpen}>
+                                <DialogTrigger asChild>
+                                  <CallButton 
+                                    variant="secondary" 
+                                    size="lg"
+                                  >
+                                    <Hash className="h-6 w-6" />
+                                  </CallButton>
+                                </DialogTrigger>
+                                <DialogContent className="sm:max-w-[350px] bg-background border shadow-lg z-[100]">
+                                  <DialogHeader>
+                                    <DialogTitle>Keypad</DialogTitle>
+                                  </DialogHeader>
+                                  <Dialpad
+                                    onDigitPress={(digit) => {
+                                      sendDtmf(digit);
+                                      toast({
+                                        title: `DTMF: ${digit}`,
+                                        description: "Tone sent",
+                                        duration: 1000
+                                      });
+                                    }}
+                                    onBackspace={() => {}}
+                                    className="py-4"
+                                  />
+                                </DialogContent>
+                              </Dialog>
+                            </>
                           )}
                         </>
                       )}

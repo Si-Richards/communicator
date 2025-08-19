@@ -20,6 +20,7 @@ interface SimpleMultiCallContextType {
   registerSipAccount: () => void
   unregisterSipAccount: () => void
   registerNow: () => void
+  sendDtmf: (digit: string) => void
 }
 
 const SimpleMultiCallContext = createContext<SimpleMultiCallContextType | undefined>(undefined)
@@ -75,7 +76,8 @@ export const SimpleMultiCallProvider = ({ children }: { children: ReactNode }) =
       setDoNotDisturb: janusContext.setDoNotDisturb,
       registerSipAccount: janusContext.registerSipAccount,
       unregisterSipAccount: janusContext.unregisterSipAccount,
-      registerNow: janusContext.registerNow
+      registerNow: janusContext.registerNow,
+      sendDtmf: janusContext.sendDtmf
     }}>
       {children}
     </SimpleMultiCallContext.Provider>
