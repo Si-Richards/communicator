@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 export interface Contact {
   id: string;
   name: string;
-  phoneNumber: string;
+  phoneNumbers: string[];
   email?: string;
   notes?: string;
   createdAt: Date;
@@ -16,6 +16,8 @@ interface ContactsContextType {
   updateContact: (id: string, contact: Partial<Omit<Contact, 'id' | 'createdAt'>>) => void;
   deleteContact: (id: string) => void;
   getContactByPhoneNumber: (phoneNumber: string) => Contact | undefined;
+  addPhoneNumber: (contactId: string, phoneNumber: string) => void;
+  removePhoneNumber: (contactId: string, phoneNumber: string) => void;
   searchContacts: (query: string) => Contact[];
   exportContacts: () => string;
   importContacts: (data: string) => boolean;
@@ -83,9 +85,27 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
     // Clean phone number for comparison (remove spaces, dashes, etc.)
     const cleanPhoneNumber = phoneNumber.replace(/\D/g, '');
     return contacts.find(contact => {
-      const cleanContactNumber = contact.phoneNumber.replace(/\D/g, '');
-      return cleanContactNumber === cleanPhoneNumber;
+      return contact.phoneNumbers.some(contactNumber => {
+        const cleanContactNumber = contactNumber.replace(/\D/g, '');
+        return cleanContactNumber === cleanPhoneNumber;
+      });
     });
+  };
+
+  const addPhoneNumber = (contactId: string, phoneNumber: string) => {
+    setContacts(prev => prev.map(contact => 
+      contact.id === contactId 
+        ? { ...contact, phoneNumbers: [...contact.phoneNumbers, phoneNumber], updatedAt: new Date() }
+        : contact
+    ));
+  };
+
+  const removePhoneNumber = (contactId: string, phoneNumber: string) => {
+    setContacts(prev => prev.map(contact => 
+      contact.id === contactId 
+        ? { ...contact, phoneNumbers: contact.phoneNumbers.filter(num => num !== phoneNumber), updatedAt: new Date() }
+        : contact
+    ));
   };
 
   const searchContacts = (query: string): Contact[] => {
@@ -94,7 +114,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
     const lowercaseQuery = query.toLowerCase();
     return contacts.filter(contact =>
       contact.name.toLowerCase().includes(lowercaseQuery) ||
-      contact.phoneNumber.includes(query) ||
+      contact.phoneNumbers.some(phone => phone.includes(query)) ||
       contact.email?.toLowerCase().includes(lowercaseQuery) ||
       contact.notes?.toLowerCase().includes(lowercaseQuery)
     );
@@ -115,7 +135,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
       const validContacts = importedContacts.map((contact: any) => ({
         id: contact.id || crypto.randomUUID(),
         name: contact.name || '',
-        phoneNumber: contact.phoneNumber || '',
+        phoneNumbers: contact.phoneNumbers || (contact.phoneNumber ? [contact.phoneNumber] : []),
         email: contact.email || undefined,
         notes: contact.notes || undefined,
         createdAt: contact.createdAt ? new Date(contact.createdAt) : new Date(),
@@ -144,6 +164,8 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
     exportContacts,
     importContacts,
     clearContacts,
+    addPhoneNumber,
+    removePhoneNumber,
   };
 
   return <ContactsContext.Provider value={value}>{children}</ContactsContext.Provider>;

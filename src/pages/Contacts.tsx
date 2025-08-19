@@ -12,7 +12,7 @@ import { Search, Plus, Phone, Edit, Trash2, Download, Upload } from 'lucide-reac
 import { useToast } from '@/hooks/use-toast';
 
 const Contacts = () => {
-  const { contacts, addContact, updateContact, deleteContact, searchContacts, exportContacts, importContacts, clearContacts } = useContacts();
+  const { contacts, addContact, updateContact, deleteContact, searchContacts, exportContacts, importContacts, clearContacts, addPhoneNumber, removePhoneNumber } = useContacts();
   const { makeCall } = useJanusContext();
   const { toast } = useToast();
   
@@ -21,7 +21,7 @@ const Contacts = () => {
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [formData, setFormData] = useState({
     name: '',
-    phoneNumber: '',
+    phoneNumbers: [''],
     email: '',
     notes: ''
   });
@@ -29,18 +29,19 @@ const Contacts = () => {
   const filteredContacts = searchQuery ? searchContacts(searchQuery) : contacts;
 
   const resetForm = () => {
-    setFormData({ name: '', phoneNumber: '', email: '', notes: '' });
+    setFormData({ name: '', phoneNumbers: [''], email: '', notes: '' });
     setEditingContact(null);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.name.trim() || !formData.phoneNumber.trim()) {
+    const validPhoneNumbers = formData.phoneNumbers.filter(phone => phone.trim());
+    if (!formData.name.trim() || validPhoneNumbers.length === 0) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Name and phone number are required.",
+        description: "Name and at least one phone number are required.",
       });
       return;
     }
@@ -48,7 +49,7 @@ const Contacts = () => {
     if (editingContact) {
       updateContact(editingContact.id, {
         name: formData.name,
-        phoneNumber: formData.phoneNumber,
+        phoneNumbers: validPhoneNumbers,
         email: formData.email || undefined,
         notes: formData.notes || undefined,
       });
@@ -59,7 +60,7 @@ const Contacts = () => {
     } else {
       addContact({
         name: formData.name,
-        phoneNumber: formData.phoneNumber,
+        phoneNumbers: validPhoneNumbers,
         email: formData.email || undefined,
         notes: formData.notes || undefined,
       });
@@ -77,7 +78,7 @@ const Contacts = () => {
     setEditingContact(contact);
     setFormData({
       name: contact.name,
-      phoneNumber: contact.phoneNumber,
+      phoneNumbers: contact.phoneNumbers.length > 0 ? contact.phoneNumbers : [''],
       email: contact.email || '',
       notes: contact.notes || ''
     });
@@ -195,14 +196,45 @@ const Contacts = () => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="phoneNumber">Phone Number *</Label>
-                  <Input
-                    id="phoneNumber"
-                    value={formData.phoneNumber}
-                    onChange={(e) => setFormData(prev => ({ ...prev, phoneNumber: e.target.value }))}
-                    placeholder="Enter phone number"
-                    required
-                  />
+                  <Label>Phone Numbers *</Label>
+                  {formData.phoneNumbers.map((phone, index) => (
+                    <div key={index} className="flex gap-2 mt-2">
+                      <Input
+                        value={phone}
+                        onChange={(e) => {
+                          const newPhoneNumbers = [...formData.phoneNumbers];
+                          newPhoneNumbers[index] = e.target.value;
+                          setFormData(prev => ({ ...prev, phoneNumbers: newPhoneNumbers }));
+                        }}
+                        placeholder="Enter phone number"
+                      />
+                      {formData.phoneNumbers.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newPhoneNumbers = formData.phoneNumbers.filter((_, i) => i !== index);
+                            setFormData(prev => ({ ...prev, phoneNumbers: newPhoneNumbers }));
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => {
+                      setFormData(prev => ({ ...prev, phoneNumbers: [...prev.phoneNumbers, ''] }));
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Phone Number
+                  </Button>
                 </div>
                 <div>
                   <Label htmlFor="email">Email</Label>
@@ -289,20 +321,26 @@ const Contacts = () => {
                 >
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold truncate">{contact.name}</h3>
-                    <p className="text-sm text-muted-foreground">{contact.phoneNumber}</p>
+                    <div className="space-y-1">
+                      {contact.phoneNumbers.map((phone, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <p className="text-sm text-muted-foreground">{phone}</p>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleCall(phone)}
+                            className="h-6 w-6 p-0 shrink-0"
+                          >
+                            <Phone className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
                     {contact.email && (
                       <p className="text-sm text-muted-foreground">{contact.email}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleCall(contact.phoneNumber)}
-                      className="shrink-0"
-                    >
-                      <Phone className="w-4 h-4" />
-                    </Button>
                     <Button
                       size="sm"
                       variant="outline"

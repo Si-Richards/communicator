@@ -751,33 +751,6 @@ const SettingsPage = () => {
                     </p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="sip-server">Janus Server</Label>
-                    <Input
-                      id="sip-server"
-                      type="text"
-                      placeholder="wss://devrtc.voicehost.io:443"
-                      value={tempSipSettings.server}
-                      onChange={(e) => setTempSipSettings(prev => ({ ...prev, server: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      WebSocket URL of the Janus Gateway server
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="sip-realm">SIP Realm</Label>
-                    <Input
-                      id="sip-realm"
-                      type="text"
-                      placeholder="hpbx.sipconvergence.co.uk"
-                      value={tempSipSettings.realm}
-                      onChange={(e) => setTempSipSettings(prev => ({ ...prev, realm: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      SIP realm/domain for authentication
-                    </p>
-                  </div>
                 </div>
 
 
