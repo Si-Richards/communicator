@@ -853,10 +853,10 @@ const SettingsPage = () => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
-                  XMPP Chat Configuration
+                  Chat Configuration
                 </CardTitle>
                 <CardDescription>
-                  Configure XMPP/Jabber settings for real-time messaging
+                  Configure messaging
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -872,7 +872,7 @@ const SettingsPage = () => {
                       onChange={(e) => setTempXmppSettings(prev => ({ ...prev, username: e.target.value }))}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Your XMPP username (without domain)
+                      Your username (without domain)
                     </p>
                   </div>
 
