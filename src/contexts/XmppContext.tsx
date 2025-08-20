@@ -7,7 +7,6 @@ import React, {
   useState,
 } from "react";
 import { client, xml, jid as xmppJid } from "@xmpp/client";
-import debug from "@xmpp/debug";
 import { useSettings } from "./SettingsContext";
 
 /* ---------- Shared types ---------- */
@@ -48,6 +47,7 @@ export type RoomOccupant = {
   jid?: string;                 // may be omitted depending on room config
   role?: RoomRole;
   affiliation?: RoomAffiliation;
+  presence: "available" | "away" | "dnd" | "xa" | "unavailable";
 };
 
 export type RoomMessage = ChatMessage; // same shape works for room messages
@@ -96,6 +96,12 @@ type Ctx = {
   muteRoom: (roomJid: string, muted: boolean) => void;
   loadRoomHistory: (roomJid: string) => Promise<void>;
   markRoomRead: (roomJid: string) => void;
+
+  // diagnostics (for SettingsPage)
+  effectiveJid: string;
+  lastError: string | null;
+  lastAttemptAt: Date | null;
+  runWebSocketDiagnostics: () => Promise<void>;
 };
 
 const XmppContext = createContext<Ctx | null>(null);
@@ -111,11 +117,15 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const xmppRef = useRef<ReturnType<typeof client> | null>(null);
   const genRef = useRef(0); // generation guard for event staleness
   const myBareJidRef = useRef<string>("");
+  const outboxRef = useRef<Array<{ toBareJid: string; body: string; id: string }>>([]);
+  const manualDisconnectRef = useRef(false);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [rooms, setRooms] = useState<MucRoom[]>([]);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
 
   /* ---------- helpers ---------- */
 
@@ -183,6 +193,33 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
+  const ensureRoom = useCallback((roomJid: string, init?: Partial<MucRoom>) => {
+    setRooms(prev => {
+      const idx = prev.findIndex(r => r.jid === roomJid);
+      if (idx === -1) {
+        const room: MucRoom = {
+          jid: roomJid,
+          name: roomJid.split("@")[0],
+          nick: init?.nick || "",
+          joined: init?.joined ?? false,
+          isOwner: init?.isOwner ?? false,
+          isMuted: init?.isMuted ?? false,
+          occupants: init?.occupants ?? [],
+          messages: init?.messages ?? [],
+          unreadCount: 0,
+          lastActivity: new Date(0),
+          hasMoreHistory: true,
+          mamBefore: null,
+        };
+        return [room, ...prev];
+      } else {
+        const copy = prev.slice();
+        copy[idx] = { ...prev[idx], ...init };
+        return copy;
+      }
+    });
+  }, []);
+
   /* ---------- roster/presence ---------- */
 
   const fetchRoster = useCallback(async () => {
@@ -230,7 +267,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (type === "unavailable") {
           if (oi !== -1) occupants.splice(oi, 1);
         } else {
-          const occ: RoomOccupant = { nick, jid, role, affiliation };
+          const occ: RoomOccupant = { nick, jid, role, affiliation, presence: "available" };
           if (oi === -1) occupants.push(occ);
           else occupants[oi] = { ...occupants[oi], ...occ };
         }
@@ -407,7 +444,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     myBareJidRef.current = `${username}@${domain}`;
 
     const xmpp = client({ service: ws, domain, username, password, resource });
-    debug(xmpp, false);
 
     xmpp.on("status", (s: string) => {
       if (genRef.current !== myGen) return;
@@ -627,37 +663,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /* ---------- MUC API ---------- */
 
-  const ensureRoom = useCallback((roomJid: string, init?: Partial<MucRoom>) => {
-    setRooms(prev => {
-      const idx = prev.findIndex(r => r.jid === roomJid);
-      if (idx === -1) {
-        const room: MucRoom = {
-          jid: roomJid,
-          name: roomJid.split("@")[0],
-          nick: init?.nick || "",
-          joined: init?.joined ?? false,
-          isOwner: init?.isOwner ?? false,
-          isMuted: init?.isMuted ?? false,
-          occupants: init?.occupants ?? [],
-          messages: init?.messages ?? [],
-          unreadCount: 0,
-          lastActivity: new Date(0),
-          hasMoreHistory: true,
-          mamBefore: null,
-        };
-        return [room, ...prev];
-      } else {
-        const copy = prev.slice();
-        copy[idx] = { ...prev[idx], ...init };
-        return copy;
-      }
-    });
-  }, []);
-
   const createRoom = useCallback(async (roomName: string, nick: string, password?: string) => {
     const xmpp = xmppRef.current;
     if (!xmpp) return false;
-    const confHost = `conference.${settings.xmpp.domain}`;
+    const confHost = `conference.${settings?.xmpp?.domain}`;
     const roomJid = `${roomName}@${confHost}`;
 
     // join to create
@@ -935,7 +944,22 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, unreadCount: 0 } : r));
   }, []);
 
+  const runWebSocketDiagnostics = useCallback(async () => {
+    setLastAttemptAt(new Date());
+    setLastError(null);
+    try {
+      const success = await connect();
+      if (!success) {
+        setLastError("Connection failed during diagnostics");
+      }
+    } catch (e: any) {
+      setLastError(`Diagnostics failed: ${e?.message || String(e)}`);
+    }
+  }, [connect]);
+
   /* ---------- value ---------- */
+
+  const effectiveJid = myBareJidRef.current || `${settings?.xmpp?.username || ''}@${settings?.xmpp?.domain || ''}`;
 
   const value = useMemo<Ctx>(() => ({
     // direct
@@ -964,6 +988,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     muteRoom,
     loadRoomHistory,
     markRoomRead,
+
+    // diagnostics
+    effectiveJid,
+    lastError,
+    lastAttemptAt,
+    runWebSocketDiagnostics,
   }), [
     connectionState,
     conversations,
@@ -988,6 +1018,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     muteRoom,
     loadRoomHistory,
     markRoomRead,
+    effectiveJid,
+    lastError,
+    lastAttemptAt,
+    runWebSocketDiagnostics,
   ]);
 
   return <XmppContext.Provider value={value}>{children}</XmppContext.Provider>;

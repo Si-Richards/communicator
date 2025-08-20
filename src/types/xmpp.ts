@@ -1,3 +1,4 @@
+
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'error';
 
 export interface XmppMessage {
