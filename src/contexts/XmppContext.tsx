@@ -101,7 +101,7 @@ type Ctx = {
   effectiveJid: string;
   lastError: string | null;
   lastAttemptAt: Date | null;
-  runWebSocketDiagnostics: () => Promise<void>;
+  runWebSocketDiagnostics: () => Promise<{success: boolean; details: string}>;
 };
 
 const XmppContext = createContext<Ctx | null>(null);
@@ -948,14 +948,23 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLastAttemptAt(new Date());
     setLastError(null);
     try {
+      const ws = settings?.xmpp?.websocketUrl;
+      if (!ws) {
+        return { success: false, details: 'No WebSocket URL configured' };
+      }
+      
       const success = await connect();
       if (!success) {
         setLastError("Connection failed during diagnostics");
+        return { success: false, details: 'Connection failed during diagnostics' };
       }
+      return { success: true, details: 'WebSocket connection successful' };
     } catch (e: any) {
-      setLastError(`Diagnostics failed: ${e?.message || String(e)}`);
+      const errorMsg = `Diagnostics failed: ${e?.message || String(e)}`;
+      setLastError(errorMsg);
+      return { success: false, details: errorMsg };
     }
-  }, [connect]);
+  }, [connect, settings?.xmpp?.websocketUrl]);
 
   /* ---------- value ---------- */
 

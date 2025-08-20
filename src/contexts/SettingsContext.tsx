@@ -61,6 +61,7 @@ export interface XmppSettings {
   domain: string;
   username: string;
   password: string;
+  resource?: string;
   autoConnect: boolean;
   rememberPassword: boolean;
 }

@@ -8,7 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useState, useEffect } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
-import { MessageStatus, RoomOccupant } from '@/types/xmpp';
+import { MessageStatus } from '@/types/xmpp';
 
 export const RoomChatView = () => {
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
@@ -121,7 +121,7 @@ export const RoomChatView = () => {
     }
   };
 
-  const getRoleIcon = (occupant: RoomOccupant) => {
+  const getRoleIcon = (occupant: typeof selectedRoomData extends undefined ? never : typeof selectedRoomData['occupants'][0]) => {
     if (occupant.affiliation === 'owner') return <Crown className="h-3 w-3 text-yellow-500" />;
     if (occupant.affiliation === 'admin') return <Shield className="h-3 w-3 text-blue-500" />;
     if (occupant.role === 'moderator') return <Shield className="h-3 w-3 text-green-500" />;
@@ -461,7 +461,7 @@ export const RoomChatView = () => {
                             <p className="font-medium text-sm">{occupant.nick}</p>
                             {getRoleIcon(occupant)}
                           </div>
-                          <p className="text-xs text-muted-foreground">{occupant.affiliation}</p>
+                          <p className="text-xs text-muted-foreground">{occupant.affiliation || 'none'}</p>
                         </div>
                       </div>
                       {selectedRoomData.isOwner && occupant.nick !== selectedRoomData.nick && (
