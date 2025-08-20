@@ -26,10 +26,6 @@ export interface XmppConversation {
   messages: XmppMessage[];
   unreadCount: number;
   lastActivity: Date;
-  hasHistoryLoaded: boolean;
-  hasMoreHistory: boolean;
-  isLoadingHistory: boolean;
-  lastMamQueryId?: string;
 }
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -48,9 +44,6 @@ interface XmppContextType {
   removeContact: (jid: string) => void;
   setPresence: (show?: 'away' | 'dnd' | 'xa', status?: string) => void;
   startConversation: (jid: string) => void;
-  fetchHistory: (jid: string) => Promise<void>;
-  loadMoreHistory: (jid: string) => Promise<boolean>;
-  syncOfflineMessages: () => Promise<void>;
   runWebSocketDiagnostics: () => Promise<{ success: boolean; details: string; }>;
   ping: () => Promise<boolean>;
 }
@@ -90,527 +83,54 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const [clientGeneration, setClientGeneration] = useState(0);
   const clientRef = useRef<any>(null);
   const clientGenerationRef = useRef(0);
-  const connectInFlightRef = useRef<Promise<boolean> | null>(null);
-  const outboxRef = useRef<Array<{id: string, to: string, body: string}>>([]);
-  const processedMessageIds = useRef<Set<string>>(new Set());
-  const mamQueryIds = useRef<Map<string, string>>(new Map());
 
-  // Save conversations to localStorage
-  const saveConversationsToStorage = useCallback((convs: XmppConversation[]) => {
-    try {
-      const storageKey = `xmpp_conversations_${settings.xmpp.username}@${settings.xmpp.domain}`;
-      localStorage.setItem(storageKey, JSON.stringify(convs.map(conv => ({
-        ...conv,
-        lastActivity: conv.lastActivity.toISOString(),
-        messages: conv.messages.map(msg => ({
-          ...msg,
-          timestamp: msg.timestamp.toISOString()
-        }))
-      }))));
-    } catch (error) {
-      console.warn('Failed to save conversations to storage:', error);
-    }
-  }, [settings.xmpp.username, settings.xmpp.domain]);
-
-  // Load conversations from localStorage
-  const loadConversationsFromStorage = useCallback((): XmppConversation[] => {
-    try {
-      const storageKey = `xmpp_conversations_${settings.xmpp.username}@${settings.xmpp.domain}`;
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.map((conv: any) => ({
-          ...conv,
-          lastActivity: new Date(conv.lastActivity),
-          messages: conv.messages.map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp)
-          })),
-          hasHistoryLoaded: conv.hasHistoryLoaded || false,
-          hasMoreHistory: conv.hasMoreHistory !== false,
-          isLoadingHistory: false
-        }));
-      }
-    } catch (error) {
-      console.warn('Failed to load conversations from storage:', error);
-    }
-    return [];
-  }, [settings.xmpp.username, settings.xmpp.domain]);
-
-  // Queue a message for delivery when connected
-  const queueMessage = useCallback((to: string, body: string): string => {
-    const id = `queued-${Date.now()}-${Math.random()}`;
-    outboxRef.current.push({ id, to, body });
-    console.log(`XMPP queued message ${id} to ${to} (${outboxRef.current.length} in queue)`);
-    return id;
-  }, []);
-
-  // Flush all queued messages
-  const flushOutbox = useCallback(async (): Promise<void> => {
-    if (!clientRef.current || connectionState !== 'connected') {
-      console.log('XMPP cannot flush outbox - not connected');
-      return;
-    }
-
-    const messages = [...outboxRef.current];
-    console.log(`XMPP flushing ${messages.length} queued messages`);
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      try {
-        const normalizedTo = msg.to.includes('@') ? msg.to : `${msg.to}@${settings.xmpp.domain}`;
-        const stanza = xml(
-          'message',
-          { type: 'chat', to: normalizedTo },
-          xml('body', {}, msg.body)
-        );
-
-        await clientRef.current.send(stanza);
-        
-        // Add to local conversation on successful send
-        const sentMessage: XmppMessage = {
-          id: `${Date.now()}-${Math.random()}`,
-          from: effectiveJid,
-          to: normalizedTo,
-          body: msg.body,
-          timestamp: new Date(),
-          type: 'chat'
-        };
-        
-        addMessageToConversation(sentMessage);
-
-        // Remove from queue after successful send
-        outboxRef.current = outboxRef.current.filter(m => m.id !== msg.id);
-        console.log(`XMPP sent queued message ${msg.id}`);
-      } catch (error) {
-        console.error(`XMPP failed to send queued message ${msg.id}:`, error);
-        // Keep message in queue and stop flushing on first failure
-        break;
-      }
-    }
-  }, [connectionState, settings.xmpp.domain, effectiveJid]);
-
-  // Wait for online state with generation awareness
-  const waitForOnline = useCallback(async (generation: number, timeoutMs: number = 12000): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const start = Date.now();
-      const poll = () => {
-        // Check if generation is still current
-        if (clientGenerationRef.current !== generation) {
-          console.log(`XMPP waitForOnline aborting - generation changed from ${generation} to ${clientGenerationRef.current}`);
-          resolve(false);
-          return;
-        }
-        
-        if (connectionState === 'connected' && clientRef.current) {
-          resolve(true);
-          return;
-        }
-        
-        if (Date.now() - start > timeoutMs) {
-          console.warn(`XMPP waitForOnline timeout after ${timeoutMs}ms`);
-          resolve(false);
-          return;
-        }
-        
-        setTimeout(poll, 250);
-      };
-      poll();
-    });
-  }, [connectionState]);
-
-  // Ensure we have a connected client - safer version without destructive ping
+  // Helper to ensure we have a connected client with robust checks
   const ensureConnectedClient = useCallback(async (): Promise<any> => {
-    console.log(`XMPP ensureConnectedClient - state: ${connectionState}, hasClient: ${!!clientRef.current}`);
+    const maxAttempts = 3;
+    const pollIntervalMs = 250;
+    const maxWaitMs = 10000;
     
-    // If connected and we have a client, return immediately
-    if (clientRef.current && connectionState === 'connected') {
-      return clientRef.current;
-    }
-    
-    // If connecting, wait for it to finish
-    if (connectionState === 'connecting') {
-      const currentGeneration = clientGenerationRef.current;
-      console.log(`XMPP waiting for ongoing connection (generation ${currentGeneration})`);
-      const success = await waitForOnline(currentGeneration, 12000);
-      if (success && clientRef.current) {
-        return clientRef.current;
-      }
-      throw new Error('Connection attempt timed out or failed');
-    }
-    
-    // If disconnected or error, trigger connect and wait
-    if (connectionState === 'disconnected' || connectionState === 'error') {
-      console.log('XMPP triggering connect from ensureConnectedClient');
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`XMPP ensureConnectedClient attempt ${attempt}/${maxAttempts}`);
       
-      throw new Error('No client available and connection failed');
-    }
-    
-    throw new Error(`Unexpected connection state: ${connectionState}`);
-  }, [connectionState, waitForOnline]);
-
-  // Handle message stanzas (live messages, carbons, MAM forwarded)
-  const handleMessageStanza = useCallback((stanza: any) => {
-    // Handle message carbons (sent/received copies)
-    const sent = stanza.getChild('sent', 'urn:xmpp:carbons:2');
-    const received = stanza.getChild('received', 'urn:xmpp:carbons:2');
-    
-    if (sent || received) {
-      const forwarded = (sent || received)?.getChild('forwarded', 'urn:xmpp:forward:0');
-      const innerMessage = forwarded?.getChild('message');
-      if (innerMessage) {
-        const body = innerMessage.getChildText('body');
-        if (body) {
-          const from = innerMessage.attrs.from?.split('/')[0];
-          const to = innerMessage.attrs.to?.split('/')[0];
-          const messageId = innerMessage.attrs.id || `carbon-${Date.now()}-${Math.random()}`;
-          
-          // Skip if already processed
-          if (processedMessageIds.current.has(messageId)) return;
-          processedMessageIds.current.add(messageId);
-          
-          const message: XmppMessage = {
-            id: messageId,
-            from,
-            to,
-            body,
-            timestamp: new Date(),
-            type: 'chat'
-          };
-          
-          addMessageToConversation(message);
+      // If we have a client and it's connected, verify it's still alive
+      if (clientRef.current && connectionState === 'connected') {
+        try {
+          // Quick ping test to verify client is alive
+          await clientRef.current.send(xml('iq', { type: 'get', to: settings.xmpp.domain, id: `ping-${Date.now()}` },
+            xml('ping', { xmlns: 'urn:xmpp:ping' })
+          ));
+          return clientRef.current;
+        } catch (error) {
+          console.warn(`XMPP client ping failed on attempt ${attempt}:`, error);
+          clientRef.current = null;
         }
       }
-      return;
-    }
-    
-    // Handle MAM forwarded messages
-    const result = stanza.getChild('result', 'urn:xmpp:mam:2');
-    if (result) {
-      const forwarded = result.getChild('forwarded', 'urn:xmpp:forward:0');
-      const innerMessage = forwarded?.getChild('message');
-      const delay = forwarded?.getChild('delay', 'urn:xmpp:delay');
       
-      if (innerMessage) {
-        const body = innerMessage.getChildText('body');
-        if (body) {
-          const from = innerMessage.attrs.from?.split('/')[0];
-          const to = innerMessage.attrs.to?.split('/')[0];
-          const messageId = innerMessage.attrs.id || result.attrs.id || `mam-${Date.now()}-${Math.random()}`;
-          const timestamp = delay?.attrs.stamp ? new Date(delay.attrs.stamp) : new Date();
-          
-          // Skip if already processed
-          if (processedMessageIds.current.has(messageId)) return;
-          processedMessageIds.current.add(messageId);
-          
-          const message: XmppMessage = {
-            id: messageId,
-            from,
-            to,
-            body,
-            timestamp,
-            type: 'chat'
-          };
-          
-          addHistoryMessageToConversation(message);
+      // Try to connect if needed
+      if (!clientRef.current || connectionState !== 'connected') {
+        console.log(`XMPP triggering connect on attempt ${attempt}`);
+        const connected = await connect();
+        if (!connected) {
+          console.warn(`XMPP connect failed on attempt ${attempt}`);
+          continue;
         }
       }
-      return;
+      
+      // Poll for the client to become available
+      const start = Date.now();
+      while (Date.now() - start < maxWaitMs) {
+        if (clientRef.current && connectionState === 'connected') {
+          return clientRef.current;
+        }
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      }
+      
+      console.warn(`XMPP timeout waiting for client on attempt ${attempt}`);
     }
     
-    // Handle regular live messages
-    if (stanza.attrs.type === 'chat' || stanza.attrs.type === 'normal' || !stanza.attrs.type) {
-      const from = stanza.attrs.from;
-      const body = stanza.getChildText('body');
-      
-      if (body) {
-        const messageId = stanza.attrs.id || `live-${Date.now()}-${Math.random()}`;
-        
-        // Skip if already processed
-        if (processedMessageIds.current.has(messageId)) return;
-        processedMessageIds.current.add(messageId);
-        
-        const message: XmppMessage = {
-          id: messageId,
-          from: from.split('/')[0],
-          to: stanza.attrs.to,
-          body,
-          timestamp: new Date(),
-          type: 'chat'
-        };
-        
-        addMessageToConversation(message);
-      }
-    }
-  }, []);
-
-  const addMessageToConversation = useCallback((message: XmppMessage) => {
-    setConversations(prev => {
-      const contactJid = message.from === effectiveJid ? message.to : message.from;
-      const existingConv = prev.find(conv => conv.jid === contactJid);
-      
-      if (existingConv) {
-        const updatedConvs = prev.map(conv => {
-          if (conv.jid === contactJid) {
-            return {
-              ...conv,
-              messages: [...conv.messages, message],
-              lastActivity: message.timestamp,
-              unreadCount: message.from !== effectiveJid ? conv.unreadCount + 1 : conv.unreadCount
-            };
-          }
-          return conv;
-        }).sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime());
-        
-        saveConversationsToStorage(updatedConvs);
-        return updatedConvs;
-      } else {
-        // Create new conversation
-        const newConv: XmppConversation = {
-          jid: contactJid,
-          name: contactJid.split('@')[0], // Use local part as name initially
-          messages: [message],
-          unreadCount: message.from !== effectiveJid ? 1 : 0,
-          lastActivity: message.timestamp,
-          hasHistoryLoaded: false,
-          hasMoreHistory: true,
-          isLoadingHistory: false
-        };
-        const updatedConvs = [newConv, ...prev];
-        saveConversationsToStorage(updatedConvs);
-        return updatedConvs;
-      }
-    });
-  }, [effectiveJid, saveConversationsToStorage]);
-
-  const addHistoryMessageToConversation = useCallback((message: XmppMessage) => {
-    setConversations(prev => {
-      const contactJid = message.from === effectiveJid ? message.to : message.from;
-      const existingConv = prev.find(conv => conv.jid === contactJid);
-      
-      if (existingConv) {
-        const updatedConvs = prev.map(conv => {
-          if (conv.jid === contactJid) {
-            // Insert history message in chronological order
-            const newMessages = [...conv.messages, message].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-            return {
-              ...conv,
-              messages: newMessages,
-              lastActivity: new Date(Math.max(conv.lastActivity.getTime(), message.timestamp.getTime()))
-            };
-          }
-          return conv;
-        });
-        
-        saveConversationsToStorage(updatedConvs);
-        return updatedConvs;
-      } else {
-        const newConv: XmppConversation = {
-          jid: contactJid,
-          name: contactJid.split('@')[0],
-          messages: [message],
-          unreadCount: 0,
-          lastActivity: message.timestamp,
-          hasHistoryLoaded: true,
-          hasMoreHistory: true,
-          isLoadingHistory: false
-        };
-        const updatedConvs = [newConv, ...prev].sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime());
-        saveConversationsToStorage(updatedConvs);
-        return updatedConvs;
-      }
-    });
-  }, [effectiveJid, saveConversationsToStorage]);
-
-  // MAM query handling
-  const handleMamResult = useCallback((stanza: any) => {
-    const queryId = stanza.attrs.id;
-    const fin = stanza.getChild('fin', 'urn:xmpp:mam:2');
-    
-    if (fin && queryId) {
-      const jid = mamQueryIds.current.get(queryId);
-      if (jid) {
-        const complete = fin.attrs.complete === 'true';
-        
-        setConversations(prev => prev.map(conv => {
-          if (conv.jid === jid) {
-            return {
-              ...conv,
-              isLoadingHistory: false,
-              hasMoreHistory: !complete,
-              hasHistoryLoaded: true,
-              lastMamQueryId: queryId
-            };
-          }
-          return conv;
-        }));
-        
-        mamQueryIds.current.delete(queryId);
-        console.log(`XMPP MAM query ${queryId} completed for ${jid}, complete: ${complete}`);
-      }
-    }
-  }, []);
-
-  // Fetch initial history for a conversation
-  const fetchHistory = useCallback(async (jid: string): Promise<void> => {
-    if (!clientRef.current || connectionState !== 'connected') {
-      console.warn('XMPP cannot fetch history - not connected');
-      return;
-    }
-
-    const conv = conversations.find(c => c.jid === jid);
-    if (conv?.hasHistoryLoaded || conv?.isLoadingHistory) {
-      console.log(`XMPP history already loaded/loading for ${jid}`);
-      return;
-    }
-
-    const queryId = `mam-${jid.replace(/[@.]/g, '-')}-${Date.now()}`;
-    mamQueryIds.current.set(queryId, jid);
-
-    setConversations(prev => prev.map(conv => {
-      if (conv.jid === jid) {
-        return { ...conv, isLoadingHistory: true };
-      }
-      return conv;
-    }));
-
-    try {
-      await clientRef.current.send(
-        xml('iq', { type: 'set', id: queryId },
-          xml('query', { xmlns: 'urn:xmpp:mam:2' },
-            xml('x', { xmlns: 'jabber:x:data', type: 'submit' },
-              xml('field', { var: 'FORM_TYPE', type: 'hidden' },
-                xml('value', {}, 'urn:xmpp:mam:2')
-              ),
-              xml('field', { var: 'with' },
-                xml('value', {}, jid)
-              )
-            ),
-            xml('set', { xmlns: 'http://jabber.org/protocol/rsm' },
-              xml('max', {}, '50')
-            )
-          )
-        )
-      );
-      
-      console.log(`XMPP initiated MAM query ${queryId} for ${jid}`);
-    } catch (error) {
-      console.error(`XMPP failed to fetch history for ${jid}:`, error);
-      setConversations(prev => prev.map(conv => {
-        if (conv.jid === jid) {
-          return { ...conv, isLoadingHistory: false };
-        }
-        return conv;
-      }));
-      mamQueryIds.current.delete(queryId);
-    }
-  }, [clientRef, connectionState, conversations]);
-
-  // Load more history for a conversation
-  const loadMoreHistory = useCallback(async (jid: string): Promise<boolean> => {
-    if (!clientRef.current || connectionState !== 'connected') {
-      console.warn('XMPP cannot load more history - not connected');
-      return false;
-    }
-
-    const conv = conversations.find(c => c.jid === jid);
-    if (!conv?.hasMoreHistory || conv.isLoadingHistory) {
-      console.log(`XMPP no more history available for ${jid}`);
-      return false;
-    }
-
-    const queryId = `mam-more-${jid.replace(/[@.]/g, '-')}-${Date.now()}`;
-    mamQueryIds.current.set(queryId, jid);
-
-    setConversations(prev => prev.map(c => {
-      if (c.jid === jid) {
-        return { ...c, isLoadingHistory: true };
-      }
-      return c;
-    }));
-
-    try {
-      const oldestMessage = conv.messages[0];
-      
-      await clientRef.current.send(
-        xml('iq', { type: 'set', id: queryId },
-          xml('query', { xmlns: 'urn:xmpp:mam:2' },
-            xml('x', { xmlns: 'jabber:x:data', type: 'submit' },
-              xml('field', { var: 'FORM_TYPE', type: 'hidden' },
-                xml('value', {}, 'urn:xmpp:mam:2')
-              ),
-              xml('field', { var: 'with' },
-                xml('value', {}, jid)
-              ),
-              ...(oldestMessage ? [
-                xml('field', { var: 'end' },
-                  xml('value', {}, oldestMessage.timestamp.toISOString())
-                )
-              ] : [])
-            ),
-            xml('set', { xmlns: 'http://jabber.org/protocol/rsm' },
-              xml('max', {}, '50')
-            )
-          )
-        )
-      );
-      
-      console.log(`XMPP initiated MAM load-more query ${queryId} for ${jid}`);
-      return true;
-    } catch (error) {
-      console.error(`XMPP failed to load more history for ${jid}:`, error);
-      setConversations(prev => prev.map(c => {
-        if (c.jid === jid) {
-          return { ...c, isLoadingHistory: false };
-        }
-        return c;
-      }));
-      mamQueryIds.current.delete(queryId);
-      return false;
-    }
-  }, [clientRef, connectionState, conversations]);
-
-  // Sync offline messages using MAM
-  const syncOfflineMessages = useCallback(async (): Promise<void> => {
-    if (!clientRef.current || connectionState !== 'connected') {
-      console.warn('XMPP cannot sync offline messages - not connected');
-      return;
-    }
-
-    try {
-      // Get last sync timestamp from storage
-      const storageKey = `xmpp_last_sync_${settings.xmpp.username}@${settings.xmpp.domain}`;
-      const lastSync = localStorage.getItem(storageKey);
-      const since = lastSync ? new Date(lastSync) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
-      
-      const queryId = `mam-offline-sync-${Date.now()}`;
-      
-      await clientRef.current.send(
-        xml('iq', { type: 'set', id: queryId },
-          xml('query', { xmlns: 'urn:xmpp:mam:2' },
-            xml('x', { xmlns: 'jabber:x:data', type: 'submit' },
-              xml('field', { var: 'FORM_TYPE', type: 'hidden' },
-                xml('value', {}, 'urn:xmpp:mam:2')
-              ),
-              xml('field', { var: 'start' },
-                xml('value', {}, since.toISOString())
-              )
-            ),
-            xml('set', { xmlns: 'http://jabber.org/protocol/rsm' },
-              xml('max', {}, '100')
-            )
-          )
-        )
-      );
-      
-      // Update last sync timestamp
-      localStorage.setItem(storageKey, new Date().toISOString());
-      
-      console.log(`XMPP initiated offline message sync since ${since.toISOString()}`);
-    } catch (error) {
-      console.error('XMPP failed to sync offline messages:', error);
-    }
-  }, [clientRef, connectionState, settings.xmpp.username, settings.xmpp.domain]);
+    throw new Error('Failed to ensure connected client after all attempts');
+  }, [connectionState, settings.xmpp.domain]);
 
   const connect = useCallback(async (): Promise<boolean> => {
     if (!settings.xmpp.username || !settings.xmpp.password) {
@@ -759,8 +279,13 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       });
 
       newClient.on('offline', () => {
-        const currentGeneration = clientGenerationRef.current;
-        console.log(`XMPP offline (generation ${currentGeneration})`);
+        // Check if this event is for the current generation
+        if (clientGenerationRef.current !== newGeneration) {
+          console.log(`XMPP ignoring stale offline event from generation ${newGeneration}, current is ${clientGenerationRef.current}`);
+          return;
+        }
+        
+        console.log(`XMPP offline (generation ${newGeneration})`);
         setConnectionState('disconnected');
         setEffectiveJid('');
         
@@ -773,13 +298,19 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       let connectionTimeout: NodeJS.Timeout | null = null;
 
       newClient.on('online', (address: any) => {
+        // Check if this event is for the current generation
+        if (clientGenerationRef.current !== newGeneration) {
+          console.log(`XMPP ignoring stale online event from generation ${newGeneration}, current is ${clientGenerationRef.current}`);
+          return;
+        }
+        
         if (connectionTimeout) {
           clearTimeout(connectionTimeout);
           connectionTimeout = null;
         }
         
         const jidString = address.toString();
-        console.log(`XMPP online as ${jidString} (generation ${clientGenerationRef.current})`);
+        console.log(`XMPP online as ${jidString} (generation ${newGeneration})`);
         setConnectionState('connected');
         setEffectiveJid(jidString);
         setReconnectAttempts(0); // Reset reconnect counter on successful connection
@@ -802,34 +333,31 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
           )
         ).catch(console.error);
         
-        // Enable message carbons for message synchronization
-        newClient.send(
-          xml('iq', { type: 'set', id: 'enable-carbons' },
-            xml('enable', { xmlns: 'urn:xmpp:carbons:2' })
-          )
-        ).catch(console.error);
-        
-        // Flush any queued messages after successful connection
-        setTimeout(() => flushOutbox(), 100);
-        
-        // Sync offline messages
-        setTimeout(() => syncOfflineMessages(), 500);
-        
         resolve(true);
       });
 
-      // Enhanced message handling - live messages, carbons, and MAM results
+      // Message handling - accept both chat and normal message types
       newClient.on('stanza', (stanza: any) => {
-        if (stanza.is('message')) {
-          handleMessageStanza(stanza);
+        if (stanza.is('message') && (stanza.attrs.type === 'chat' || stanza.attrs.type === 'normal' || !stanza.attrs.type)) {
+          const from = stanza.attrs.from;
+          const body = stanza.getChildText('body');
+          
+          if (body) {
+            const message: XmppMessage = {
+              id: `${Date.now()}-${Math.random()}`,
+              from: from.split('/')[0], // Remove resource
+              to: stanza.attrs.to,
+              body,
+              timestamp: new Date(),
+              type: 'chat'
+            };
+            
+            addMessageToConversation(message);
+          }
         } else if (stanza.is('presence')) {
           handlePresenceUpdate(stanza);
-        } else if (stanza.is('iq')) {
-          if (stanza.attrs.id === 'roster') {
-            handleRosterUpdate(stanza);
-          } else if (stanza.attrs.id?.startsWith('mam-')) {
-            handleMamResult(stanza);
-          }
+        } else if (stanza.is('iq') && stanza.attrs.id === 'roster') {
+          handleRosterUpdate(stanza);
         }
       });
 
@@ -875,7 +403,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         }
       })();
     });
-  }, [settings.xmpp, toast, isConnecting, connectionState, reconnectTimeout, flushOutbox, syncOfflineMessages, handleMessageStanza, handleMamResult]);
+  }, [settings.xmpp, toast, isConnecting, connectionState, reconnectTimeout]);
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimeout) return; // Already scheduled
@@ -932,73 +460,67 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   }, [xmppClient, reconnectTimeout]);
 
   const sendMessage = useCallback(async (to: string, body: string): Promise<boolean> => {
-    console.log(`XMPP sendMessage to ${to} - state: ${connectionState}`);
+    const maxRetries = 2;
     
-    const normalizedTo = to.includes('@') ? to : `${to}@${settings.xmpp.domain}`;
-    
-    // If connected, try immediate send
-    if (connectionState === 'connected' && clientRef.current) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        console.log(`XMPP sendMessage attempt ${attempt}/${maxRetries}`);
+        
+        // Ensure we have a connected client
+        const client = await ensureConnectedClient();
+        
+        const normalizedTo = to.includes('@') ? to : `${to}@${settings.xmpp.domain}`;
         const message = xml(
           'message',
           { type: 'chat', to: normalizedTo },
           xml('body', {}, body)
         );
 
-        await clientRef.current.send(message);
+        await client.send(message);
         
-        // Add to local conversation on successful send
+        // Add to local conversation
         const sentMessage: XmppMessage = {
           id: `${Date.now()}-${Math.random()}`,
-          from: effectiveJid,
+          from: `${settings.xmpp.username}@${settings.xmpp.domain}`,
           to: normalizedTo,
           body,
           timestamp: new Date(),
           type: 'chat'
         };
         
-        addMessageToConversation(sentMessage);
-        console.log('XMPP message sent immediately');
+        addMessageToConversation(sentMessage, true);
+        console.log(`XMPP message sent successfully on attempt ${attempt}`);
         return true;
         
       } catch (error) {
-        console.error('XMPP immediate send failed:', error);
+        console.error(`XMPP sendMessage attempt ${attempt} failed:`, error);
         
-        // If it's a connectivity error, queue and trigger connect
-        if (error instanceof TypeError && error.message.includes("Cannot read properties of null") ||
-            (error instanceof Error && (error.message.includes('ECONNERROR') || error.message.includes('WebSocket')))) {
-          console.log('XMPP connectivity error - queueing message and triggering connect');
-          queueMessage(normalizedTo, body);
+        // Handle null reference errors specifically
+        if (error instanceof TypeError && error.message.includes("Cannot read properties of null")) {
+          console.warn(`XMPP client was null on attempt ${attempt}, clearing reference and retrying...`);
+          clientRef.current = null;
           
-          // Don't await connect() - let it happen in background
-          setConnectionState('connecting');
-          setLastError(null);
-          
-          return true; // Message queued, delivery deferred
+          if (attempt < maxRetries) {
+            // Wait a bit before retrying
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
         }
         
-        // Other errors - fail immediately
-        toast({
-          title: 'Message Send Failed',
-          description: error instanceof Error ? error.message : 'Unknown error',
-          variant: 'destructive'
-        });
-        return false;
+        // On final attempt or non-recoverable error, show toast and fail
+        if (attempt === maxRetries) {
+          toast({
+            title: 'Message Send Failed',
+            description: error instanceof Error ? error.message : 'Unknown error',
+            variant: 'destructive'
+          });
+          return false;
+        }
       }
     }
     
-    // Not connected - queue message and trigger connect
-    console.log('XMPP not connected - queueing message and triggering connect');
-    queueMessage(normalizedTo, body);
-    
-    // Trigger connect by setting connection state
-    if (connectionState === 'disconnected' || connectionState === 'error') {
-      setConnectionState('connecting');
-      setLastError(null);
-    }
-    
-    return true; // Message queued, delivery deferred
-  }, [connectionState, settings.xmpp.domain, effectiveJid, queueMessage, toast, addMessageToConversation]);
+    return false;
+  }, [ensureConnectedClient, settings.xmpp, toast]);
 
   const addContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
@@ -1046,16 +568,44 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         name: jid.split('@')[0],
         messages: [],
         unreadCount: 0,
-        lastActivity: new Date(),
-        hasHistoryLoaded: false,
-        hasMoreHistory: true,
-        isLoadingHistory: false
+        lastActivity: new Date()
       };
-      const updatedConvs = [newConv, ...prev];
-      saveConversationsToStorage(updatedConvs);
-      return updatedConvs;
+      
+      return [newConv, ...prev];
     });
-  }, [saveConversationsToStorage]);
+  }, []);
+
+  const addMessageToConversation = (message: XmppMessage, sent = false) => {
+    const contactJid = sent ? message.to : message.from;
+    
+    setConversations(prev => {
+      const existingConv = prev.find(conv => conv.jid === contactJid);
+      
+      if (existingConv) {
+        return prev.map(conv => {
+          if (conv.jid === contactJid) {
+            return {
+              ...conv,
+              messages: [...conv.messages, message],
+              lastActivity: message.timestamp,
+              unreadCount: sent ? conv.unreadCount : conv.unreadCount + 1
+            };
+          }
+          return conv;
+        });
+      } else {
+        // Create new conversation
+        const newConv: XmppConversation = {
+          jid: contactJid,
+          name: contactJid.split('@')[0], // Use local part as name initially
+          messages: [message],
+          unreadCount: sent ? 0 : 1,
+          lastActivity: message.timestamp
+        };
+        return [newConv, ...prev];
+      }
+    });
+  };
 
   const handlePresenceUpdate = (stanza: any) => {
     const from = stanza.attrs.from;
@@ -1091,24 +641,12 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     setContacts(rosterContacts);
   };
 
-  // Load conversations from storage on mount
-  useEffect(() => {
-    if (settings.xmpp.username && settings.xmpp.domain) {
-      const storedConversations = loadConversationsFromStorage();
-      if (storedConversations.length > 0) {
-        setConversations(storedConversations);
-        console.log(`XMPP loaded ${storedConversations.length} conversations from storage`);
-      }
-    }
-  }, [settings.xmpp.username, settings.xmpp.domain, loadConversationsFromStorage]);
-
   // Auto-connect if enabled
   useEffect(() => {
-    if (settings.xmpp.autoConnect && !isConnecting && connectionState === 'disconnected') {
-      console.log('XMPP auto-connecting on mount...');
+    if (settings.xmpp.autoConnect && connectionState === 'disconnected') {
       connect();
     }
-  }, [settings.xmpp.autoConnect, connect, isConnecting, connectionState]);
+  }, [settings.xmpp.autoConnect, connectionState, connect]);
 
   const runWebSocketDiagnostics = useCallback(async (): Promise<{ success: boolean; details: string; }> => {
     return new Promise((resolve) => {
@@ -1218,9 +756,6 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       removeContact,
       setPresence,
       startConversation,
-      fetchHistory,
-      loadMoreHistory,
-      syncOfflineMessages,
       runWebSocketDiagnostics,
       ping
     }}>

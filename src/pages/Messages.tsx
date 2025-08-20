@@ -1,4 +1,4 @@
-import { Send, Search, Mic, MicOff, Wifi, WifiOff, Users, UserPlus, ChevronUp, Loader2 } from 'lucide-react';
+import { Send, Search, Mic, MicOff, Wifi, WifiOff, Users, UserPlus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,9 +26,7 @@ const Messages = () => {
     connect, 
     disconnect, 
     sendMessage,
-    startConversation,
-    fetchHistory,
-    loadMoreHistory
+    startConversation 
   } = useXmpp();
   
   const {
@@ -75,15 +73,6 @@ const Messages = () => {
     setIsNewChatOpen(false);
     setNewJid('');
     setContactSearchTerm('');
-    
-    // Fetch history for new conversation
-    setTimeout(() => fetchHistory(jid), 100);
-  };
-
-  const handleLoadMoreHistory = async () => {
-    if (selectedConv) {
-      await loadMoreHistory(selectedConv.jid);
-    }
   };
 
   const handleStartChatWithJid = () => {
@@ -259,13 +248,7 @@ const Messages = () => {
               return (
                 <div
                   key={conversation.jid}
-                  onClick={() => {
-                    setSelectedConversation(conversation.jid);
-                    // Auto-fetch history when selecting a conversation
-                    if (!conversation.hasHistoryLoaded && !conversation.isLoadingHistory) {
-                      setTimeout(() => fetchHistory(conversation.jid), 100);
-                    }
-                  }}
+                  onClick={() => setSelectedConversation(conversation.jid)}
                   className={`p-4 border-b border-border cursor-pointer hover:bg-muted/50 ${
                     selectedConversation === conversation.jid ? 'bg-muted' : ''
                   }`}
@@ -315,61 +298,16 @@ const Messages = () => {
 
             {/* Messages */}
             <ScrollArea className="flex-1 p-4">
-              {selectedConv.messages.length === 0 && !selectedConv.isLoadingHistory ? (
+              {selectedConv.messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
                   <div className="text-center">
                     <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <p className="text-lg font-medium mb-2">Start a conversation</p>
                     <p className="text-sm">Send a message to begin chatting with {selectedConv.name}</p>
-                    {!selectedConv.hasHistoryLoaded && (
-                      <Button 
-                        onClick={() => fetchHistory(selectedConv.jid)} 
-                        variant="outline" 
-                        size="sm" 
-                        className="mt-4"
-                      >
-                        Load Message History
-                      </Button>
-                    )}
                   </div>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {/* Load More History Button */}
-                  {selectedConv.hasMoreHistory && selectedConv.hasHistoryLoaded && (
-                    <div className="flex justify-center">
-                      <Button
-                        onClick={handleLoadMoreHistory}
-                        variant="outline"
-                        size="sm"
-                        disabled={selectedConv.isLoadingHistory}
-                        className="mb-4"
-                      >
-                        {selectedConv.isLoadingHistory ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Loading...
-                          </>
-                        ) : (
-                          <>
-                            <ChevronUp className="h-4 w-4 mr-2" />
-                            Load Earlier Messages
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  )}
-                  
-                  {/* Loading indicator for initial history */}
-                  {selectedConv.isLoadingHistory && selectedConv.messages.length === 0 && (
-                    <div className="flex justify-center py-8">
-                      <div className="flex items-center text-muted-foreground">
-                        <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                        Loading message history...
-                      </div>
-                    </div>
-                  )}
-                  
                   {selectedConv.messages.map((message) => {
                     const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     const isSent = message.from === `${settings.xmpp.username}@${settings.xmpp.domain}`;
