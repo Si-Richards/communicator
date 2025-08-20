@@ -408,11 +408,10 @@ const Messages = () => {
                   <div className="flex-shrink-0 p-4 border-t border-border bg-background sticky bottom-0 z-10">
                     <div className="flex gap-2">
                       <Input
-                        placeholder={connectionState !== 'connected' ? "Connect to XMPP to send messages" : isListening ? "Listening..." : "Type a message..."}
+                        placeholder={connectionState !== 'connected' ? "You're offline — message will send when connected" : isListening ? "Listening..." : "Type a message..."}
                         value={newMessage + (interimTranscript ? ` ${interimTranscript}` : '')}
                         onChange={(e) => setNewMessage(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                        disabled={connectionState !== 'connected'}
                         className="flex-1"
                       />
                       {isSupported && settings.dictation.enabled && connectionState === 'connected' && (
@@ -427,7 +426,7 @@ const Messages = () => {
                       )}
                       <Button 
                         onClick={handleSendMessage} 
-                        disabled={!newMessage.trim() || connectionState !== 'connected'}
+                        disabled={!newMessage.trim()}
                       >
                         <Send className="h-4 w-4" />
                       </Button>

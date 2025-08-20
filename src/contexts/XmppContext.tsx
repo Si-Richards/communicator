@@ -128,45 +128,19 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
 
         await clientRef.current.send(stanza);
         
-        // Add to local conversation on successful send
-        const sentMessage: XmppMessage = {
-          id: `${Date.now()}-${Math.random()}`,
-          from: effectiveJid,
-          to: normalizedTo,
-          body: msg.body,
-          timestamp: new Date(),
-          type: 'chat',
-          status: 'sent' as MessageStatus,
-          originId
-        };
-        // Add to conversation via state update
-        setConversations(prev => {
-          const contactJid = normalizedTo;
-          const existingConv = prev.find(conv => conv.jid === contactJid);
-          
-          if (existingConv) {
-            return prev.map(conv => {
-              if (conv.jid === contactJid) {
-                return {
-                  ...conv,
-                  messages: [...conv.messages, sentMessage],
-                  lastActivity: sentMessage.timestamp,
-                  unreadCount: conv.unreadCount
-                };
-              }
-              return conv;
-            });
-          } else {
-            const newConv: XmppConversation = {
-              jid: contactJid,
-              name: contactJid.split('@')[0],
-              messages: [sentMessage],
-              unreadCount: 0,
-              lastActivity: sentMessage.timestamp
-            };
-            return [newConv, ...prev];
-          }
-        });
+        // Update existing pending message from 'sending' to 'sent'
+        setConversations(prev => prev.map(conv => ({
+          ...conv,
+          messages: conv.messages.map(message => 
+            message.originId === msg.id ? 
+              {
+                ...message,
+                status: 'sent' as MessageStatus,
+                originId,
+                timestamp: new Date()
+              } : message
+          )
+        })));
 
         // Remove from queue after successful send
         outboxRef.current = outboxRef.current.filter(m => m.id !== msg.id);
@@ -625,11 +599,25 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       } catch (error) {
         console.error('XMPP immediate send failed:', error);
         
-        // If it's a connectivity error, queue and trigger connect
+        // If it's a connectivity error, queue and add pending message to UI
         if (error instanceof TypeError && error.message.includes("Cannot read properties of null") ||
             (error instanceof Error && (error.message.includes('ECONNERROR') || error.message.includes('WebSocket')))) {
           console.log('XMPP connectivity error - queueing message and triggering connect');
-          queueMessage(normalizedTo, body);
+          const queuedId = queueMessage(normalizedTo, body);
+          
+          // Add pending message to UI immediately
+          const pendingMessage: XmppMessage = {
+            id: `${Date.now()}-${Math.random()}`,
+            from: effectiveJid || `${settings.xmpp.username}@${settings.xmpp.domain}`,
+            to: normalizedTo,
+            body,
+            timestamp: new Date(),
+            type: 'chat',
+            status: 'sending' as MessageStatus,
+            originId: queuedId
+          };
+          
+          addMessageToConversation(pendingMessage, true);
           
           // Don't await connect() - let it happen in background
           setConnectionState('connecting');
@@ -648,9 +636,23 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       }
     }
     
-    // Not connected - queue message and trigger connect
+    // Not connected - queue message and add pending message to UI
     console.log('XMPP not connected - queueing message and triggering connect');
-    queueMessage(normalizedTo, body);
+    const queuedId = queueMessage(normalizedTo, body);
+    
+    // Add pending message to UI immediately
+    const pendingMessage: XmppMessage = {
+      id: `${Date.now()}-${Math.random()}`,
+      from: effectiveJid || `${settings.xmpp.username}@${settings.xmpp.domain}`,
+      to: normalizedTo,
+      body,
+      timestamp: new Date(),
+      type: 'chat',
+      status: 'sending' as MessageStatus,
+      originId: queuedId
+    };
+    
+    addMessageToConversation(pendingMessage, true);
     
     // Trigger connect by setting connection state
     if (connectionState === 'disconnected' || connectionState === 'error') {
@@ -659,7 +661,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     }
     
     return true; // Message queued, delivery deferred
-  }, [connectionState, settings.xmpp.domain, effectiveJid, queueMessage, toast]);
+  }, [connectionState, settings.xmpp.domain, effectiveJid, queueMessage, toast, settings.xmpp.username]);
 
   const addContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
