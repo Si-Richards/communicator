@@ -15,6 +15,7 @@ import Contacts from "./pages/Contacts";
 import History from "./pages/History";
 import Voicemail from "./pages/Voicemail";
 import Messages from "./pages/Messages";
+import Rooms from "./pages/Rooms";
 import SMS from "./pages/SMS";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
@@ -40,6 +41,7 @@ const App = () => (
                         <Route path="/history" element={<History />} />
                         <Route path="/voicemail" element={<Voicemail />} />
                         <Route path="/messages" element={<Messages />} />
+                        <Route path="/rooms" element={<Rooms />} />
                         <Route path="/sms" element={<SMS />} />
                         <Route path="/settings" element={<SettingsPage />} />
                         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
