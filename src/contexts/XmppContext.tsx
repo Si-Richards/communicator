@@ -141,6 +141,13 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
               } : message
           )
         })));
+        
+        // Add a small retry mechanism for robustness
+        setTimeout(() => {
+          if (outboxRef.current.length > 0) {
+            flushOutbox();
+          }
+        }, 500);
 
         // Remove from queue after successful send
         outboxRef.current = outboxRef.current.filter(m => m.id !== msg.id);
@@ -564,6 +571,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     console.log(`XMPP sendMessage to ${to} - state: ${connectionState}`);
     
     const normalizedTo = to.includes('@') ? to : `${to}@${settings.xmpp.domain}`;
+    const myBareJid = `${settings.xmpp.username}@${settings.xmpp.domain}`;
     
     // If connected, try immediate send
     if (connectionState === 'connected' && clientRef.current) {
@@ -583,7 +591,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         // Add to local conversation on successful send
         const sentMessage: XmppMessage = {
           id: `${Date.now()}-${Math.random()}`,
-          from: effectiveJid,
+          from: myBareJid,
           to: normalizedTo,
           body,
           timestamp: new Date(),
@@ -608,7 +616,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
           // Add pending message to UI immediately
           const pendingMessage: XmppMessage = {
             id: `${Date.now()}-${Math.random()}`,
-            from: effectiveJid || `${settings.xmpp.username}@${settings.xmpp.domain}`,
+            from: myBareJid,
             to: normalizedTo,
             body,
             timestamp: new Date(),
@@ -643,7 +651,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     // Add pending message to UI immediately
     const pendingMessage: XmppMessage = {
       id: `${Date.now()}-${Math.random()}`,
-      from: effectiveJid || `${settings.xmpp.username}@${settings.xmpp.domain}`,
+      from: myBareJid,
       to: normalizedTo,
       body,
       timestamp: new Date(),
@@ -725,12 +733,36 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       if (existingConv) {
         return prev.map(conv => {
           if (conv.jid === contactJid) {
-            return {
-              ...conv,
-              messages: [...conv.messages, message],
-              lastActivity: message.timestamp,
-              unreadCount: sent ? conv.unreadCount : conv.unreadCount + 1
-            };
+            // Check for existing message with same originId to prevent duplicates
+            const existingMessageIndex = conv.messages.findIndex(m => 
+              m.originId === message.originId || m.stanzaId === message.stanzaId
+            );
+            
+            if (existingMessageIndex >= 0) {
+              // Update existing message (e.g., status change from 'sending' to 'sent')
+              const updatedMessages = [...conv.messages];
+              updatedMessages[existingMessageIndex] = {
+                ...updatedMessages[existingMessageIndex],
+                ...message,
+                // Keep original ID and timestamp for UI consistency unless it's a status update
+                id: message.status ? updatedMessages[existingMessageIndex].id : message.id,
+                timestamp: message.status ? updatedMessages[existingMessageIndex].timestamp : message.timestamp
+              };
+              
+              return {
+                ...conv,
+                messages: updatedMessages,
+                lastActivity: message.timestamp
+              };
+            } else {
+              // Add new message
+              return {
+                ...conv,
+                messages: [...conv.messages, message],
+                lastActivity: message.timestamp,
+                unreadCount: sent ? conv.unreadCount : conv.unreadCount + 1
+              };
+            }
           }
           return conv;
         });
@@ -784,6 +816,65 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
 
   // Enhanced message stanza handler
   const handleMessageStanza = useCallback((stanza: any) => {
+    const myBareJid = `${settings.xmpp.username}@${settings.xmpp.domain}`;
+    
+    // Handle MAM result stanzas first
+    const mamResult = stanza.getChild('result', 'urn:xmpp:mam:2');
+    if (mamResult) {
+      const forwarded = mamResult.getChild('forwarded', 'urn:xmpp:forward:0');
+      const innerMessage = forwarded?.getChild('message');
+      
+      if (innerMessage && innerMessage.getChildText('body')) {
+        const delayElement = forwarded.getChild('delay', 'urn:xmpp:delay');
+        const timestamp = delayElement ? new Date(delayElement.attrs.stamp) : new Date();
+        const originId = innerMessage.getChild('origin-id', 'urn:xmpp:sid:0')?.attrs?.id || innerMessage.attrs.id;
+        const bareFrom = (innerMessage.attrs.from || '').split('/')[0];
+        const isOutgoing = bareFrom === myBareJid;
+        
+        const message: XmppMessage = {
+          id: `${Date.now()}-${Math.random()}`,
+          from: bareFrom,
+          to: innerMessage.attrs.to,
+          body: innerMessage.getChildText('body'),
+          timestamp,
+          type: 'chat',
+          originId,
+          isFromArchive: true
+        };
+        
+        addMessageToConversation(message, isOutgoing);
+      }
+      return;
+    }
+    
+    // Handle Carbons (message copies) before regular messages
+    const sentCarbon = stanza.getChild('sent', 'urn:xmpp:carbons:2');
+    const receivedCarbon = stanza.getChild('received', 'urn:xmpp:carbons:2');
+    
+    if (sentCarbon || receivedCarbon) {
+      const forwarded = (sentCarbon || receivedCarbon)?.getChild('forwarded', 'urn:xmpp:forward:0');
+      const carbonMessage = forwarded?.getChild('message');
+      
+      if (carbonMessage && carbonMessage.getChildText('body')) {
+        const bareFrom = (carbonMessage.attrs.from || '').split('/')[0];
+        const isOutgoing = !!sentCarbon || bareFrom === myBareJid;
+        const originId = carbonMessage.getChild('origin-id', 'urn:xmpp:sid:0')?.attrs?.id || carbonMessage.attrs.id;
+        
+        const message: XmppMessage = {
+          id: `${Date.now()}-${Math.random()}`,
+          from: bareFrom,
+          to: carbonMessage.attrs.to,
+          body: carbonMessage.getChildText('body'),
+          timestamp: new Date(),
+          type: 'chat',
+          originId
+        };
+        
+        addMessageToConversation(message, isOutgoing);
+      }
+      return;
+    }
+    
     const from = stanza.attrs.from;
     const body = stanza.getChildText('body');
     const type = stanza.attrs.type || 'chat';
@@ -793,24 +884,28 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       const delayElement = stanza.getChild('delay', 'urn:xmpp:delay');
       const timestamp = delayElement ? new Date(delayElement.attrs.stamp) : new Date();
       const stanzaId = stanza.getChild('stanza-id', 'urn:xmpp:sid:0')?.attrs?.id;
+      const originId = stanza.getChild('origin-id', 'urn:xmpp:sid:0')?.attrs?.id || stanza.attrs.id;
       const isFromArchive = !!delayElement;
+      const bareFrom = from.split('/')[0];
+      const isOutgoing = bareFrom === myBareJid;
       
       const message: XmppMessage = {
         id: `${Date.now()}-${Math.random()}`,
-        from: from.split('/')[0], // Remove resource
+        from: bareFrom,
         to: stanza.attrs.to,
         body,
         timestamp,
         type: 'chat',
         stanzaId,
+        originId,
         isFromArchive
       };
       
-      addMessageToConversation(message);
+      addMessageToConversation(message, isOutgoing);
       
-      // Send receipt if requested
+      // Send receipt if requested (not for archived messages or our own messages)
       const receiptRequest = stanza.getChild('request', 'urn:xmpp:receipts');
-      if (receiptRequest && !isFromArchive && clientRef.current) {
+      if (receiptRequest && !isFromArchive && !isOutgoing && clientRef.current) {
         const receipt = xmlRef.current!(
           'message',
           { to: from },
@@ -833,20 +928,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       const messageId = displayed.attrs.id;
       updateMessageStatus(messageId, 'read');
     }
-    
-    // Handle Carbons (message copies)
-    const sent = stanza.getChild('sent', 'urn:xmpp:carbons:2');
-    const received_carbon = stanza.getChild('received', 'urn:xmpp:carbons:2');
-    
-    if (sent || received_carbon) {
-      const forwarded = (sent || received_carbon)?.getChild('forwarded', 'urn:xmpp:forward:0');
-      const carbonMessage = forwarded?.getChild('message');
-      
-      if (carbonMessage) {
-        handleMessageStanza(carbonMessage);
-      }
-    }
-  }, []);
+  }, [settings.xmpp.username, settings.xmpp.domain]);
 
   // Enhanced IQ stanza handler
   const handleIQStanza = useCallback((stanza: any) => {

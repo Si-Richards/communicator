@@ -370,7 +370,8 @@ const Messages = () => {
                             
                             {selectedConv.messages.map((message) => {
                               const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                              const isSent = message.from === `${settings.xmpp.username}@${settings.xmpp.domain}`;
+                              const myBareJid = `${settings.xmpp.username}@${settings.xmpp.domain}`;
+                              const isSent = message.from.split('/')[0] === myBareJid;
                               
                               return (
                                 <div
