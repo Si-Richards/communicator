@@ -142,10 +142,10 @@ const Messages = () => {
   };
 
   return (
-    <div className="h-screen flex overflow-hidden">
+    <div className="h-full min-h-screen flex overflow-hidden">
       {/* Conversations List */}
-      <div className="w-1/3 border-r border-border flex flex-col">
-        <div className="p-4 border-b border-border">
+      <div className="w-1/3 border-r border-border flex flex-col min-h-0">
+        <div className="p-4 border-b border-border flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold">Messages</h1>
             <div className="flex items-center gap-2">
@@ -253,7 +253,7 @@ const Messages = () => {
           </div>
         </div>
         
-        <ScrollArea className="h-[calc(100vh-8rem)]">
+        <ScrollArea className="flex-1 min-h-0">
           {connectionState !== 'connected' ? (
             <div className="p-8 text-center text-muted-foreground">
               <WifiOff className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -314,7 +314,7 @@ const Messages = () => {
       </div>
 
             {/* Message View */}
-            <div className="flex-1 flex flex-col h-full">
+            <div className="flex-1 flex flex-col min-h-0">
               {selectedConv ? (
                 <>
                   {/* Header */}
@@ -331,9 +331,9 @@ const Messages = () => {
                   </div>
 
                   {/* Messages - Scrollable Area */}
-                  <div className="flex-1 overflow-hidden">
+                  <div className="flex-1 min-h-0 overflow-hidden">
                     <ScrollArea className="h-full">
-                      <div className="p-4">
+                      <div className="p-4 pb-6">
                         {selectedConv.messages.length === 0 ? (
                           <div className="flex items-center justify-center h-full text-muted-foreground min-h-[400px]">
                             <div className="text-center">
@@ -404,8 +404,8 @@ const Messages = () => {
                     </ScrollArea>
                   </div>
 
-                  {/* Message Input - Fixed at Bottom */}
-                  <div className="flex-shrink-0 p-4 border-t border-border bg-background">
+                  {/* Message Input - Sticky at Bottom */}
+                  <div className="flex-shrink-0 p-4 border-t border-border bg-background sticky bottom-0 z-10">
                     <div className="flex gap-2">
                       <Input
                         placeholder={connectionState !== 'connected' ? "Connect to XMPP to send messages" : isListening ? "Listening..." : "Type a message..."}
