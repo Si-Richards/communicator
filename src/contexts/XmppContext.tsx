@@ -10,13 +10,11 @@ import { client, xml, jid as xmppJid } from "@xmpp/client";
 import debug from "@xmpp/debug";
 import { useSettings } from "./SettingsContext";
 
-// If you already have MessageStatus in '@/types/xmpp', you can import it.
-// Keeping an internal version here to avoid coupling.
-type MessageStatus = "sending" | "sent" | "delivered" | "read" | "error";
+/* ---------- Shared types ---------- */
+export type MessageStatus = "sending" | "sent" | "delivered" | "read" | "error";
 
-/** ---------- Shapes expected by DirectChatView ---------- */
 export type ChatMessage = {
-  id: string;            // stanza id (we control this for receipts/markers)
+  id: string;            // stanza id (used for receipts/markers)
   from: string;          // full JID or bare
   to: string;            // JID
   body: string;
@@ -41,9 +39,38 @@ export type Contact = {
   presence: "available" | "away" | "dnd" | "unavailable";
 };
 
+/* ---------- MUC types ---------- */
+export type RoomRole = "moderator" | "participant" | "visitor" | "none" | undefined;
+export type RoomAffiliation = "owner" | "admin" | "member" | "outcast" | "none" | undefined;
+
+export type RoomOccupant = {
+  nick: string;
+  jid?: string;                 // may be omitted depending on room config
+  role?: RoomRole;
+  affiliation?: RoomAffiliation;
+};
+
+export type RoomMessage = ChatMessage; // same shape works for room messages
+
+export type MucRoom = {
+  jid: string;                  // room@conference.example.com
+  name: string;                 // friendly name (default = localpart)
+  nick: string;                 // our nickname in the room (when joined)
+  joined: boolean;
+  isOwner?: boolean;            // convenience flag (derived from our occupant)
+  isMuted?: boolean;            // local UI mute
+  occupants: RoomOccupant[];
+  messages: RoomMessage[];
+  unreadCount: number;
+  lastActivity: Date;
+  hasMoreHistory?: boolean;     // for MAM paging
+  mamBefore?: string | null;    // RSM cursor
+};
+
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
 type Ctx = {
+  // direct
   connectionState: ConnectionState;
   conversations: Conversation[];
   contacts: Contact[];
@@ -52,8 +79,23 @@ type Ctx = {
   sendMessage: (toBareJid: string, body: string) => Promise<boolean>;
   startConversation: (bareJid: string) => void;
   loadConversationHistory: (bareJid: string) => Promise<void>;
-  markMessageRead: (messageId: string, to: string) => void;       // kept to match your existing signature
+  markMessageRead: (messageId: string, to: string) => void;
   markConversationRead: (bareJid: string) => void;
+
+  // muc
+  rooms: MucRoom[];
+  createRoom: (roomName: string, nick: string, password?: string) => Promise<boolean>;
+  joinRoom: (roomJid: string, nick: string, password?: string) => Promise<boolean>;
+  leaveRoom: (roomJid: string) => void;
+  destroyRoom: (roomJid: string, reason?: string) => Promise<boolean>;
+  sendRoomMessage: (roomJid: string, body: string) => Promise<boolean>;
+  inviteToRoom: (roomJid: string, userJid: string, reason?: string) => void;
+  kickFromRoom: (roomJid: string, nick: string, reason?: string) => void;
+  banFromRoom: (roomJid: string, jid: string, reason?: string) => void;
+  setRoomAffiliation: (roomJid: string, jid: string, affiliation: RoomAffiliation) => void;
+  muteRoom: (roomJid: string, muted: boolean) => void;
+  loadRoomHistory: (roomJid: string) => Promise<void>;
+  markRoomRead: (roomJid: string) => void;
 };
 
 const XmppContext = createContext<Ctx | null>(null);
@@ -73,8 +115,9 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [rooms, setRooms] = useState<MucRoom[]>([]);
 
-  /** ---------- helpers ---------- */
+  /* ---------- helpers ---------- */
 
   const bumpGen = () => { genRef.current += 1; return genRef.current; };
 
@@ -107,7 +150,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const idx = prev.findIndex(c => c.jid === bareJid);
       if (idx === -1) return prev;
       const conv = prev[idx];
-      if (conv.messages.some(m => m.id === msg.id)) return prev; // dedupe by id
+      if (conv.messages.some(m => m.id === msg.id)) return prev; // dedupe
 
       const updated: Conversation = {
         ...conv,
@@ -140,7 +183,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
-  /** ---------- roster/presence ---------- */
+  /* ---------- roster/presence ---------- */
 
   const fetchRoster = useCallback(async () => {
     if (!xmppRef.current) return;
@@ -160,7 +203,50 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const handlePresence = useCallback((stanza: any) => {
-    const fromBare = xmppJid(stanza.attrs.from).bare().toString();
+    const from = stanza.attrs.from || "";
+    const fromBare = xmppJid(from).bare().toString();
+
+    // MUC presence: from = roomJid/nick and contains <x xmlns='http://jabber.org/protocol/muc#user'>
+    const mucUser = stanza.getChild("x", "http://jabber.org/protocol/muc#user");
+    if (mucUser && from.includes("/")) {
+      const roomJid = fromBare;
+      const nick = from.split("/")[1];
+
+      // occupant item has role/affiliation and possibly real JID
+      const item = mucUser.getChild("item");
+      const role: RoomRole = (item?.attrs?.role as RoomRole) || undefined;
+      const affiliation: RoomAffiliation = (item?.attrs?.affiliation as RoomAffiliation) || undefined;
+      const jid = item?.attrs?.jid as string | undefined;
+      const type = stanza.attrs.type; // 'unavailable' means leaving
+
+      setRooms(prev => {
+        const idx = prev.findIndex(r => r.jid === roomJid);
+        if (idx === -1) return prev;
+        const room = prev[idx];
+
+        let occupants = [...room.occupants];
+        const oi = occupants.findIndex(o => o.nick === nick);
+
+        if (type === "unavailable") {
+          if (oi !== -1) occupants.splice(oi, 1);
+        } else {
+          const occ: RoomOccupant = { nick, jid, role, affiliation };
+          if (oi === -1) occupants.push(occ);
+          else occupants[oi] = { ...occupants[oi], ...occ };
+        }
+
+        // Derive isOwner flag based on our own nick
+        const self = occupants.find(o => o.nick === room.nick);
+        const isOwner = self?.affiliation === "owner";
+
+        const copy = prev.slice();
+        copy[idx] = { ...room, occupants, isOwner };
+        return copy;
+      });
+      return;
+    }
+
+    // regular (non-MUC) presence
     ensureContact(fromBare);
     const type = stanza.attrs.type || "available";
     const show = stanza.getChildText("show");
@@ -173,34 +259,21 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setContacts(prev => prev.map(c => c.jid === fromBare ? { ...c, presence } : c));
   }, [ensureContact]);
 
-  /** ---------- messages/receipts/markers ---------- */
+  /* ---------- message routing ---------- */
 
-  const handleIncomingMessage = useCallback((stanza: any) => {
+  const handleIncomingDirectMessage = useCallback((stanza: any) => {
     const body = stanza.getChildText("body");
     const fromBare = xmppJid(stanza.attrs.from).bare().toString();
     const toBare = xmppJid(stanza.attrs.to).bare().toString();
     const stanzaId = stanza.attrs.id || crypto.randomUUID();
 
-    // Delay (MAM/offline)
     const delay = stanza.getChild("delay", "urn:xmpp:delay");
     const when = delay?.attrs?.stamp ? new Date(delay.attrs.stamp) : new Date();
 
-    // Receipts & markers namespaces
     const receiptsNS = "urn:xmpp:receipts";
     const markersNS = "urn:xmpp:chat-markers:0";
 
-    // if peer requested a receipt, send it
-    const request = stanza.getChild("request", receiptsNS);
-    if (request && body) {
-      const received = xml(
-        "message",
-        { to: stanza.attrs.from, type: "chat", id: crypto.randomUUID() },
-        xml("received", receiptsNS, { id: stanzaId })
-      );
-      xmppRef.current?.send(received).catch(console.error);
-    }
-
-    // If we got a <received/> or <displayed/>, advance our outgoing status
+    // receipts/markers updates
     const receivedEl = stanza.getChild("received", receiptsNS);
     const displayedEl = stanza.getChild("displayed", markersNS);
     if (receivedEl?.attrs?.id) {
@@ -212,7 +285,18 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateOutgoingStatus(peer, displayedEl.attrs.id, "read");
     }
 
-    if (!body) return; // nothing to display
+    // send receipt if requested
+    const request = stanza.getChild("request", receiptsNS);
+    if (request && body) {
+      const received = xml(
+        "message",
+        { to: stanza.attrs.from, type: "chat", id: crypto.randomUUID() },
+        xml("received", receiptsNS, { id: stanzaId })
+      );
+      xmppRef.current?.send(received).catch(console.error);
+    }
+
+    if (!body) return;
 
     ensureConversation(fromBare, { name: fromBare.split("@")[0] });
     ensureContact(fromBare);
@@ -226,7 +310,79 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, /*incoming*/ true);
   }, [appendMessage, ensureContact, ensureConversation, updateOutgoingStatus]);
 
-  /** ---------- connect/disconnect ---------- */
+  const handleIncomingRoomMessage = useCallback((stanza: any) => {
+    const body = stanza.getChildText("body");
+    if (!body) return;
+
+    const type = stanza.attrs.type; // 'groupchat'
+    if (type !== "groupchat") return;
+
+    const from = stanza.attrs.from || ""; // roomJid/nick
+    const roomJid = xmppJid(from).bare().toString();
+    const senderNick = from.split("/")[1] || "";
+    const stanzaId = stanza.attrs.id || crypto.randomUUID();
+
+    const delay = stanza.getChild("delay", "urn:xmpp:delay");
+    const when = delay?.attrs?.stamp ? new Date(delay.attrs.stamp) : new Date();
+
+    // Ensure room exists
+    setRooms(prev => {
+      const idx = prev.findIndex(r => r.jid === roomJid);
+      if (idx === -1) {
+        const room: MucRoom = {
+          jid: roomJid,
+          name: roomJid.split("@")[0],
+          nick: "", // unknown until we join
+          joined: false,
+          isOwner: false,
+          isMuted: false,
+          occupants: [],
+          messages: [],
+          unreadCount: 0,
+          lastActivity: new Date(0),
+          hasMoreHistory: true,
+          mamBefore: null,
+        };
+        return [room, ...prev];
+      }
+      return prev;
+    });
+
+    // Append message
+    setRooms(prev => {
+      const idx = prev.findIndex(r => r.jid === roomJid);
+      if (idx === -1) return prev;
+      const room = prev[idx];
+
+      // Dedup
+      if (room.messages.some(m => m.id === stanzaId)) return prev;
+
+      const isOwn = senderNick && room.nick && senderNick === room.nick;
+      const msg: RoomMessage = {
+        id: stanzaId,
+        from,
+        to: roomJid,
+        body,
+        timestamp: when,
+        // status only used for our local echo; incoming msgs don't need it
+        isFromArchive: Boolean(delay),
+      };
+
+      const newMessages = [...room.messages, msg].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      const unreadDelta = (!isOwn && !msg.isFromArchive) ? 1 : 0;
+
+      const copy = prev.slice();
+      copy[idx] = {
+        ...room,
+        messages: newMessages,
+        lastActivity: msg.timestamp > room.lastActivity ? msg.timestamp : room.lastActivity,
+        unreadCount: room.unreadCount + unreadDelta,
+      };
+      return copy;
+    });
+  }, []);
+
+  /* ---------- connect/disconnect ---------- */
 
   const connect = useCallback(async (): Promise<boolean> => {
     const ws = settings?.xmpp?.websocketUrl;
@@ -241,7 +397,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return false;
     }
 
-    // stop previous
     if (xmppRef.current) {
       try { await xmppRef.current.stop(); } catch {}
       xmppRef.current = null;
@@ -268,7 +423,11 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     xmpp.on("stanza", (stanza: any) => {
       if (genRef.current !== myGen) return;
-      if (stanza.is("message")) return handleIncomingMessage(stanza);
+      if (stanza.is("message")) {
+        const t = stanza.attrs.type;
+        if (t === "groupchat") return handleIncomingRoomMessage(stanza);
+        return handleIncomingDirectMessage(stanza);
+      }
       if (stanza.is("presence")) return handlePresence(stanza);
     });
 
@@ -291,7 +450,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setConnectionState("error");
       return false;
     }
-  }, [fetchRoster, handleIncomingMessage, handlePresence, settings?.xmpp]);
+  }, [fetchRoster, handleIncomingDirectMessage, handleIncomingRoomMessage, handlePresence, settings?.xmpp]);
 
   const disconnect = useCallback(async () => {
     if (xmppRef.current) {
@@ -299,10 +458,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       xmppRef.current = null;
     }
     setConnectionState("disconnected");
-    // keep conversations/contacts for offline view
+    // Keep conversations/rooms/contacts locally for offline UI
   }, []);
 
-  /** ---------- send / read ---------- */
+  /* ---------- direct send / read / history ---------- */
 
   const sendMessage = useCallback(async (toBareJid: string, text: string) => {
     const xmpp = xmppRef.current;
@@ -342,7 +501,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [appendMessage, ensureContact, ensureConversation, updateOutgoingStatus]);
 
-  // Signature kept to match your existing usage elsewhere:
   const markMessageRead = useCallback((messageId: string, to: string) => {
     const xmpp = xmppRef.current;
     if (!xmpp) return;
@@ -365,7 +523,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (idx === -1) return prev;
       const conv = prev[idx];
 
-      // last incoming message from peer
       const lastIncoming = [...conv.messages]
         .reverse()
         .find(m => xmppJid(m.from).bare().toString() === peer && m.id);
@@ -384,8 +541,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return copy;
     });
   }, []);
-
-  /** ---------- MAM history with RSM <before/> paging ---------- */
 
   const loadConversationHistory = useCallback(async (bareJid: string) => {
     const xmpp = xmppRef.current;
@@ -414,8 +569,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const res: any = await xmpp.iqCaller.request(iq);
-
-      // Extract results
       const results = res.getChildren("result", "urn:xmpp:mam:2");
       const msgs: ChatMessage[] = [];
       for (const r of results) {
@@ -437,7 +590,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
-      // RSM fin
       const fin = res.getChild("fin", "urn:xmpp:mam:2");
       const rsm = fin?.getChild("set", "http://jabber.org/protocol/rsm");
       const first = rsm?.getChildText("first") || null;
@@ -447,8 +599,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const idx = prev.findIndex(c => c.jid === bareJid);
         if (idx === -1) return prev;
         const conv = prev[idx];
-
-        // Merge dedup + sort ASC
         const dedup = new Map(conv.messages.map(m => [m.id, m]));
         for (const m of msgs) dedup.set(m.id, m);
         const merged = Array.from(dedup.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -457,14 +607,13 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         copy[idx] = {
           ...conv,
           messages: merged,
-          mamBefore: first,            // next <before/> anchor
-          hasMoreHistory: !complete,   // button visibility
+          mamBefore: first,
+          hasMoreHistory: !complete,
         };
         return copy;
       });
     } catch (e) {
       console.error("MAM query failed", e);
-      // Prevent infinite "Load earlier" on repeated failures
       setConversations(prev => {
         const idx = prev.findIndex(c => c.jid === bareJid);
         if (idx === -1) return prev;
@@ -476,9 +625,320 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [conversations, ensureConversation]);
 
-  /** ---------- public value ---------- */
+  /* ---------- MUC API ---------- */
+
+  const ensureRoom = useCallback((roomJid: string, init?: Partial<MucRoom>) => {
+    setRooms(prev => {
+      const idx = prev.findIndex(r => r.jid === roomJid);
+      if (idx === -1) {
+        const room: MucRoom = {
+          jid: roomJid,
+          name: roomJid.split("@")[0],
+          nick: init?.nick || "",
+          joined: init?.joined ?? false,
+          isOwner: init?.isOwner ?? false,
+          isMuted: init?.isMuted ?? false,
+          occupants: init?.occupants ?? [],
+          messages: init?.messages ?? [],
+          unreadCount: 0,
+          lastActivity: new Date(0),
+          hasMoreHistory: true,
+          mamBefore: null,
+        };
+        return [room, ...prev];
+      } else {
+        const copy = prev.slice();
+        copy[idx] = { ...prev[idx], ...init };
+        return copy;
+      }
+    });
+  }, []);
+
+  const createRoom = useCallback(async (roomName: string, nick: string, password?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return false;
+    const confHost = `conference.${settings.xmpp.domain}`;
+    const roomJid = `${roomName}@${confHost}`;
+
+    // join to create
+    const mucX = xml("x", "http://jabber.org/protocol/muc");
+    if (password) mucX.append(xml("password", {}, password));
+
+    const presence = xml("presence", { to: `${roomJid}/${nick}` }, mucX);
+
+    try {
+      ensureRoom(roomJid, { nick, joined: true });
+      await xmpp.send(presence);
+      return true;
+    } catch (e) {
+      console.error("createRoom failed", e);
+      return false;
+    }
+  }, [ensureRoom, settings?.xmpp?.domain]);
+
+  const joinRoom = useCallback(async (roomJid: string, nick: string, password?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return false;
+
+    const mucX = xml("x", "http://jabber.org/protocol/muc");
+    if (password) mucX.append(xml("password", {}, password));
+    const presence = xml("presence", { to: `${roomJid}/${nick}` }, mucX);
+
+    try {
+      ensureRoom(roomJid, { nick, joined: true });
+      await xmpp.send(presence);
+      return true;
+    } catch (e) {
+      console.error("joinRoom failed", e);
+      return false;
+    }
+  }, [ensureRoom]);
+
+  const leaveRoom = useCallback((roomJid: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return;
+
+    const room = rooms.find(r => r.jid === roomJid);
+    if (!room || !room.nick) return;
+
+    const presence = xml("presence", { to: `${roomJid}/${room.nick}`, type: "unavailable" });
+    xmpp.send(presence).catch(console.error);
+
+    setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, joined: false } : r));
+  }, [rooms]);
+
+  const destroyRoom = useCallback(async (roomJid: string, reason?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return false;
+
+    try {
+      const destroy = xml("destroy", { jid: roomJid });
+      if (reason) destroy.append(xml("reason", {}, reason));
+      const iq = xml("iq", { type: "set", to: roomJid, id: `destroy_${crypto.randomUUID()}` },
+        xml("query", "http://jabber.org/protocol/muc#owner", destroy)
+      );
+      await xmpp.send(iq);
+      setRooms(prev => prev.filter(r => r.jid !== roomJid));
+      return true;
+    } catch (e) {
+      console.error("destroyRoom failed", e);
+      return false;
+    }
+  }, []);
+
+  const sendRoomMessage = useCallback(async (roomJid: string, body: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return false;
+
+    const room = rooms.find(r => r.jid === roomJid);
+    if (!room || !room.joined) return false;
+
+    const id = crypto.randomUUID();
+    const message = xml(
+      "message",
+      { type: "groupchat", to: roomJid, id },
+      xml("body", {}, body),
+    );
+
+    // local echo
+    setRooms(prev => {
+      const idx = prev.findIndex(r => r.jid === roomJid);
+      if (idx === -1) return prev;
+      const room = prev[idx];
+      const msg: RoomMessage = {
+        id,
+        from: `${roomJid}/${room.nick}`,
+        to: roomJid,
+        body,
+        timestamp: new Date(),
+        status: "sending",
+      };
+      const copy = prev.slice();
+      copy[idx] = {
+        ...room,
+        messages: [...room.messages, msg],
+        lastActivity: msg.timestamp,
+      };
+      return copy;
+    });
+
+    try {
+      await xmpp.send(message);
+      // mark as sent
+      setRooms(prev => {
+        const idx = prev.findIndex(r => r.jid === roomJid);
+        if (idx === -1) return prev;
+        const room = prev[idx];
+        const messages = room.messages.map(m => m.id === id ? { ...m, status: "sent" as MessageStatus } : m);
+        const copy = prev.slice();
+        copy[idx] = { ...room, messages };
+        return copy;
+      });
+      return true;
+    } catch (e) {
+      console.error("sendRoomMessage failed", e);
+      setRooms(prev => {
+        const idx = prev.findIndex(r => r.jid === roomJid);
+        if (idx === -1) return prev;
+        const room = prev[idx];
+        const messages = room.messages.map(m => m.id === id ? { ...m, status: "error" as MessageStatus } : m);
+        const copy = prev.slice();
+        copy[idx] = { ...room, messages };
+        return copy;
+      });
+      return false;
+    }
+  }, [rooms]);
+
+  const inviteToRoom = useCallback((roomJid: string, userJid: string, reason?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return;
+
+    const invite = xml("invite", { to: userJid });
+    if (reason) invite.append(xml("reason", {}, reason));
+
+    const msg = xml("message", { to: roomJid },
+      xml("x", "http://jabber.org/protocol/muc#user", invite)
+    );
+    xmpp.send(msg).catch(console.error);
+  }, []);
+
+  const kickFromRoom = useCallback((roomJid: string, nick: string, reason?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return;
+
+    const item = xml("item", { nick, role: "none" });
+    if (reason) item.append(xml("reason", {}, reason));
+
+    const iq = xml("iq", { type: "set", to: roomJid, id: `kick_${crypto.randomUUID()}` },
+      xml("query", "http://jabber.org/protocol/muc#admin", item)
+    );
+    xmpp.send(iq).catch(console.error);
+  }, []);
+
+  const banFromRoom = useCallback((roomJid: string, jid: string, reason?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return;
+
+    const item = xml("item", { jid, affiliation: "outcast" });
+    if (reason) item.append(xml("reason", {}, reason));
+
+    const iq = xml("iq", { type: "set", to: roomJid, id: `ban_${crypto.randomUUID()}` },
+      xml("query", "http://jabber.org/protocol/muc#admin", item)
+    );
+    xmpp.send(iq).catch(console.error);
+  }, []);
+
+  const setRoomAffiliation = useCallback((roomJid: string, jid: string, affiliation: RoomAffiliation) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return;
+
+    const iq = xml("iq", { type: "set", to: roomJid, id: `aff_${crypto.randomUUID()}` },
+      xml("query", "http://jabber.org/protocol/muc#admin",
+        xml("item", { jid, affiliation })
+      )
+    );
+    xmpp.send(iq).catch(console.error);
+  }, []);
+
+  const muteRoom = useCallback((roomJid: string, muted: boolean) => {
+    setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, isMuted: muted } : r));
+  }, []);
+
+  const loadRoomHistory = useCallback(async (roomJid: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) throw new Error("Not connected");
+
+    // Ensure room exists
+    ensureRoom(roomJid);
+
+    const room = rooms.find(r => r.jid === roomJid);
+    const before = room?.mamBefore ?? ""; // empty before => last page
+    const queryId = crypto.randomUUID();
+
+    // MAM query to the room JID (MUC archive lives at the room)
+    const iq = xml(
+      "iq",
+      { type: "set", to: roomJid, id: queryId },
+      xml("query", "urn:xmpp:mam:2",
+        xml("x", "jabber:x:data",
+          xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
+        ),
+        xml("set", "http://jabber.org/protocol/rsm",
+          before === "" ? xml("before") : xml("before", {}, before),
+          xml("max", {}, "20"),
+        )
+      )
+    );
+
+    try {
+      const res: any = await xmpp.iqCaller.request(iq);
+      const results = res.getChildren("result", "urn:xmpp:mam:2");
+
+      const msgs: RoomMessage[] = [];
+      for (const r of results) {
+        const fwd = r.getChild("forwarded", "urn:xmpp:forward:0");
+        const msg = fwd?.getChild("message");
+        if (!msg) continue;
+        const body = msg.getChildText("body");
+        if (!body) continue;
+        const delay = fwd.getChild("delay", "urn:xmpp:delay");
+        const stamp = delay?.attrs?.stamp ? new Date(delay.attrs.stamp) : new Date();
+        const id = msg.attrs.id || r.attrs.id || crypto.randomUUID();
+        msgs.push({
+          id,
+          from: msg.attrs.from || roomJid,
+          to: roomJid,
+          body,
+          timestamp: stamp,
+          isFromArchive: true,
+        });
+      }
+
+      const fin = res.getChild("fin", "urn:xmpp:mam:2");
+      const rsm = fin?.getChild("set", "http://jabber.org/protocol/rsm");
+      const first = rsm?.getChildText("first") || null;
+      const complete = fin?.attrs?.complete === "true";
+
+      setRooms(prev => {
+        const idx = prev.findIndex(r => r.jid === roomJid);
+        if (idx === -1) return prev;
+        const room = prev[idx];
+
+        const dedup = new Map(room.messages.map(m => [m.id, m]));
+        for (const m of msgs) dedup.set(m.id, m);
+        const merged = Array.from(dedup.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+        const copy = prev.slice();
+        copy[idx] = {
+          ...room,
+          messages: merged,
+          mamBefore: first,
+          hasMoreHistory: !complete,
+        };
+        return copy;
+      });
+    } catch (e) {
+      console.error("Room MAM query failed", e);
+      setRooms(prev => {
+        const idx = prev.findIndex(r => r.jid === roomJid);
+        if (idx === -1) return prev;
+        const copy = prev.slice();
+        copy[idx] = { ...prev[idx], hasMoreHistory: false };
+        return copy;
+      });
+      throw e;
+    }
+  }, [rooms, ensureRoom]);
+
+  const markRoomRead = useCallback((roomJid: string) => {
+    setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, unreadCount: 0 } : r));
+  }, []);
+
+  /* ---------- value ---------- */
 
   const value = useMemo<Ctx>(() => ({
+    // direct
     connectionState,
     conversations,
     contacts,
@@ -489,6 +949,21 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadConversationHistory,
     markMessageRead,
     markConversationRead,
+
+    // muc
+    rooms,
+    createRoom,
+    joinRoom,
+    leaveRoom,
+    destroyRoom,
+    sendRoomMessage,
+    inviteToRoom,
+    kickFromRoom,
+    banFromRoom,
+    setRoomAffiliation,
+    muteRoom,
+    loadRoomHistory,
+    markRoomRead,
   }), [
     connectionState,
     conversations,
@@ -500,6 +975,19 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadConversationHistory,
     markMessageRead,
     markConversationRead,
+    rooms,
+    createRoom,
+    joinRoom,
+    leaveRoom,
+    destroyRoom,
+    sendRoomMessage,
+    inviteToRoom,
+    kickFromRoom,
+    banFromRoom,
+    setRoomAffiliation,
+    muteRoom,
+    loadRoomHistory,
+    markRoomRead,
   ]);
 
   return <XmppContext.Provider value={value}>{children}</XmppContext.Provider>;
