@@ -1,4 +1,4 @@
-import { Send, Search, Mic, MicOff, Wifi, WifiOff, Users, UserPlus } from 'lucide-react';
+import { Send, Search, Mic, MicOff, Wifi, WifiOff, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { useState, useEffect } from 'react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
+import { MessageStatus } from '@/types/xmpp';
 
 const Messages = () => {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -18,6 +19,7 @@ const Messages = () => {
   const [contactSearchTerm, setContactSearchTerm] = useState('');
   const [newJid, setNewJid] = useState('');
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
   const { settings } = useSettings();
   const { 
     connectionState, 
@@ -26,7 +28,9 @@ const Messages = () => {
     connect, 
     disconnect, 
     sendMessage,
-    startConversation 
+    startConversation,
+    loadConversationHistory,
+    markMessageRead
   } = useXmpp();
   
   const {
@@ -105,6 +109,36 @@ const Messages = () => {
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
+  };
+
+  const handleLoadHistory = async (jid: string) => {
+    if (loadingHistory === jid) return;
+    
+    setLoadingHistory(jid);
+    try {
+      await loadConversationHistory(jid);
+    } catch (error) {
+      console.error('Failed to load conversation history:', error);
+    } finally {
+      setLoadingHistory(null);
+    }
+  };
+
+  const getStatusIcon = (status?: MessageStatus) => {
+    switch (status) {
+      case 'sending':
+        return <Clock className="h-3 w-3 text-muted-foreground" />;
+      case 'sent':
+        return <Check className="h-3 w-3 text-muted-foreground" />;
+      case 'delivered':
+        return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+      case 'read':
+        return <Eye className="h-3 w-3 text-primary" />;
+      case 'error':
+        return <AlertCircle className="h-3 w-3 text-destructive" />;
+      default:
+        return null;
+    }
   };
 
   return (
@@ -303,11 +337,35 @@ const Messages = () => {
                   <div className="text-center">
                     <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <p className="text-lg font-medium mb-2">Start a conversation</p>
-                    <p className="text-sm">Send a message to begin chatting with {selectedConv.name}</p>
+                    <p className="text-sm mb-4">Send a message to begin chatting with {selectedConv.name}</p>
+                    {connectionState === 'connected' && selectedConv.hasMoreHistory !== false && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleLoadHistory(selectedConv.jid)}
+                        disabled={loadingHistory === selectedConv.jid}
+                        className="mb-4"
+                      >
+                        {loadingHistory === selectedConv.jid ? 'Loading...' : 'Load message history'}
+                      </Button>
+                    )}
                   </div>
                 </div>
               ) : (
                 <div className="space-y-4">
+                  {connectionState === 'connected' && selectedConv.hasMoreHistory !== false && (
+                    <div className="text-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleLoadHistory(selectedConv.jid)}
+                        disabled={loadingHistory === selectedConv.jid}
+                      >
+                        {loadingHistory === selectedConv.jid ? 'Loading...' : 'Load earlier messages'}
+                      </Button>
+                    </div>
+                  )}
+                  
                   {selectedConv.messages.map((message) => {
                     const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     const isSent = message.from === `${settings.xmpp.username}@${settings.xmpp.domain}`;
@@ -325,11 +383,15 @@ const Messages = () => {
                           }`}
                         >
                           <p className="text-sm">{message.body}</p>
-                          <p className={`text-xs mt-1 ${
+                          <div className={`flex items-center gap-1 mt-1 ${
                             isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
                           }`}>
-                            {messageTimestamp}
-                          </p>
+                            <span className="text-xs">{messageTimestamp}</span>
+                            {isSent && message.status && getStatusIcon(message.status)}
+                            {message.isFromArchive && (
+                              <span className="text-xs opacity-60">(archived)</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

@@ -2,31 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { client, xml } from '@xmpp/client';
 import { useSettings } from './SettingsContext';
 import { useToast } from '@/hooks/use-toast';
-
-export interface XmppMessage {
-  id: string;
-  from: string;
-  to: string;
-  body: string;
-  timestamp: Date;
-  type: 'chat' | 'groupchat';
-}
-
-export interface XmppContact {
-  jid: string;
-  name: string;
-  subscription: 'none' | 'to' | 'from' | 'both';
-  presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable';
-  status?: string;
-}
-
-export interface XmppConversation {
-  jid: string;
-  name: string;
-  messages: XmppMessage[];
-  unreadCount: number;
-  lastActivity: Date;
-}
+import { XmppMessage, XmppContact, XmppConversation, MessageStatus, MamQuery, MamResult } from '@/types/xmpp';
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -46,6 +22,8 @@ interface XmppContextType {
   startConversation: (jid: string) => void;
   runWebSocketDiagnostics: () => Promise<{ success: boolean; details: string; }>;
   ping: () => Promise<boolean>;
+  loadConversationHistory: (jid: string) => Promise<void>;
+  markMessageRead: (messageId: string, to: string) => void;
 }
 
 const XmppContext = createContext<XmppContextType | undefined>(undefined);
@@ -85,6 +63,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const clientGenerationRef = useRef(0);
   const connectInFlightRef = useRef<Promise<boolean> | null>(null);
   const outboxRef = useRef<Array<{id: string, to: string, body: string}>>([]);
+  const mamQueryRef = useRef<Map<string, { resolve: Function, reject: Function }>>(new Map());
+  const pendingReceiptsRef = useRef<Set<string>>(new Set());
 
   // Queue a message for delivery when connected
   const queueMessage = useCallback((to: string, body: string): string => {
@@ -108,10 +88,13 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       const msg = messages[i];
       try {
         const normalizedTo = msg.to.includes('@') ? msg.to : `${msg.to}@${settings.xmpp.domain}`;
+        const originId = `${Date.now()}-${Math.random()}`;
         const stanza = xml(
           'message',
-          { type: 'chat', to: normalizedTo },
-          xml('body', {}, msg.body)
+          { type: 'chat', to: normalizedTo, id: originId },
+          xml('body', {}, msg.body),
+          xml('origin-id', { xmlns: 'urn:xmpp:sid:0', id: originId }),
+          xml('request', { xmlns: 'urn:xmpp:receipts' })
         );
 
         await clientRef.current.send(stanza);
@@ -123,7 +106,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
           to: normalizedTo,
           body: msg.body,
           timestamp: new Date(),
-          type: 'chat'
+          type: 'chat',
+          status: 'sent' as MessageStatus,
+          originId
         };
         // Add to conversation via state update
         setConversations(prev => {
@@ -420,28 +405,14 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         resolve(true);
       });
 
-      // Message handling - accept both chat and normal message types
+      // Enhanced message and stanza handling
       newClient.on('stanza', (stanza: any) => {
-        if (stanza.is('message') && (stanza.attrs.type === 'chat' || stanza.attrs.type === 'normal' || !stanza.attrs.type)) {
-          const from = stanza.attrs.from;
-          const body = stanza.getChildText('body');
-          
-          if (body) {
-            const message: XmppMessage = {
-              id: `${Date.now()}-${Math.random()}`,
-              from: from.split('/')[0], // Remove resource
-              to: stanza.attrs.to,
-              body,
-              timestamp: new Date(),
-              type: 'chat'
-            };
-            
-            addMessageToConversation(message);
-          }
+        if (stanza.is('message')) {
+          handleMessageStanza(stanza);
         } else if (stanza.is('presence')) {
           handlePresenceUpdate(stanza);
-        } else if (stanza.is('iq') && stanza.attrs.id === 'roster') {
-          handleRosterUpdate(stanza);
+        } else if (stanza.is('iq')) {
+          handleIQStanza(stanza);
         }
       });
 
@@ -551,10 +522,14 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     // If connected, try immediate send
     if (connectionState === 'connected' && clientRef.current) {
       try {
+        const originId = `${Date.now()}-${Math.random()}`;
         const message = xml(
           'message',
-          { type: 'chat', to: normalizedTo },
-          xml('body', {}, body)
+          { type: 'chat', to: normalizedTo, id: originId },
+          xml('body', {}, body),
+          xml('origin-id', { xmlns: 'urn:xmpp:sid:0', id: originId }),
+          xml('request', { xmlns: 'urn:xmpp:receipts' }),
+          xml('markable', { xmlns: 'urn:xmpp:chat-markers:0' })
         );
 
         await clientRef.current.send(message);
@@ -566,7 +541,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
           to: normalizedTo,
           body,
           timestamp: new Date(),
-          type: 'chat'
+          type: 'chat',
+          status: 'sent' as MessageStatus,
+          originId
         };
         
         addMessageToConversation(sentMessage, true);
@@ -731,6 +708,182 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     setContacts(rosterContacts);
   };
 
+  // Enhanced message stanza handler
+  const handleMessageStanza = useCallback((stanza: any) => {
+    const from = stanza.attrs.from;
+    const body = stanza.getChildText('body');
+    const type = stanza.attrs.type || 'chat';
+    
+    // Handle regular messages
+    if (body && (type === 'chat' || type === 'normal' || !type)) {
+      const delayElement = stanza.getChild('delay', 'urn:xmpp:delay');
+      const timestamp = delayElement ? new Date(delayElement.attrs.stamp) : new Date();
+      const stanzaId = stanza.getChild('stanza-id', 'urn:xmpp:sid:0')?.attrs?.id;
+      const isFromArchive = !!delayElement;
+      
+      const message: XmppMessage = {
+        id: `${Date.now()}-${Math.random()}`,
+        from: from.split('/')[0], // Remove resource
+        to: stanza.attrs.to,
+        body,
+        timestamp,
+        type: 'chat',
+        stanzaId,
+        isFromArchive
+      };
+      
+      addMessageToConversation(message);
+      
+      // Send receipt if requested
+      const receiptRequest = stanza.getChild('request', 'urn:xmpp:receipts');
+      if (receiptRequest && !isFromArchive && clientRef.current) {
+        const receipt = xml(
+          'message',
+          { to: from },
+          xml('received', { xmlns: 'urn:xmpp:receipts', id: stanza.attrs.id })
+        );
+        clientRef.current.send(receipt).catch(console.error);
+      }
+    }
+    
+    // Handle delivery receipts
+    const received = stanza.getChild('received', 'urn:xmpp:receipts');
+    if (received) {
+      const messageId = received.attrs.id;
+      updateMessageStatus(messageId, 'delivered');
+    }
+    
+    // Handle chat markers
+    const displayed = stanza.getChild('displayed', 'urn:xmpp:chat-markers:0');
+    if (displayed) {
+      const messageId = displayed.attrs.id;
+      updateMessageStatus(messageId, 'read');
+    }
+    
+    // Handle Carbons (message copies)
+    const sent = stanza.getChild('sent', 'urn:xmpp:carbons:2');
+    const received_carbon = stanza.getChild('received', 'urn:xmpp:carbons:2');
+    
+    if (sent || received_carbon) {
+      const forwarded = (sent || received_carbon)?.getChild('forwarded', 'urn:xmpp:forward:0');
+      const carbonMessage = forwarded?.getChild('message');
+      
+      if (carbonMessage) {
+        handleMessageStanza(carbonMessage);
+      }
+    }
+  }, []);
+
+  // Enhanced IQ stanza handler
+  const handleIQStanza = useCallback((stanza: any) => {
+    const id = stanza.attrs.id;
+    
+    // Handle roster updates
+    if (id === 'roster') {
+      handleRosterUpdate(stanza);
+      return;
+    }
+    
+    // Handle MAM query results
+    if (id?.startsWith('mam-')) {
+      handleMamResult(stanza);
+      return;
+    }
+    
+    // Handle other IQ stanzas as needed
+  }, []);
+
+  // Handle MAM query results
+  const handleMamResult = useCallback((stanza: any) => {
+    const queryId = stanza.attrs.id;
+    const query = mamQueryRef.current.get(queryId);
+    
+    if (!query) return;
+    
+    const fin = stanza.getChild('fin', 'urn:xmpp:mam:2');
+    if (fin) {
+      const complete = fin.attrs.complete === 'true';
+      const first = fin.getChild('set', 'http://jabber.org/protocol/rsm')?.getChildText('first');
+      const last = fin.getChild('set', 'http://jabber.org/protocol/rsm')?.getChildText('last');
+      
+      query.resolve({
+        messages: [], // Messages are handled individually in result stanzas
+        complete,
+        first,
+        last
+      });
+      
+      mamQueryRef.current.delete(queryId);
+    }
+  }, []);
+
+  // Update message status
+  const updateMessageStatus = useCallback((messageId: string, status: MessageStatus) => {
+    setConversations(prev => prev.map(conv => ({
+      ...conv,
+      messages: conv.messages.map(msg => 
+        msg.originId === messageId ? { ...msg, status } : msg
+      )
+    })));
+  }, []);
+
+  // Load conversation history using MAM
+  const loadConversationHistory = useCallback(async (jid: string): Promise<void> => {
+    if (!clientRef.current || connectionState !== 'connected') {
+      throw new Error('Not connected to XMPP server');
+    }
+    
+    const queryId = `mam-${Date.now()}-${Math.random()}`;
+    
+    return new Promise((resolve, reject) => {
+      mamQueryRef.current.set(queryId, { resolve, reject });
+      
+      const query = xml(
+        'iq',
+        { type: 'set', id: queryId },
+        xml('query', { xmlns: 'urn:xmpp:mam:2', queryid: queryId },
+          xml('x', { xmlns: 'jabber:x:data', type: 'submit' },
+            xml('field', { var: 'FORM_TYPE', type: 'hidden' },
+              xml('value', {}, 'urn:xmpp:mam:2')
+            ),
+            xml('field', { var: 'with' },
+              xml('value', {}, jid)
+            )
+          ),
+          xml('set', { xmlns: 'http://jabber.org/protocol/rsm' },
+            xml('max', {}, '50')
+          )
+        )
+      );
+      
+      clientRef.current.send(query).catch(error => {
+        mamQueryRef.current.delete(queryId);
+        reject(error);
+      });
+      
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        if (mamQueryRef.current.has(queryId)) {
+          mamQueryRef.current.delete(queryId);
+          reject(new Error('MAM query timeout'));
+        }
+      }, 10000);
+    });
+  }, [connectionState]);
+
+  // Mark message as read
+  const markMessageRead = useCallback((messageId: string, to: string) => {
+    if (!clientRef.current || connectionState !== 'connected') return;
+    
+    const marker = xml(
+      'message',
+      { to },
+      xml('displayed', { xmlns: 'urn:xmpp:chat-markers:0', id: messageId })
+    );
+    
+    clientRef.current.send(marker).catch(console.error);
+  }, [connectionState]);
+
   // Auto-connect if enabled and trigger connection when state changes to connecting
   useEffect(() => {
     if (settings.xmpp.autoConnect && connectionState === 'disconnected') {
@@ -854,7 +1007,9 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       setPresence,
       startConversation,
       runWebSocketDiagnostics,
-      ping
+      ping,
+      loadConversationHistory,
+      markMessageRead
     }}>
       {children}
     </XmppContext.Provider>
