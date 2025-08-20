@@ -190,11 +190,6 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     }
   }, [connectionState, settings.xmpp.domain, effectiveJid]);
 
-  // Forward declaration for circular dependency
-  const addMessageToConversation = useCallback((message: XmppMessage) => {
-    // Implementation moved below
-  }, []);
-
   // Wait for online state with generation awareness
   const waitForOnline = useCallback(async (generation: number, timeoutMs: number = 12000): Promise<boolean> => {
     return new Promise((resolve) => {
