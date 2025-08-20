@@ -906,6 +906,34 @@ const SettingsPage = () => {
                     </p>
                   </div>
 
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-domain">XMPP Domain</Label>
+                    <Input
+                      id="xmpp-domain"
+                      type="text"
+                      placeholder="ejabberd.voicehost.io"
+                      value={tempXmppSettings.domain}
+                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, domain: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Your XMPP server domain
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-websocket-url">WebSocket URL</Label>
+                    <Input
+                      id="xmpp-websocket-url"
+                      type="text"
+                      placeholder="wss://ejabberd.voicehost.io:443/websocket"
+                      value={tempXmppSettings.websocketUrl}
+                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, websocketUrl: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      WebSocket connection URL
+                    </p>
+                  </div>
+
                 </div>
 
                 <Separator />
@@ -946,8 +974,6 @@ const SettingsPage = () => {
                        // Clear password from settings if remember password is disabled
                        const settingsToSave = { 
                          ...tempXmppSettings,
-                         websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
-                         domain: 'ejabberd.voicehost.io',
                          password: tempXmppSettings.rememberPassword ? tempXmppSettings.password : ''
                        };
                        updateXmppSettings(settingsToSave);
@@ -956,7 +982,7 @@ const SettingsPage = () => {
                          description: "Your XMPP configuration has been saved successfully"
                        });
                      }}
-                     disabled={!tempXmppSettings.username || !tempXmppSettings.password}
+                     disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || !tempXmppSettings.websocketUrl}
                   >
                     Save Configuration
                   </Button>
@@ -969,22 +995,22 @@ const SettingsPage = () => {
                       Disconnect
                     </Button>
                   ) : (
-                    <Button 
-                      variant="outline"
-                      onClick={() => {
-                        if (tempXmppSettings.username && tempXmppSettings.password && tempXmppSettings.domain) {
-                          updateXmppSettings(tempXmppSettings);
-                          connect();
-                        } else {
-                          toast({
-                            title: "Incomplete Configuration",
-                            description: "Please fill in all required XMPP fields",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                      disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || connectionState === 'connecting'}
-                    >
+                     <Button 
+                       variant="outline"
+                       onClick={() => {
+                         if (tempXmppSettings.username && tempXmppSettings.password && tempXmppSettings.domain && tempXmppSettings.websocketUrl) {
+                           updateXmppSettings(tempXmppSettings);
+                           connect();
+                         } else {
+                           toast({
+                             title: "Incomplete Configuration",
+                             description: "Please fill in all required XMPP fields",
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                       disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || !tempXmppSettings.websocketUrl || connectionState === 'connecting'}
+                     >
                       {connectionState === 'connecting' ? 'Connecting...' : 'Connect Now'}
                     </Button>
                   )}
