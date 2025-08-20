@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
 import { MessageStatus, RoomOccupant } from '@/types/xmpp';
@@ -36,7 +36,8 @@ export const RoomChatView = () => {
     banFromRoom,
     setRoomAffiliation,
     muteRoom,
-    loadRoomHistory
+    loadRoomHistory,
+    markRoomRead
   } = useXmpp();
 
   const filteredRooms = rooms.filter((room) => {
@@ -46,6 +47,13 @@ export const RoomChatView = () => {
   });
 
   const selectedRoomData = rooms.find((room) => room.jid === selectedRoom);
+
+  // Mark room as read when selected
+  useEffect(() => {
+    if (selectedRoom && selectedRoomData && selectedRoomData.unreadCount > 0) {
+      markRoomRead(selectedRoom);
+    }
+  }, [selectedRoom, selectedRoomData?.unreadCount, markRoomRead]);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedRoomData) return;

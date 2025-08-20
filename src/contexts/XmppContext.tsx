@@ -24,6 +24,7 @@ interface XmppContextType {
   ping: () => Promise<boolean>;
   loadConversationHistory: (jid: string) => Promise<void>;
   markMessageRead: (messageId: string, to: string) => void;
+  markConversationRead: (jid: string) => void;
   // MUC functions
   createRoom: (roomName: string, nick: string, password?: string) => Promise<boolean>;
   joinRoom: (roomJid: string, nick: string, password?: string) => Promise<boolean>;
@@ -36,6 +37,7 @@ interface XmppContextType {
   setRoomAffiliation: (roomJid: string, jid: string, affiliation: RoomAffiliation) => void;
   muteRoom: (roomJid: string, muted: boolean) => void;
   loadRoomHistory: (roomJid: string) => Promise<void>;
+  markRoomRead: (roomJid: string) => void;
 }
 
 const XmppContext = createContext<XmppContextType | undefined>(undefined);
@@ -755,12 +757,17 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
             if (existingMessageIndex >= 0) {
               // Update existing message (e.g., status change from 'sending' to 'sent')
               const updatedMessages = [...conv.messages];
+              const existingMessage = updatedMessages[existingMessageIndex];
               updatedMessages[existingMessageIndex] = {
-                ...updatedMessages[existingMessageIndex],
-                ...message,
-                // Keep original ID and timestamp for UI consistency unless it's a status update
-                id: message.status ? updatedMessages[existingMessageIndex].id : message.id,
-                timestamp: message.status ? updatedMessages[existingMessageIndex].timestamp : message.timestamp
+                ...existingMessage,
+                // Only update specific fields to preserve original state
+                status: message.status || existingMessage.status,
+                stanzaId: message.stanzaId || existingMessage.stanzaId,
+                // Preserve important original properties
+                id: existingMessage.id,
+                timestamp: existingMessage.timestamp,
+                isFromArchive: existingMessage.isFromArchive,
+                originId: existingMessage.originId
               };
               
               return {
@@ -899,7 +906,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       const timestamp = delayElement ? new Date(delayElement.attrs.stamp) : new Date();
       const stanzaId = stanza.getChild('stanza-id', 'urn:xmpp:sid:0')?.attrs?.id;
       const originId = stanza.getChild('origin-id', 'urn:xmpp:sid:0')?.attrs?.id || stanza.attrs.id;
-      const isFromArchive = !!delayElement;
+      const isFromArchive = false; // Only MAM messages should be marked as archived
       const bareFrom = from.split('/')[0];
       const isOutgoing = bareFrom === myBareJid;
       
@@ -1436,11 +1443,17 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
 
         if (existingMessageIndex >= 0) {
           const updatedMessages = [...room.messages];
+          const existingMessage = updatedMessages[existingMessageIndex];
           updatedMessages[existingMessageIndex] = {
-            ...updatedMessages[existingMessageIndex],
-            ...message,
-            id: message.status ? updatedMessages[existingMessageIndex].id : message.id,
-            timestamp: message.status ? updatedMessages[existingMessageIndex].timestamp : message.timestamp
+            ...existingMessage,
+            // Only update specific fields to preserve original state
+            status: message.status || existingMessage.status,
+            stanzaId: message.stanzaId || existingMessage.stanzaId,
+            // Preserve important original properties
+            id: existingMessage.id,
+            timestamp: existingMessage.timestamp,
+            isFromArchive: existingMessage.isFromArchive,
+            originId: existingMessage.originId
           };
 
           return {
@@ -1460,6 +1473,18 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       return room;
     }));
   };
+
+  const markConversationRead = useCallback((jid: string) => {
+    setConversations(prev => prev.map(conv => 
+      conv.jid === jid ? { ...conv, unreadCount: 0 } : conv
+    ));
+  }, []);
+
+  const markRoomRead = useCallback((roomJid: string) => {
+    setRooms(prev => prev.map(room => 
+      room.jid === roomJid ? { ...room, unreadCount: 0 } : room
+    ));
+  }, []);
 
   return (
     <XmppContext.Provider value={{
@@ -1481,6 +1506,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       ping,
       loadConversationHistory,
       markMessageRead,
+      markConversationRead,
       createRoom,
       joinRoom,
       leaveRoom,
@@ -1491,7 +1517,8 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       banFromRoom,
       setRoomAffiliation,
       muteRoom,
-      loadRoomHistory
+      loadRoomHistory,
+      markRoomRead
     }}>
       {children}
     </XmppContext.Provider>

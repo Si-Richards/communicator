@@ -29,7 +29,8 @@ export const DirectChatView = () => {
     sendMessage,
     startConversation,
     loadConversationHistory,
-    markMessageRead
+    markMessageRead,
+    markConversationRead
   } = useXmpp();
   
   const {
@@ -45,6 +46,16 @@ export const DirectChatView = () => {
     continuous: settings.dictation.continuous,
     interimResults: settings.dictation.interimResults
   });
+
+  // Mark conversation as read when selected
+  useEffect(() => {    
+    if (selectedConversation) {
+      const conversation = conversations.find(conv => conv.jid === selectedConversation);
+      if (conversation && conversation.unreadCount > 0) {
+        markConversationRead(selectedConversation);
+      }
+    }
+  }, [selectedConversation, conversations, markConversationRead]);
 
   const filteredConversations = conversations.filter((conv) => {
     const name = conv.name || conv.jid.split('@')[0] || '';
