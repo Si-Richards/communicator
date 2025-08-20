@@ -1,18 +1,16 @@
 import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { useState } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
 import { MessageStatus, RoomOccupant } from '@/types/xmpp';
 
-const Rooms = () => {
+export const RoomChatView = () => {
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -123,95 +121,92 @@ const Rooms = () => {
   };
 
   return (
-    <div className="h-full min-h-screen flex overflow-hidden">
+    <div className="h-full flex overflow-hidden">
       {/* Rooms List */}
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-xl font-bold">Rooms</h1>
-            <div className="flex items-center gap-2">
-              <Dialog open={isCreateRoomOpen} onOpenChange={setIsCreateRoomOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" variant="outline">
-                    <UserPlus className="h-4 w-4 mr-1" />
-                    Create
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>Create Room</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Room Name</label>
-                      <Input
-                        placeholder="My Room"
-                        value={newRoomName}
-                        onChange={(e) => setNewRoomName(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleCreateRoom()}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Your Nickname</label>
-                      <Input
-                        placeholder="nickname"
-                        value={newRoomNick}
-                        onChange={(e) => setNewRoomNick(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleCreateRoom()}
-                      />
-                    </div>
-                    <Button 
-                      onClick={handleCreateRoom} 
-                      disabled={!newRoomName.trim() || !newRoomNick.trim()}
-                      className="w-full"
-                    >
-                      Create Room
-                    </Button>
+          <div className="flex items-center gap-2 mb-4">
+            <Dialog open={isCreateRoomOpen} onOpenChange={setIsCreateRoomOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <UserPlus className="h-4 w-4 mr-1" />
+                  Create
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Create Room</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Room Name</label>
+                    <Input
+                      placeholder="My Room"
+                      value={newRoomName}
+                      onChange={(e) => setNewRoomName(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleCreateRoom()}
+                    />
                   </div>
-                </DialogContent>
-              </Dialog>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Your Nickname</label>
+                    <Input
+                      placeholder="nickname"
+                      value={newRoomNick}
+                      onChange={(e) => setNewRoomNick(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleCreateRoom()}
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleCreateRoom} 
+                    disabled={!newRoomName.trim() || !newRoomNick.trim()}
+                    className="w-full"
+                  >
+                    Create Room
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
-              <Dialog open={isJoinRoomOpen} onOpenChange={setIsJoinRoomOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" variant="outline">
-                    <Users className="h-4 w-4 mr-1" />
-                    Join
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>Join Room</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Room JID</label>
-                      <Input
-                        placeholder="room@conference.domain.com"
-                        value={joinRoomJid}
-                        onChange={(e) => setJoinRoomJid(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Your Nickname</label>
-                      <Input
-                        placeholder="nickname"
-                        value={joinRoomNick}
-                        onChange={(e) => setJoinRoomNick(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
-                      />
-                    </div>
-                    <Button 
-                      onClick={handleJoinRoom} 
-                      disabled={!joinRoomJid.trim() || !joinRoomNick.trim()}
-                      className="w-full"
-                    >
-                      Join Room
-                    </Button>
+            <Dialog open={isJoinRoomOpen} onOpenChange={setIsJoinRoomOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <Users className="h-4 w-4 mr-1" />
+                  Join
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Join Room</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Room JID</label>
+                    <Input
+                      placeholder="room@conference.domain.com"
+                      value={joinRoomJid}
+                      onChange={(e) => setJoinRoomJid(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
+                    />
                   </div>
-                </DialogContent>
-              </Dialog>
-            </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Your Nickname</label>
+                    <Input
+                      placeholder="nickname"
+                      value={joinRoomNick}
+                      onChange={(e) => setJoinRoomNick(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleJoinRoom} 
+                    disabled={!joinRoomJid.trim() || !joinRoomNick.trim()}
+                    className="w-full"
+                  >
+                    Join Room
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -501,5 +496,3 @@ const Rooms = () => {
     </div>
   );
 };
-
-export default Rooms;

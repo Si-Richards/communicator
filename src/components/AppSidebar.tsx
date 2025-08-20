@@ -25,8 +25,7 @@ const items = [
   { title: "Contacts", url: "/contacts", icon: Users },
   { title: "Call History", url: "/history", icon: History },
   { title: "Voicemail", url: "/voicemail", icon: Voicemail },
-  { title: "Messages", url: "/messages", icon: MessageSquare },
-  { title: "Rooms", url: "/rooms", icon: UsersRound },
+  { title: "Chat", url: "/messages", icon: MessageSquare },
   { title: "SMS", url: "/sms", icon: MessageCircle },
   { title: "Settings", url: "/settings", icon: Settings },
 ]
