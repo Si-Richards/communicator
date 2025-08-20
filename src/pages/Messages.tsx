@@ -142,9 +142,9 @@ const Messages = () => {
   };
 
   return (
-    <div className="min-h-full flex">
+    <div className="h-screen flex overflow-hidden">
       {/* Conversations List */}
-      <div className="w-1/3 border-r border-border">
+      <div className="w-1/3 border-r border-border flex flex-col">
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold">Messages</h1>
@@ -313,133 +313,137 @@ const Messages = () => {
         </ScrollArea>
       </div>
 
-      {/* Message View */}
-      <div className="flex-1 flex flex-col">
-        {selectedConv ? (
-          <>
-            {/* Header */}
-            <div className="p-4 border-b border-border">
-              <div className="flex items-center gap-3">
-                <Avatar className="h-10 w-10">
-                  <AvatarFallback>{getInitials(selectedConv.name)}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <h2 className="font-medium">{selectedConv.name}</h2>
-                  <p className="text-sm text-muted-foreground">{selectedConv.jid}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <ScrollArea className="flex-1 p-4">
-              {selectedConv.messages.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  <div className="text-center">
-                    <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p className="text-lg font-medium mb-2">Start a conversation</p>
-                    <p className="text-sm mb-4">Send a message to begin chatting with {selectedConv.name}</p>
-                    {connectionState === 'connected' && selectedConv.hasMoreHistory !== false && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleLoadHistory(selectedConv.jid)}
-                        disabled={loadingHistory === selectedConv.jid}
-                        className="mb-4"
-                      >
-                        {loadingHistory === selectedConv.jid ? 'Loading...' : 'Load message history'}
-                      </Button>
-                    )}
+            {/* Message View */}
+            <div className="flex-1 flex flex-col h-full">
+              {selectedConv ? (
+                <>
+                  {/* Header */}
+                  <div className="flex-shrink-0 p-4 border-b border-border">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>{getInitials(selectedConv.name)}</AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <h2 className="font-medium">{selectedConv.name}</h2>
+                        <p className="text-sm text-muted-foreground">{selectedConv.jid}</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {connectionState === 'connected' && selectedConv.hasMoreHistory !== false && (
-                    <div className="text-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleLoadHistory(selectedConv.jid)}
-                        disabled={loadingHistory === selectedConv.jid}
+
+                  {/* Messages - Scrollable Area */}
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="p-4">
+                        {selectedConv.messages.length === 0 ? (
+                          <div className="flex items-center justify-center h-full text-muted-foreground min-h-[400px]">
+                            <div className="text-center">
+                              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                              <p className="text-lg font-medium mb-2">Start a conversation</p>
+                              <p className="text-sm mb-4">Send a message to begin chatting with {selectedConv.name}</p>
+                              {connectionState === 'connected' && selectedConv.hasMoreHistory !== false && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleLoadHistory(selectedConv.jid)}
+                                  disabled={loadingHistory === selectedConv.jid}
+                                  className="mb-4"
+                                >
+                                  {loadingHistory === selectedConv.jid ? 'Loading...' : 'Load message history'}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {connectionState === 'connected' && selectedConv.hasMoreHistory !== false && (
+                              <div className="text-center">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleLoadHistory(selectedConv.jid)}
+                                  disabled={loadingHistory === selectedConv.jid}
+                                >
+                                  {loadingHistory === selectedConv.jid ? 'Loading...' : 'Load earlier messages'}
+                                </Button>
+                              </div>
+                            )}
+                            
+                            {selectedConv.messages.map((message) => {
+                              const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                              const isSent = message.from === `${settings.xmpp.username}@${settings.xmpp.domain}`;
+                              
+                              return (
+                                <div
+                                  key={message.id}
+                                  className={`flex ${isSent ? 'justify-end' : 'justify-start'}`}
+                                >
+                                  <div
+                                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                                      isSent
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-muted'
+                                    }`}
+                                  >
+                                    <p className="text-sm">{message.body}</p>
+                                    <div className={`flex items-center gap-1 mt-1 ${
+                                      isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                                    }`}>
+                                      <span className="text-xs">{messageTimestamp}</span>
+                                      {isSent && message.status && getStatusIcon(message.status)}
+                                      {message.isFromArchive && (
+                                        <span className="text-xs opacity-60">(archived)</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
+
+                  {/* Message Input - Fixed at Bottom */}
+                  <div className="flex-shrink-0 p-4 border-t border-border bg-background">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder={connectionState !== 'connected' ? "Connect to XMPP to send messages" : isListening ? "Listening..." : "Type a message..."}
+                        value={newMessage + (interimTranscript ? ` ${interimTranscript}` : '')}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                        disabled={connectionState !== 'connected'}
+                        className="flex-1"
+                      />
+                      {isSupported && settings.dictation.enabled && connectionState === 'connected' && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={toggleDictation}
+                          className={isListening ? "bg-destructive text-destructive-foreground" : ""}
+                        >
+                          {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        </Button>
+                      )}
+                      <Button 
+                        onClick={handleSendMessage} 
+                        disabled={!newMessage.trim() || connectionState !== 'connected'}
                       >
-                        {loadingHistory === selectedConv.jid ? 'Loading...' : 'Load earlier messages'}
+                        <Send className="h-4 w-4" />
                       </Button>
                     </div>
-                  )}
-                  
-                  {selectedConv.messages.map((message) => {
-                    const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const isSent = message.from === `${settings.xmpp.username}@${settings.xmpp.domain}`;
-                    
-                    return (
-                      <div
-                        key={message.id}
-                        className={`flex ${isSent ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div
-                          className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                            isSent
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-muted'
-                          }`}
-                        >
-                          <p className="text-sm">{message.body}</p>
-                          <div className={`flex items-center gap-1 mt-1 ${
-                            isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                          }`}>
-                            <span className="text-xs">{messageTimestamp}</span>
-                            {isSent && message.status && getStatusIcon(message.status)}
-                            {message.isFromArchive && (
-                              <span className="text-xs opacity-60">(archived)</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <Users className="h-16 w-16 mx-auto mb-4 opacity-30" />
+                    <h2 className="text-xl font-medium mb-2">Select a conversation</h2>
+                    <p className="text-sm">Choose a conversation from the list to start messaging</p>
+                  </div>
                 </div>
               )}
-            </ScrollArea>
-
-            {/* Message Input */}
-            <div className="p-4 border-t border-border">
-              <div className="flex gap-2">
-                <Input
-                  placeholder={connectionState !== 'connected' ? "Connect to XMPP to send messages" : isListening ? "Listening..." : "Type a message..."}
-                  value={newMessage + (interimTranscript ? ` ${interimTranscript}` : '')}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  
-                  className="flex-1"
-                />
-                {isSupported && settings.dictation.enabled && connectionState === 'connected' && (
-                  <Button
-                    onClick={toggleDictation}
-                    size="icon"
-                    variant={isListening ? "default" : "outline"}
-                    className={isListening ? "bg-red-600 hover:bg-red-700" : ""}
-                  >
-                    {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                  </Button>
-                )}
-                <Button onClick={handleSendMessage} size="icon" disabled={!newMessage.trim()}>
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
             </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <Users className="h-16 w-16 mx-auto mb-4 opacity-50" />
-              <p className="text-xl font-medium mb-2">Welcome to Messages</p>
-              <p className="text-sm mb-4">Select a conversation or start a new chat to begin messaging</p>
-              {connectionState !== 'connected' && (
-                <p className="text-xs text-red-500">Please connect to XMPP server in Settings first</p>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 };

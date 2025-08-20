@@ -433,12 +433,43 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         // Send initial presence
         newClient.send(xmlRef.current!('presence')).catch(console.error);
         
+        // Enable Message Carbons for conversation sync
+        newClient.send(
+          xmlRef.current!('iq', { type: 'set', id: 'enable-carbons' },
+            xmlRef.current!('enable', { xmlns: 'urn:xmpp:carbons:2' })
+          )
+        ).catch(console.error);
+        
         // Request roster
         newClient.send(
           xmlRef.current!('iq', { type: 'get', id: 'roster' },
             xmlRef.current!('query', { xmlns: 'jabber:iq:roster' })
           )
         ).catch(console.error);
+        
+        // Load recent message history automatically
+        setTimeout(async () => {
+          try {
+            const recentConversationsQuery = xmlRef.current!(
+              'iq',
+              { type: 'set', id: 'mam-recent' },
+              xmlRef.current!('query', { xmlns: 'urn:xmpp:mam:2', queryid: 'recent' },
+                xmlRef.current!('x', { xmlns: 'jabber:x:data', type: 'submit' },
+                  xmlRef.current!('field', { var: 'FORM_TYPE', type: 'hidden' },
+                    xmlRef.current!('value', {}, 'urn:xmpp:mam:2')
+                  )
+                ),
+                xmlRef.current!('set', { xmlns: 'http://jabber.org/protocol/rsm' },
+                  xmlRef.current!('max', {}, '20'),
+                  xmlRef.current!('before', {})
+                )
+              )
+            );
+            await newClient.send(recentConversationsQuery);
+          } catch (error) {
+            console.warn('Failed to load recent conversations:', error);
+          }
+        }, 500);
         
         // Flush any queued messages after successful connection
         setTimeout(() => flushOutbox(), 100);
