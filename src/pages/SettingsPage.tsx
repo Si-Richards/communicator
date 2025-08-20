@@ -98,8 +98,8 @@ const SettingsPage = () => {
 
   useEffect(() => {
     setTempXmppSettings({
-      websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
-      domain: 'ejabberd.voicehost.io',
+      websocketUrl: settings.xmpp.websocketUrl,
+      domain: settings.xmpp.domain,
       username: settings.xmpp.username,
       password: settings.xmpp.password,
       autoConnect: settings.xmpp.autoConnect,
@@ -860,52 +860,82 @@ const SettingsPage = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-username">Username</Label>
-                    <Input
-                      id="xmpp-username"
-                      type="text"
-                      placeholder="your-username"
-                      value={tempXmppSettings.username}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, username: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Your username (without domain)
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-password">Password</Label>
-                    <div className="relative">
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-domain">XMPP Domain</Label>
                       <Input
-                        id="xmpp-password"
-                        type={showXmppPassword ? "text" : "password"}
-                        placeholder="Enter your XMPP password"
-                        value={tempXmppSettings.password}
-                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, password: e.target.value }))}
-                        className="pr-10"
+                        id="xmpp-domain"
+                        type="text"
+                        placeholder="ejabberd.voicehost.io"
+                        value={tempXmppSettings.domain}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, domain: e.target.value }))}
                       />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                        onClick={() => setShowXmppPassword(!showXmppPassword)}
-                      >
-                        {showXmppPassword ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Your XMPP server domain
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Your XMPP account password
-                    </p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-websocket-url">WebSocket URL</Label>
+                      <Input
+                        id="xmpp-websocket-url"
+                        type="url"
+                        placeholder="wss://ejabberd.voicehost.io:443/websocket"
+                        value={tempXmppSettings.websocketUrl}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, websocketUrl: e.target.value }))}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        WebSocket endpoint for XMPP connection
+                      </p>
+                    </div>
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-username">Username</Label>
+                      <Input
+                        id="xmpp-username"
+                        type="text"
+                        placeholder="your-username"
+                        value={tempXmppSettings.username}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, username: e.target.value }))}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Your username (without domain)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-password">Password</Label>
+                      <div className="relative">
+                        <Input
+                          id="xmpp-password"
+                          type={showXmppPassword ? "text" : "password"}
+                          placeholder="Enter your XMPP password"
+                          value={tempXmppSettings.password}
+                          onChange={(e) => setTempXmppSettings(prev => ({ ...prev, password: e.target.value }))}
+                          className="pr-10"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                          onClick={() => setShowXmppPassword(!showXmppPassword)}
+                        >
+                          {showXmppPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Your XMPP account password
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 <Separator />
@@ -946,8 +976,6 @@ const SettingsPage = () => {
                        // Clear password from settings if remember password is disabled
                        const settingsToSave = { 
                          ...tempXmppSettings,
-                         websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
-                         domain: 'ejabberd.voicehost.io',
                          password: tempXmppSettings.rememberPassword ? tempXmppSettings.password : ''
                        };
                        updateXmppSettings(settingsToSave);
@@ -956,7 +984,7 @@ const SettingsPage = () => {
                          description: "Your XMPP configuration has been saved successfully"
                        });
                      }}
-                     disabled={!tempXmppSettings.username || !tempXmppSettings.password}
+                     disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || !tempXmppSettings.websocketUrl}
                   >
                     Save Configuration
                   </Button>
@@ -969,22 +997,24 @@ const SettingsPage = () => {
                       Disconnect
                     </Button>
                   ) : (
-                    <Button 
-                      variant="outline"
-                      onClick={() => {
-                        if (tempXmppSettings.username && tempXmppSettings.password && tempXmppSettings.domain) {
-                          updateXmppSettings(tempXmppSettings);
-                          connect();
-                        } else {
-                          toast({
-                            title: "Incomplete Configuration",
-                            description: "Please fill in all required XMPP fields",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                      disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || connectionState === 'connecting'}
-                    >
+                     <Button 
+                       variant="outline"
+                       onClick={async () => {
+                         if (tempXmppSettings.username && tempXmppSettings.password && tempXmppSettings.domain && tempXmppSettings.websocketUrl) {
+                           updateXmppSettings(tempXmppSettings);
+                           // Add small delay to ensure settings are updated before connecting
+                           await new Promise(resolve => setTimeout(resolve, 100));
+                           connect();
+                         } else {
+                           toast({
+                             title: "Incomplete Configuration",
+                             description: "Please fill in all required XMPP fields",
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                       disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || !tempXmppSettings.websocketUrl || connectionState === 'connecting'}
+                     >
                       {connectionState === 'connecting' ? 'Connecting...' : 'Connect Now'}
                     </Button>
                   )}
