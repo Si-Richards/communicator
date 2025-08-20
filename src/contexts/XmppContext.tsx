@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
-import { client, xml } from '@xmpp/client';
 import { useSettings } from './SettingsContext';
 import { useToast } from '@/hooks/use-toast';
 import { XmppMessage, XmppContact, XmppConversation, MessageStatus, MamQuery, MamResult } from '@/types/xmpp';
@@ -65,6 +64,36 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const outboxRef = useRef<Array<{id: string, to: string, body: string}>>([]);
   const mamQueryRef = useRef<Map<string, { resolve: Function, reject: Function }>>(new Map());
   const pendingReceiptsRef = useRef<Set<string>>(new Set());
+  
+  // Dynamic imports for XMPP client
+  const clientFactoryRef = useRef<any>(null);
+  const xmlRef = useRef<any>(null);
+  const isLibraryLoadedRef = useRef(false);
+
+  // Load XMPP library dynamically
+  useEffect(() => {
+    const loadXmppLibrary = async () => {
+      if (isLibraryLoadedRef.current) return;
+      
+      try {
+        console.log('Loading XMPP client library...');
+        const xmppModule = await import('@xmpp/client');
+        clientFactoryRef.current = xmppModule.client;
+        xmlRef.current = xmppModule.xml;
+        isLibraryLoadedRef.current = true;
+        console.log('XMPP client library loaded successfully');
+      } catch (error) {
+        console.error('Failed to load XMPP client library:', error);
+        toast({
+          title: 'XMPP Library Error',
+          description: 'Failed to load XMPP client. Please refresh the page.',
+          variant: 'destructive'
+        });
+      }
+    };
+
+    loadXmppLibrary();
+  }, [toast]);
 
   // Queue a message for delivery when connected
   const queueMessage = useCallback((to: string, body: string): string => {
@@ -89,12 +118,12 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       try {
         const normalizedTo = msg.to.includes('@') ? msg.to : `${msg.to}@${settings.xmpp.domain}`;
         const originId = `${Date.now()}-${Math.random()}`;
-        const stanza = xml(
+        const stanza = xmlRef.current!(
           'message',
           { type: 'chat', to: normalizedTo, id: originId },
-          xml('body', {}, msg.body),
-          xml('origin-id', { xmlns: 'urn:xmpp:sid:0', id: originId }),
-          xml('request', { xmlns: 'urn:xmpp:receipts' })
+          xmlRef.current!('body', {}, msg.body),
+          xmlRef.current!('origin-id', { xmlns: 'urn:xmpp:sid:0', id: originId }),
+          xmlRef.current!('request', { xmlns: 'urn:xmpp:receipts' })
         );
 
         await clientRef.current.send(stanza);
@@ -221,6 +250,18 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       return false;
     }
 
+    // Check if XMPP library is loaded
+    if (!isLibraryLoadedRef.current || !clientFactoryRef.current || !xmlRef.current) {
+      const errorMsg = 'XMPP library not loaded yet';
+      setLastError(errorMsg);
+      toast({
+        title: 'XMPP Connection Failed',
+        description: errorMsg,
+        variant: 'destructive'
+      });
+      return false;
+    }
+
     // Reset manual disconnect flag
     setManualDisconnect(false);
 
@@ -262,7 +303,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       setCurrentResource(resource);
       console.log(`XMPP connecting with resource: ${resource}`);
       
-      const newClient = client({
+      const newClient = clientFactoryRef.current!({
         service: settings.xmpp.websocketUrl,
         domain: settings.xmpp.domain,
         username: settings.xmpp.username,
@@ -390,12 +431,12 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
         });
         
         // Send initial presence
-        newClient.send(xml('presence')).catch(console.error);
+        newClient.send(xmlRef.current!('presence')).catch(console.error);
         
         // Request roster
         newClient.send(
-          xml('iq', { type: 'get', id: 'roster' },
-            xml('query', { xmlns: 'jabber:iq:roster' })
+          xmlRef.current!('iq', { type: 'get', id: 'roster' },
+            xmlRef.current!('query', { xmlns: 'jabber:iq:roster' })
           )
         ).catch(console.error);
         
@@ -523,13 +564,13 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     if (connectionState === 'connected' && clientRef.current) {
       try {
         const originId = `${Date.now()}-${Math.random()}`;
-        const message = xml(
+        const message = xmlRef.current!(
           'message',
           { type: 'chat', to: normalizedTo, id: originId },
-          xml('body', {}, body),
-          xml('origin-id', { xmlns: 'urn:xmpp:sid:0', id: originId }),
-          xml('request', { xmlns: 'urn:xmpp:receipts' }),
-          xml('markable', { xmlns: 'urn:xmpp:chat-markers:0' })
+          xmlRef.current!('body', {}, body),
+          xmlRef.current!('origin-id', { xmlns: 'urn:xmpp:sid:0', id: originId }),
+          xmlRef.current!('request', { xmlns: 'urn:xmpp:receipts' }),
+          xmlRef.current!('markable', { xmlns: 'urn:xmpp:chat-markers:0' })
         );
 
         await clientRef.current.send(message);
@@ -592,7 +633,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const addContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
 
-    const subscribeStanza = xml(
+    const subscribeStanza = xmlRef.current!(
       'presence',
       { type: 'subscribe', to: jid }
     );
@@ -603,7 +644,7 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const removeContact = useCallback((jid: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
 
-    const unsubscribeStanza = xml(
+    const unsubscribeStanza = xmlRef.current!(
       'presence',
       { type: 'unsubscribe', to: jid }
     );
@@ -614,12 +655,12 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const setPresence = useCallback((show?: 'away' | 'dnd' | 'xa', status?: string) => {
     if (!xmppClient || connectionState !== 'connected') return;
 
-    const presenceStanza = xml('presence');
+    const presenceStanza = xmlRef.current!('presence');
     if (show) {
-      presenceStanza.append(xml('show', {}, show));
+      presenceStanza.append(xmlRef.current!('show', {}, show));
     }
     if (status) {
-      presenceStanza.append(xml('status', {}, status));
+      presenceStanza.append(xmlRef.current!('status', {}, status));
     }
     
     xmppClient.send(presenceStanza).catch(console.error);
@@ -737,10 +778,10 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
       // Send receipt if requested
       const receiptRequest = stanza.getChild('request', 'urn:xmpp:receipts');
       if (receiptRequest && !isFromArchive && clientRef.current) {
-        const receipt = xml(
+        const receipt = xmlRef.current!(
           'message',
           { to: from },
-          xml('received', { xmlns: 'urn:xmpp:receipts', id: stanza.attrs.id })
+          xmlRef.current!('received', { xmlns: 'urn:xmpp:receipts', id: stanza.attrs.id })
         );
         clientRef.current.send(receipt).catch(console.error);
       }
@@ -838,20 +879,20 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     return new Promise((resolve, reject) => {
       mamQueryRef.current.set(queryId, { resolve, reject });
       
-      const query = xml(
+      const query = xmlRef.current!(
         'iq',
         { type: 'set', id: queryId },
-        xml('query', { xmlns: 'urn:xmpp:mam:2', queryid: queryId },
-          xml('x', { xmlns: 'jabber:x:data', type: 'submit' },
-            xml('field', { var: 'FORM_TYPE', type: 'hidden' },
-              xml('value', {}, 'urn:xmpp:mam:2')
+        xmlRef.current!('query', { xmlns: 'urn:xmpp:mam:2', queryid: queryId },
+          xmlRef.current!('x', { xmlns: 'jabber:x:data', type: 'submit' },
+            xmlRef.current!('field', { var: 'FORM_TYPE', type: 'hidden' },
+              xmlRef.current!('value', {}, 'urn:xmpp:mam:2')
             ),
-            xml('field', { var: 'with' },
-              xml('value', {}, jid)
+            xmlRef.current!('field', { var: 'with' },
+              xmlRef.current!('value', {}, jid)
             )
           ),
-          xml('set', { xmlns: 'http://jabber.org/protocol/rsm' },
-            xml('max', {}, '50')
+          xmlRef.current!('set', { xmlns: 'http://jabber.org/protocol/rsm' },
+            xmlRef.current!('max', {}, '50')
           )
         )
       );
@@ -875,10 +916,10 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
   const markMessageRead = useCallback((messageId: string, to: string) => {
     if (!clientRef.current || connectionState !== 'connected') return;
     
-    const marker = xml(
+    const marker = xmlRef.current!(
       'message',
       { to },
-      xml('displayed', { xmlns: 'urn:xmpp:chat-markers:0', id: messageId })
+      xmlRef.current!('displayed', { xmlns: 'urn:xmpp:chat-markers:0', id: messageId })
     );
     
     clientRef.current.send(marker).catch(console.error);
@@ -970,10 +1011,10 @@ export const XmppProvider: React.FC<XmppProviderProps> = ({ children }) => {
     }
 
     try {
-      const pingIq = xml(
+      const pingIq = xmlRef.current!(
         'iq',
         { type: 'get', to: settings.xmpp.domain, id: `ping_${Date.now()}` },
-        xml('ping', { xmlns: 'urn:xmpp:ping' })
+        xmlRef.current!('ping', { xmlns: 'urn:xmpp:ping' })
       );
 
       await clientRef.current.send(pingIq);
