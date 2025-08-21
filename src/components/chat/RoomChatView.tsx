@@ -1,4 +1,4 @@
-import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff, Globe, ArrowUpDown } from 'lucide-react';
+import { Search, Users, UserPlus, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff, Globe, ArrowUpDown, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -9,7 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useState, useEffect } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
-import { MessageStatus } from '@/types/xmpp';
+import { MessageComposer } from './MessageComposer';
+import { MessageBodyRenderer } from './MessageBodyRenderer';
+import { DateSeparator } from './DateSeparator';
+import { insertDateSeparators, formatFullDateTime } from '@/lib/dateUtils';
 
 export const RoomChatView = () => {
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
@@ -183,22 +186,6 @@ export const RoomChatView = () => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
   };
 
-  const getStatusIcon = (status?: MessageStatus) => {
-    switch (status) {
-      case 'sending':
-        return <Clock className="h-3 w-3 text-muted-foreground" />;
-      case 'sent':
-        return <Check className="h-3 w-3 text-muted-foreground" />;
-      case 'delivered':
-        return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
-      case 'read':
-        return <Eye className="h-3 w-3 text-primary" />;
-      case 'error':
-        return <AlertCircle className="h-3 w-3 text-destructive" />;
-      default:
-        return null;
-    }
-  };
 
   const getRoleIcon = (occupant: typeof selectedRoomData extends undefined ? never : typeof selectedRoomData['occupants'][0]) => {
     if (occupant.affiliation === 'owner') return <Crown className="h-3 w-3 text-yellow-500" />;
@@ -560,8 +547,12 @@ export const RoomChatView = () => {
                           </div>
                         )}
                         
-                        {selectedRoomData.messages.map((message) => {
-                          const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        {insertDateSeparators(selectedRoomData.messages).map((item) => {
+                          if ('type' in item && item.type === 'date-separator') {
+                            return <DateSeparator key={item.id} date={item.date} />;
+                          }
+
+                          const message = item as any; // Type assertion for message properties
                           const myNick = selectedRoomData.nick;
                           const senderNick = message.from.split('/')[1] || message.from;
                           const isSent = senderNick === myNick;
@@ -577,16 +568,21 @@ export const RoomChatView = () => {
                                     ? 'bg-primary text-primary-foreground'
                                     : 'bg-muted'
                                 }`}
+                                title={formatFullDateTime(message.timestamp)}
                               >
                                 {!isSent && (
                                   <p className="text-xs font-medium mb-1 opacity-70">{senderNick}</p>
                                 )}
-                                <p className="text-sm">{message.body}</p>
-                                <div className={`flex items-center gap-1 mt-1 ${
+                                <MessageBodyRenderer 
+                                  body={message.body}
+                                  className={isSent ? 'text-primary-foreground' : 'text-foreground'}
+                                />
+                                <div className={`flex items-center justify-end gap-1 mt-1 ${
                                   isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
                                 }`}>
-                                  <span className="text-xs">{messageTimestamp}</span>
-                                  {isSent && message.status && getStatusIcon(message.status)}
+                                  <span className="text-xs">
+                                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
                                   {message.isFromArchive && (
                                     <span className="text-xs opacity-60">(archived)</span>
                                   )}
@@ -601,25 +597,14 @@ export const RoomChatView = () => {
                 </ScrollArea>
               </div>
 
-              {/* Message Input */}
-              <div className="flex-shrink-0 p-4 border-t border-border">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Type a message..."
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    className="flex-1"
-                    disabled={connectionState !== 'connected' || !selectedRoomData.joined}
-                  />
-                  <Button 
-                    onClick={handleSendMessage} 
-                    disabled={!newMessage.trim() || connectionState !== 'connected' || !selectedRoomData.joined}
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+              {/* Message Composer */}
+              <MessageComposer
+                value={newMessage}
+                onChange={setNewMessage}
+                onSend={handleSendMessage}
+                disabled={connectionState !== 'connected' || !selectedRoomData.joined}
+                placeholder="Type a message..."
+              />
             </div>
 
             {/* Members Dialog */}

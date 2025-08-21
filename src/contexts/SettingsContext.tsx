@@ -56,6 +56,14 @@ export interface NotificationSettings {
   showPreviewText: boolean;
 }
 
+export interface ChatSettings {
+  enableMarkdown: boolean;
+  showDeliveryStatus: boolean;
+  enableEmojis: boolean;
+  enableGifs: boolean;
+  showDateSeparators: boolean;
+}
+
 export interface XmppSettings {
   websocketUrl: string;
   domain: string;
@@ -76,6 +84,7 @@ export interface AppSettings {
   video: VideoSettings;
   notifications: NotificationSettings;
   xmpp: XmppSettings;
+  chat: ChatSettings;
   version: string;
 }
 
@@ -90,6 +99,7 @@ interface SettingsContextType {
   updateVideoSettings: (updates: Partial<VideoSettings>) => void;
   updateNotificationSettings: (updates: Partial<NotificationSettings>) => void;
   updateXmppSettings: (updates: Partial<XmppSettings>) => void;
+  updateChatSettings: (updates: Partial<ChatSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -151,6 +161,13 @@ const defaultSettings: AppSettings = {
     password: '',
     autoConnect: false,
     rememberPassword: true,
+  },
+  chat: {
+    enableMarkdown: true,
+    showDeliveryStatus: true,
+    enableEmojis: true,
+    enableGifs: true,
+    showDateSeparators: true,
   },
   version: '1.0.0',
 };
@@ -271,6 +288,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateChatSettings = (updates: Partial<ChatSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      chat: { ...prev.chat, ...updates },
+    }));
+  };
+
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -305,6 +329,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateVideoSettings,
         updateNotificationSettings,
         updateXmppSettings,
+        updateChatSettings,
         resetToDefaults,
         exportSettings,
         importSettings,

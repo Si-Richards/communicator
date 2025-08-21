@@ -1,4 +1,4 @@
-import { Send, Search, Mic, MicOff, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, ArrowUpDown } from 'lucide-react';
+import { Search, Users, UserPlus, ArrowUpDown, Send, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -10,7 +10,11 @@ import { useState, useEffect } from 'react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
-import { MessageStatus } from '@/types/xmpp';
+import { MessageComposer } from './MessageComposer';
+import { MessageBodyRenderer } from './MessageBodyRenderer';
+import { MessageStatus } from './MessageStatus';
+import { DateSeparator } from './DateSeparator';
+import { insertDateSeparators, formatFullDateTime } from '@/lib/dateUtils';
 
 export const DirectChatView = () => {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -149,22 +153,6 @@ export const DirectChatView = () => {
     }
   };
 
-  const getStatusIcon = (status?: MessageStatus) => {
-    switch (status) {
-      case 'sending':
-        return <Clock className="h-3 w-3 text-muted-foreground" />;
-      case 'sent':
-        return <Check className="h-3 w-3 text-muted-foreground" />;
-      case 'delivered':
-        return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
-      case 'read':
-        return <Eye className="h-3 w-3 text-primary" />;
-      case 'error':
-        return <AlertCircle className="h-3 w-3 text-destructive" />;
-      default:
-        return null;
-    }
-  };
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -386,8 +374,12 @@ export const DirectChatView = () => {
                         </div>
                       )}
                       
-                      {selectedConv.messages.map((message) => {
-                        const messageTimestamp = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                      {insertDateSeparators(selectedConv.messages).map((item) => {
+                        if ('type' in item && item.type === 'date-separator') {
+                          return <DateSeparator key={item.id} date={item.date} />;
+                        }
+
+                        const message = item as any; // Type assertion for message properties
                         const myBareJid = `${settings.xmpp.username}@${settings.xmpp.domain}`;
                         const isSent = message.from.split('/')[0] === myBareJid;
                         
@@ -402,13 +394,26 @@ export const DirectChatView = () => {
                                   ? 'bg-primary text-primary-foreground'
                                   : 'bg-muted'
                               }`}
+                              title={formatFullDateTime(message.timestamp)}
                             >
-                              <p className="text-sm">{message.body}</p>
-                              <div className={`flex items-center gap-1 mt-1 ${
+                              <MessageBodyRenderer 
+                                body={message.body}
+                                className={isSent ? 'text-primary-foreground' : 'text-foreground'}
+                              />
+                              <div className={`flex items-center justify-end gap-1 mt-1 ${
                                 isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
                               }`}>
-                                <span className="text-xs">{messageTimestamp}</span>
-                                {isSent && message.status && getStatusIcon(message.status)}
+                                {isSent && settings.chat?.showDeliveryStatus ? (
+                                  <MessageStatus 
+                                    status={message.status} 
+                                    timestamp={message.timestamp}
+                                    className={isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'}
+                                  />
+                                ) : (
+                                  <span className="text-xs">
+                                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
                                 {message.isFromArchive && (
                                   <span className="text-xs opacity-60">(archived)</span>
                                 )}
@@ -423,34 +428,18 @@ export const DirectChatView = () => {
               </ScrollArea>
             </div>
 
-            {/* Message Input - Sticky at Bottom */}
-            <div className="flex-shrink-0 p-4 border-t border-border bg-background sticky bottom-0 z-10">
-              <div className="flex gap-2">
-                <Input
-                  placeholder={connectionState !== 'connected' ? "You're offline — message will send when connected" : isListening ? "Listening..." : "Type a message..."}
-                  value={newMessage + (interimTranscript ? ` ${interimTranscript}` : '')}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  className="flex-1"
-                />
-                {isSupported && settings.dictation.enabled && connectionState === 'connected' && (
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={toggleDictation}
-                    className={isListening ? "bg-destructive text-destructive-foreground" : ""}
-                  >
-                    {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                  </Button>
-                )}
-                <Button 
-                  onClick={handleSendMessage} 
-                  disabled={!newMessage.trim()}
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+            {/* Message Composer */}
+            <MessageComposer
+              value={newMessage}
+              onChange={setNewMessage}
+              onSend={handleSendMessage}
+              onDictationToggle={isSupported && settings.dictation.enabled ? toggleDictation : undefined}
+              isListening={isListening}
+              isDictationEnabled={isSupported && settings.dictation.enabled}
+              disabled={connectionState !== 'connected'}
+              interimTranscript={interimTranscript}
+              placeholder="Type a message..."
+            />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
