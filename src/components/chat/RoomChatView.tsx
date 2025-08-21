@@ -1,10 +1,11 @@
-import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff, Globe } from 'lucide-react';
+import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff, Globe, ArrowUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useState, useEffect } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useXmpp } from '@/contexts/XmppContext';
@@ -28,6 +29,7 @@ export const RoomChatView = () => {
   const [loadingServices, setLoadingServices] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
+  const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   
   const { settings } = useSettings();
   const { 
@@ -58,6 +60,19 @@ export const RoomChatView = () => {
     const name = room.name || room.jid.split('@')[0] || '';
     return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            room.jid.includes(searchTerm);
+  });
+
+  const sortedRooms = [...filteredRooms].sort((a, b) => {
+    switch (sortMode) {
+      case 'newest':
+        return b.lastActivity.getTime() - a.lastActivity.getTime();
+      case 'a-z':
+        return a.name.localeCompare(b.name);
+      case 'z-a':
+        return b.name.localeCompare(a.name);
+      default:
+        return 0;
+    }
   });
 
   const selectedRoomData = rooms.find((room) => room.jid === selectedRoom);
@@ -356,19 +371,32 @@ export const RoomChatView = () => {
               </DialogContent>
             </Dialog>
           </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search rooms..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search rooms..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={sortMode} onValueChange={(value: 'newest' | 'a-z' | 'z-a') => setSortMode(value)}>
+              <SelectTrigger className="w-28">
+                <ArrowUpDown className="h-4 w-4 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest</SelectItem>
+                <SelectItem value="a-z">A–Z</SelectItem>
+                <SelectItem value="z-a">Z–A</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
         
         <ScrollArea className="flex-1 min-h-0">
-          {filteredRooms.length === 0 ? (
+          {sortedRooms.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-lg font-medium mb-2">No Rooms</p>
@@ -386,7 +414,7 @@ export const RoomChatView = () => {
               )}
             </div>
           ) : (
-            filteredRooms.map((room) => {
+            sortedRooms.map((room) => {
               const lastMessage = room.messages.length > 0 
                 ? room.messages[room.messages.length - 1].body
                 : 'No messages';

@@ -4,6 +4,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { DirectChatView } from '@/components/chat/DirectChatView';
 import { RoomChatView } from '@/components/chat/RoomChatView';
+import { useXmpp } from '@/contexts/XmppContext';
+import { useSettings } from '@/contexts/SettingsContext';
 
 const Chat = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -11,6 +13,9 @@ const Chat = () => {
     const tab = searchParams.get('tab');
     return tab === 'rooms' ? 'rooms' : 'direct';
   });
+
+  const { connectionState, connect } = useXmpp();
+  const { settings } = useSettings();
 
   useEffect(() => {
     // Update URL when tab changes
@@ -20,6 +25,16 @@ const Chat = () => {
       setSearchParams({});
     }
   }, [activeTab, setSearchParams]);
+
+  // Safety net: auto-connect when visiting chat page
+  useEffect(() => {
+    if ((connectionState === 'disconnected' || connectionState === 'error') && settings?.xmpp) {
+      const { websocketUrl, domain, username, password } = settings.xmpp;
+      if (websocketUrl && domain && username && password) {
+        connect().catch(console.error);
+      }
+    }
+  }, [connectionState, settings?.xmpp, connect]);
 
   return (
     <div className="h-full min-h-screen flex flex-col overflow-hidden">

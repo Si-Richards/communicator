@@ -1,10 +1,11 @@
-import { Send, Search, Mic, MicOff, Wifi, WifiOff, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle } from 'lucide-react';
+import { Send, Search, Mic, MicOff, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, ArrowUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useState, useEffect } from 'react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -19,6 +20,7 @@ export const DirectChatView = () => {
   const [newJid, setNewJid] = useState('');
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
+  const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   const { settings } = useSettings();
   const { 
     connectionState, 
@@ -61,6 +63,19 @@ export const DirectChatView = () => {
     const name = conv.name || conv.jid.split('@')[0] || '';
     return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            conv.jid.includes(searchTerm);
+  });
+
+  const sortedConversations = [...filteredConversations].sort((a, b) => {
+    switch (sortMode) {
+      case 'newest':
+        return b.lastActivity.getTime() - a.lastActivity.getTime();
+      case 'a-z':
+        return a.name.localeCompare(b.name);
+      case 'z-a':
+        return b.name.localeCompare(a.name);
+      default:
+        return 0;
+    }
   });
 
   const filteredContacts = contacts.filter((contact) => {
@@ -234,6 +249,17 @@ export const DirectChatView = () => {
                 </DialogContent>
               </Dialog>
             </div>
+            <Select value={sortMode} onValueChange={(value: 'newest' | 'a-z' | 'z-a') => setSortMode(value)}>
+              <SelectTrigger className="w-28">
+                <ArrowUpDown className="h-4 w-4 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest</SelectItem>
+                <SelectItem value="a-z">A–Z</SelectItem>
+                <SelectItem value="z-a">Z–A</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -247,7 +273,7 @@ export const DirectChatView = () => {
         </div>
         
         <ScrollArea className="flex-1 min-h-0">
-          {filteredConversations.length === 0 && searchTerm === '' ? (
+          {sortedConversations.length === 0 && searchTerm === '' ? (
             <div className="p-8 text-center text-muted-foreground">
               <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-lg font-medium mb-2">No Conversations</p>
@@ -257,21 +283,15 @@ export const DirectChatView = () => {
                   : 'Conversations will appear here when connected'
                 }
               </p>
-              {connectionState !== 'connected' && (
-                <div className="flex items-center justify-center gap-2 mt-2">
-                  <WifiOff className="h-4 w-4" />
-                  <span className="text-xs">Offline</span>
-                </div>
-              )}
             </div>
-          ) : filteredConversations.length === 0 ? (
+          ) : sortedConversations.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-lg font-medium mb-2">No Results</p>
               <p className="text-sm">No conversations match your search</p>
             </div>
           ) : (
-            filteredConversations.map((conversation) => {
+            sortedConversations.map((conversation) => {
               const lastMessage = conversation.messages.length > 0 
                 ? conversation.messages[conversation.messages.length - 1].body
                 : 'No messages';

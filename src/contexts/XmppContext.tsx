@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useEffect,
 } from "react";
 import { client, xml, jid as xmppJid } from "@xmpp/client";
 import { useSettings } from "./SettingsContext";
@@ -126,6 +127,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const pingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectBackoffRef = useRef(1000); // Start with 1 second
+  const autoTriedRef = useRef(false);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -1263,6 +1265,27 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, details: errorMsg };
     }
   }, [connect, settings?.xmpp?.websocketUrl]);
+
+  /* ---------- auto-connect ---------- */
+
+  useEffect(() => {
+    if (!settings?.xmpp?.autoConnect) return;
+    if (connectionState === 'connecting' || connectionState === 'connected') return;
+    
+    const { websocketUrl, domain, username, password } = settings.xmpp;
+    if (!websocketUrl || !domain || !username || !password) return;
+    
+    // Only try once per settings change
+    if (autoTriedRef.current) return;
+    autoTriedRef.current = true;
+    
+    connect().catch(console.error);
+  }, [settings?.xmpp?.autoConnect, settings?.xmpp?.websocketUrl, settings?.xmpp?.domain, settings?.xmpp?.username, settings?.xmpp?.password, connectionState, connect]);
+
+  // Reset auto-tried flag when settings change
+  useEffect(() => {
+    autoTriedRef.current = false;
+  }, [settings?.xmpp?.websocketUrl, settings?.xmpp?.domain, settings?.xmpp?.username, settings?.xmpp?.password]);
 
   /* ---------- value ---------- */
 
