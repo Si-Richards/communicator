@@ -233,22 +233,6 @@ export const DirectChatView = () => {
                   </div>
                 </DialogContent>
               </Dialog>
-              
-              {connectionState === 'connected' ? (
-                <Badge variant="default" className="text-xs">
-                  <Wifi className="h-3 w-3 mr-1" />
-                  Connected
-                </Badge>
-              ) : connectionState === 'connecting' ? (
-                <Badge variant="secondary" className="text-xs">
-                  Connecting...
-                </Badge>
-              ) : (
-                <Badge variant="destructive" className="text-xs">
-                  <WifiOff className="h-3 w-3 mr-1" />
-                  Offline
-                </Badge>
-              )}
             </div>
           </div>
           <div className="relative">

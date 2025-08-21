@@ -122,6 +122,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const myBareJidRef = useRef<string>("");
   const outboxRef = useRef<Array<{ toBareJid: string; body: string; id: string }>>([]);
   const manualDisconnectRef = useRef(false);
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectBackoffRef = useRef(1000); // Start with 1 second
 
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -503,15 +507,41 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     xmpp.on("status", (s: string) => {
       if (genRef.current !== myGen) return;
-      if (s === "online") setConnectionState("connected");
-      if (s === "disconnect" || s === "disconnecting") setConnectionState("disconnected");
+      console.log(`XMPP status: ${s} at ${new Date().toISOString()}`);
+      
+      if (s === "online") {
+        setConnectionState("connected");
+        reconnectBackoffRef.current = 1000; // Reset backoff on successful connection
+      }
+      if (s === "disconnect" || s === "disconnecting") {
+        setConnectionState("disconnected");
+        if (!manualDisconnectRef.current) {
+          console.log("Unexpected disconnect, scheduling reconnect");
+          scheduleReconnect("status_disconnect");
+        }
+      }
     });
 
     xmpp.on("error", (err: any) => {
       if (genRef.current !== myGen) return;
       console.error("XMPP error:", err);
       setConnectionState("error");
+      if (!manualDisconnectRef.current) {
+        scheduleReconnect("error");
+      }
     });
+
+    // Try to capture WebSocket close events for diagnostics
+    try {
+      if (xmpp.transport?.socket) {
+        xmpp.transport.socket.addEventListener('close', (event: CloseEvent) => {
+          if (genRef.current !== myGen) return;
+          console.log(`WebSocket closed: code=${event.code}, reason="${event.reason}" at ${new Date().toISOString()}`);
+        });
+      }
+    } catch (e) {
+      // Safely ignore if transport internals differ
+    }
 
     xmpp.on("stanza", (stanza: any) => {
       if (genRef.current !== myGen) return;
@@ -528,6 +558,9 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await xmpp.send(xml("presence")); // announce available
         await fetchRoster();
+        
+        // Start keepalive pings
+        startKeepalive(xmpp, myGen);
         
         // Re-join previously joined rooms
         setTimeout(async () => {
@@ -584,6 +617,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     try {
+      manualDisconnectRef.current = false; // Reset manual disconnect flag
       await xmpp.start();
       xmppRef.current = xmpp;
       return true;
@@ -594,7 +628,107 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [fetchRoster, handleIncomingDirectMessage, handleIncomingRoomMessage, handlePresence, settings?.xmpp]);
 
+  /* ---------- keepalive and reconnection ---------- */
+
+  const startKeepalive = useCallback((xmpp: ReturnType<typeof client>, generation: number) => {
+    // Clear any existing ping interval
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+    }
+
+    console.log("Starting keepalive pings");
+    pingIntervalRef.current = setInterval(async () => {
+      if (genRef.current !== generation || !xmpp) return;
+
+      try {
+        const domain = settings?.xmpp?.domain;
+        if (!domain) return;
+
+        const pingId = crypto.randomUUID();
+        const ping = xml("iq", { type: "get", to: domain, id: pingId },
+          xml("ping", "urn:xmpp:ping")
+        );
+
+        console.log(`Sending keepalive ping at ${new Date().toISOString()}`);
+
+        // Set a timeout for the ping
+        pingTimeoutRef.current = setTimeout(() => {
+          if (genRef.current === generation) {
+            console.log("Ping timeout, triggering reconnect");
+            scheduleReconnect("ping_timeout");
+          }
+        }, 10000); // 10 second timeout
+
+        const response = await xmpp.iqCaller.request(ping, 10000);
+        
+        // Clear timeout on successful response
+        if (pingTimeoutRef.current) {
+          clearTimeout(pingTimeoutRef.current);
+          pingTimeoutRef.current = null;
+        }
+        
+        console.log(`Keepalive pong received at ${new Date().toISOString()}`);
+      } catch (e) {
+        if (genRef.current === generation) {
+          console.error("Keepalive ping failed:", e);
+          scheduleReconnect("ping_failed");
+        }
+      }
+    }, 60000); // Ping every 60 seconds
+  }, [settings?.xmpp?.domain]);
+
+  const scheduleReconnect = useCallback((reason: string) => {
+    if (manualDisconnectRef.current) {
+      console.log("Skipping reconnect - manual disconnect");
+      return;
+    }
+
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
+    const delay = Math.min(reconnectBackoffRef.current, 30000); // Cap at 30 seconds
+    console.log(`Scheduling reconnect in ${delay}ms due to: ${reason}`);
+
+    reconnectTimeoutRef.current = setTimeout(async () => {
+      if (manualDisconnectRef.current) return;
+
+      console.log(`Attempting reconnect due to: ${reason}`);
+      try {
+        const success = await connect();
+        if (!success) {
+          // Double the backoff for next attempt
+          reconnectBackoffRef.current = Math.min(reconnectBackoffRef.current * 2, 30000);
+          scheduleReconnect("reconnect_failed");
+        }
+      } catch (e) {
+        console.error("Reconnect attempt failed:", e);
+        reconnectBackoffRef.current = Math.min(reconnectBackoffRef.current * 2, 30000);
+        scheduleReconnect("reconnect_exception");
+      }
+    }, delay);
+
+    // Increase backoff for next time
+    reconnectBackoffRef.current = Math.min(reconnectBackoffRef.current * 2, 30000);
+  }, [connect]);
+
   const disconnect = useCallback(async () => {
+    manualDisconnectRef.current = true;
+    
+    // Clear keepalive timers
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+    if (pingTimeoutRef.current) {
+      clearTimeout(pingTimeoutRef.current);
+      pingTimeoutRef.current = null;
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    
     if (xmppRef.current) {
       try { await xmppRef.current.stop(); } catch {}
       xmppRef.current = null;
@@ -819,12 +953,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const presence = xml("presence", { to: `${roomJid}/${room.nick}`, type: "unavailable" });
     xmpp.send(presence).catch(console.error);
 
-    // Optimistically remove self from occupants and update joined status
-    setRooms(prev => prev.map(r => r.jid === roomJid ? { 
-      ...r, 
-      joined: false,
-      occupants: r.occupants.filter(o => o.nick !== r.nick)
-    } : r));
+    // Remove room entirely from the list
+    setRooms(prev => prev.filter(r => r.jid !== roomJid));
   }, [rooms]);
 
   const destroyRoom = useCallback(async (roomJid: string, reason?: string) => {
