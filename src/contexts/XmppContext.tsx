@@ -125,6 +125,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const myBareJidRef = useRef<string>("");
   const outboxRef = useRef<Array<{ toBareJid: string; body: string; id: string }>>([]);
   const manualDisconnectRef = useRef(false);
+  const connectingRef = useRef(false); // Prevent concurrent connections
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -509,152 +510,185 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /* ---------- connect/disconnect ---------- */
 
-  const connect = useCallback(async (): Promise<boolean> => {
-    const ws = settings?.xmpp?.websocketUrl;
-    const domain = settings?.xmpp?.domain;
-    const username = settings?.xmpp?.username;
-    const password = settings?.xmpp?.password;
-    const resource = settings?.xmpp?.resource || "web";
+  const connect = useCallback(async () => {
+    // Prevent concurrent connections
+    if (connectingRef.current || connectionState === 'connecting') {
+      console.log("Connection already in progress, skipping");
+      return false;
+    }
 
-    if (!ws || !domain || !username || !password) {
-      console.error("XMPP connect: missing settings");
+    if (!settings?.xmpp?.websocketUrl || !settings?.xmpp?.domain || !settings?.xmpp?.username || !settings?.xmpp?.password) {
+      setLastError("Missing XMPP configuration");
       setConnectionState("error");
       return false;
     }
 
+    connectingRef.current = true;
+    setLastAttemptAt(new Date());
+    setLastError(null);
+    setConnectionState("connecting");
+
+    // Cleanup any existing connection
     if (xmppRef.current) {
-      try { await xmppRef.current.stop(); } catch {}
+      try { 
+        await xmppRef.current.stop(); 
+      } catch (e) {
+        console.warn("Error stopping existing connection:", e);
+      }
       xmppRef.current = null;
     }
 
-    setConnectionState("connecting");
-    const myGen = bumpGen();
-    myBareJidRef.current = `${username}@${domain}`;
+    const generation = bumpGen();
+    const jid = `${settings.xmpp.username}@${settings.xmpp.domain}`;
+    myBareJidRef.current = jid;
 
-    const xmpp = client({ service: ws, domain, username, password, resource });
-
-    xmpp.on("status", (s: string) => {
-      if (genRef.current !== myGen) return;
-      console.log(`XMPP status: ${s} at ${new Date().toISOString()}`);
-      
-      if (s === "online") {
-        setConnectionState("connected");
-        reconnectBackoffRef.current = 1000; // Reset backoff on successful connection
-      }
-      if (s === "disconnect" || s === "disconnecting") {
-        setConnectionState("disconnected");
-        if (!manualDisconnectRef.current) {
-          console.log("Unexpected disconnect, scheduling reconnect");
-          scheduleReconnect("status_disconnect");
-        }
-      }
-    });
-
-    xmpp.on("error", (err: any) => {
-      if (genRef.current !== myGen) return;
-      console.error("XMPP error:", err);
-      setConnectionState("error");
-      if (!manualDisconnectRef.current) {
-        scheduleReconnect("error");
-      }
-    });
-
-    // Try to capture WebSocket close events for diagnostics
     try {
-      if (xmpp.transport?.socket) {
-        xmpp.transport.socket.addEventListener('close', (event: CloseEvent) => {
-          if (genRef.current !== myGen) return;
-          console.log(`WebSocket closed: code=${event.code}, reason="${event.reason}" at ${new Date().toISOString()}`);
-        });
-      }
-    } catch (e) {
-      // Safely ignore if transport internals differ
-    }
+      const xmpp = client({
+        service: settings.xmpp.websocketUrl,
+        domain: settings.xmpp.domain,
+        username: settings.xmpp.username,
+        password: settings.xmpp.password,
+      });
 
-    xmpp.on("stanza", (stanza: any) => {
-      if (genRef.current !== myGen) return;
-      if (stanza.is("message")) {
-        const t = stanza.attrs.type;
-        if (t === "groupchat") return handleIncomingRoomMessage(stanza);
-        return handleIncomingDirectMessage(stanza);
-      }
-      if (stanza.is("presence")) return handlePresence(stanza);
-    });
+      // Handle connection status
+      xmpp.on("status", (status) => {
+        if (genRef.current !== generation) return;
+        console.log(`XMPP status: ${status} at ${new Date().toISOString()}`);
 
-    xmpp.on("online", async () => {
-      if (genRef.current !== myGen) return;
-      try {
-        await xmpp.send(xml("presence")); // announce available
-        await fetchRoster();
-        
-        // Start keepalive pings
-        startKeepalive(xmpp, myGen);
-        
-        // Re-join previously joined rooms
-        setTimeout(async () => {
-          for (const roomJid of rejoinRoomsRef.current) {
+        if (status === "online") {
+          setConnectionState("connected");
+          reconnectBackoffRef.current = 1000; // Reset backoff on successful connection
+          connectingRef.current = false; // Clear connecting flag
+          
+          // Post-connection initialization with proper connection checks
+          setTimeout(async () => {
+            if (genRef.current !== generation || !xmppRef.current || connectionState !== "connected") return;
+            
             try {
-              const room = rooms.find(r => r.jid === roomJid);
-              if (room && room.nick) {
-                console.log(`Re-joining room: ${roomJid} as ${room.nick}`);
-                ensureRoom(roomJid, { nick: room.nick, joined: true });
-                const mucX = xml("x", "http://jabber.org/protocol/muc");
-                const presence = xml("presence", { to: `${roomJid}/${room.nick}` }, mucX);
-                await xmpp.send(presence);
+              // Start keepalive after confirming connection
+              startKeepalive(xmpp, generation);
+              
+              // Fetch roster safely
+              await fetchRoster();
+              
+              // Set initial presence
+              setPresence('available');
+            } catch (e) {
+              console.warn("Post-online roster/presence failed:", e);
+            }
+          }, 100);
+
+          // Re-join rooms with connection verification
+          setTimeout(async () => {
+            if (genRef.current !== generation || !xmppRef.current || connectionState !== "connected") return;
+            
+            for (const roomJid of rejoinRoomsRef.current) {
+              try {
+                const room = rooms.find(r => r.jid === roomJid);
+                if (room && room.joined && room.nick) {
+                  console.log(`Re-joining room: ${roomJid}`);
+                  ensureRoom(roomJid, { nick: room.nick, joined: true });
+                  const mucX = xml("x", "http://jabber.org/protocol/muc");
+                  const presence = xml("presence", { to: `${roomJid}/${room.nick}` }, mucX);
+                  await xmpp.send(presence);
+                }
+              } catch (e) {
+                console.error("Re-join room failed", e);
               }
-            } catch (e) {
-              console.error("Re-join room failed", e);
             }
-          }
-        }, 500);
-        
-        // Load recent conversation history
-        setTimeout(async () => {
-          for (const jid of loadHistoryRef.current) {
-            try {
-              console.log(`Loading history for conversation: ${jid}`);
-              ensureConversation(jid);
-              const conv = conversations.find(c => c.jid === jid);
-              const before = conv?.mamBefore ?? "";
-              const queryId = crypto.randomUUID();
+          }, 500);
+          
+          // Load recent conversation history with robust connection checks
+          setTimeout(async () => {
+            if (genRef.current !== generation || !xmppRef.current || connectionState !== "connected") return;
+            
+            for (const jid of loadHistoryRef.current) {
+              try {
+                // Double-check connection state before each history load
+                if (!xmppRef.current || connectionState !== "connected") {
+                  console.log(`Skipping history load for ${jid} - connection lost`);
+                  break;
+                }
+                
+                console.log(`Loading history for conversation: ${jid}`);
+                ensureConversation(jid);
+                const conv = conversations.find(c => c.jid === jid);
+                const before = conv?.mamBefore ?? "";
+                const queryId = crypto.randomUUID();
 
-              const iq = xml(
-                "iq",
-                { type: "set", id: queryId },
-                xml("query", "urn:xmpp:mam:2",
-                  xml("x", { xmlns: "jabber:x:data", type: "submit" },
-                    xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
-                    xml("field", { var: "with" }, xml("value", {}, jid)),
-                  ),
-                  xml("set", "http://jabber.org/protocol/rsm",
-                    before === "" ? xml("before") : xml("before", {}, before),
-                    xml("max", {}, "10"),
+                const iq = xml(
+                  "iq",
+                  { type: "set", id: queryId },
+                  xml("query", "urn:xmpp:mam:2",
+                    xml("x", { xmlns: "jabber:x:data", type: "submit" },
+                      xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
+                      xml("field", { var: "with" }, xml("value", {}, jid)),
+                    ),
+                    xml("set", "http://jabber.org/protocol/rsm",
+                      before === "" ? xml("before") : xml("before", {}, before),
+                      xml("max", {}, "10"),
+                    )
                   )
-                )
-              );
+                );
 
-              await xmpp.iqCaller.request(iq);
-            } catch (e) {
-              console.error(`Loading history for ${jid} failed:`, e);
+                // Use timeout to prevent hanging
+                await Promise.race([
+                  xmpp.iqCaller.request(iq),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error("History load timeout")), 10000))
+                ]);
+              } catch (e) {
+                console.error(`Loading history for ${jid} failed:`, e);
+              }
             }
+          }, 1000);
+        } else if (status === "disconnect") {
+          setConnectionState("disconnected");
+          connectingRef.current = false; // Clear connecting flag on disconnect
+          if (!manualDisconnectRef.current) {
+            console.log("Unexpected disconnect, scheduling reconnect");
+            scheduleReconnect("status_disconnect");
           }
-        }, 1000);
-      } catch (e) {
-        console.warn("Post-online init failed:", e);
-      }
-    });
+        } else if (status === "connecting") {
+          setConnectionState("connecting");
+        }
+      });
 
-    try {
+      xmpp.on("error", (e) => {
+        if (genRef.current !== generation) return;
+        console.error("XMPP error:", e);
+        setLastError(`XMPP error: ${e?.message || String(e)}`);
+        setConnectionState("error");
+        connectingRef.current = false; // Clear connecting flag on error
+        if (!manualDisconnectRef.current) {
+          scheduleReconnect("error");
+        }
+      });
+
+      xmpp.on("stanza", (stanza) => {
+        if (genRef.current !== generation) return;
+        if (stanza.is("message")) {
+          if (stanza.attrs.type === "groupchat") {
+            handleIncomingRoomMessage(stanza);
+          } else {
+            handleIncomingDirectMessage(stanza);
+          }
+        } else if (stanza.is("presence")) {
+          handlePresence(stanza);
+        }
+      });
+
       manualDisconnectRef.current = false; // Reset manual disconnect flag
       await xmpp.start();
       xmppRef.current = xmpp;
       return true;
     } catch (e) {
       console.error("XMPP start failed:", e);
+      setLastError(`Connection failed: ${e?.message || String(e)}`);
       setConnectionState("error");
+      connectingRef.current = false; // Clear connecting flag on failure
       return false;
     }
-  }, [fetchRoster, handleIncomingDirectMessage, handleIncomingRoomMessage, handlePresence, settings?.xmpp]);
+  }, [fetchRoster, handleIncomingDirectMessage, handleIncomingRoomMessage, handlePresence, settings?.xmpp, connectionState, rooms, conversations, ensureConversation, ensureRoom, setPresence]);
 
   /* ---------- keepalive and reconnection ---------- */
 
@@ -706,8 +740,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [settings?.xmpp?.domain]);
 
   const scheduleReconnect = useCallback((reason: string) => {
-    if (manualDisconnectRef.current) {
-      console.log("Skipping reconnect - manual disconnect");
+    if (manualDisconnectRef.current || connectingRef.current) {
+      console.log("Skipping reconnect - manual disconnect or already connecting");
       return;
     }
 
@@ -719,7 +753,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     console.log(`Scheduling reconnect in ${delay}ms due to: ${reason}`);
 
     reconnectTimeoutRef.current = setTimeout(async () => {
-      if (manualDisconnectRef.current) return;
+      if (manualDisconnectRef.current || connectingRef.current) return;
 
       console.log(`Attempting reconnect due to: ${reason}`);
       try {
@@ -728,6 +762,9 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Double the backoff for next attempt
           reconnectBackoffRef.current = Math.min(reconnectBackoffRef.current * 2, 30000);
           scheduleReconnect("reconnect_failed");
+        } else {
+          // Reset backoff on successful reconnection
+          reconnectBackoffRef.current = 1000;
         }
       } catch (e) {
         console.error("Reconnect attempt failed:", e);
@@ -742,6 +779,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const disconnect = useCallback(async () => {
     manualDisconnectRef.current = true;
+    connectingRef.current = false; // Clear connecting flag
     
     // Clear keepalive timers
     if (pingIntervalRef.current) {
@@ -769,7 +807,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const sendMessage = useCallback(async (toBareJid: string, text: string) => {
     const xmpp = xmppRef.current;
-    if (!xmpp) return false;
+    if (!xmpp || connectionState !== "connected") return false;
     const to = xmppJid(toBareJid).bare().toString();
     const id = crypto.randomUUID();
 
@@ -807,7 +845,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const markMessageRead = useCallback((messageId: string, to: string) => {
     const xmpp = xmppRef.current;
-    if (!xmpp) return;
+    if (!xmpp || connectionState !== "connected") return;
     const toBare = xmppJid(to).bare().toString();
     const marker = xml(
       "message",
@@ -819,7 +857,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const markConversationRead = useCallback((bareJid: string) => {
     const xmpp = xmppRef.current;
-    if (!xmpp) return;
+    if (!xmpp || connectionState !== "connected") return;
     const peer = xmppJid(bareJid).bare().toString();
 
     setConversations(prev => {
@@ -848,7 +886,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadConversationHistory = useCallback(async (bareJid: string) => {
     const xmpp = xmppRef.current;
-    if (!xmpp) throw new Error("Not connected");
+    if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
 
     ensureConversation(bareJid);
 
@@ -1125,7 +1163,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadRoomHistory = useCallback(async (roomJid: string) => {
     const xmpp = xmppRef.current;
-    if (!xmpp) throw new Error("Not connected");
+    if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
 
     // Ensure room exists
     ensureRoom(roomJid);
@@ -1215,7 +1253,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const listMucServices = useCallback(async (): Promise<string[]> => {
     const xmpp = xmppRef.current;
-    if (!xmpp) throw new Error("Not connected");
+    if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
     
     const domain = settings?.xmpp?.domain;
     if (!domain) throw new Error("No domain configured");
@@ -1250,7 +1288,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const listRooms = useCallback(async (serviceJid: string): Promise<Array<{jid: string; name: string}>> => {
     const xmpp = xmppRef.current;
-    if (!xmpp) throw new Error("Not connected");
+    if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
     
     const iq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
       xml("query", "http://jabber.org/protocol/disco#items")
