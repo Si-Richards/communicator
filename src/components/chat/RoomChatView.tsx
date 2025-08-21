@@ -577,14 +577,16 @@ export const RoomChatView = () => {
                                   body={message.body}
                                   className={isSent ? 'text-primary-foreground' : 'text-foreground'}
                                 />
-                                <div className={`flex items-center justify-end gap-1 mt-1 ${
-                                  isSent ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                                }`}>
-                                  <span className="text-xs">
+                                <div className="flex items-center justify-end gap-1 mt-1">
+                                  <span className={`text-xs opacity-80 ${
+                                    isSent ? 'text-primary-foreground' : 'text-muted-foreground'
+                                  }`}>
                                     {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                   {message.isFromArchive && (
-                                    <span className="text-xs opacity-60">(archived)</span>
+                                    <span className={`text-xs opacity-60 ${
+                                      isSent ? 'text-primary-foreground' : 'text-muted-foreground'
+                                    }`}>(archived)</span>
                                   )}
                                 </div>
                               </div>

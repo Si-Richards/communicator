@@ -70,7 +70,7 @@ export const MessageStatus: React.FC<MessageStatusProps> = ({
       <Tooltip>
         <TooltipTrigger asChild>
           <div className={`flex items-center gap-1 ${className}`}>
-            <span className="text-xs text-muted-foreground">{timeString}</span>
+            <span className="text-xs opacity-80">{timeString}</span>
             {statusDetails.icon}
           </div>
         </TooltipTrigger>

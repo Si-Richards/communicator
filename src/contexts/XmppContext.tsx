@@ -76,6 +76,7 @@ type Ctx = {
   connectionState: ConnectionState;
   conversations: Conversation[];
   contacts: Contact[];
+  userPresence?: { presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable'; status?: string };
   connect: () => Promise<boolean>;
   disconnect: () => Promise<void>;
   sendMessage: (toBareJid: string, body: string) => Promise<boolean>;
@@ -83,6 +84,7 @@ type Ctx = {
   loadConversationHistory: (bareJid: string) => Promise<void>;
   markMessageRead: (messageId: string, to: string) => void;
   markConversationRead: (bareJid: string) => void;
+  setPresence: (presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable', status?: string) => void;
 
   // muc
   rooms: MucRoom[];
@@ -135,6 +137,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rooms, setRooms] = useState<MucRoom[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
+  const [userPresence, setUserPresence] = useState<{ presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable'; status?: string }>({ presence: 'available' });
 
   /* ---------- persistence ---------- */
 
@@ -280,6 +283,29 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return copy;
       }
     });
+  }, []);
+
+  /* ---------- presence management ---------- */
+
+  const setPresence = useCallback((presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable', status?: string) => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) return;
+
+    setUserPresence({ presence, status });
+
+    const presenceStanza = xml("presence");
+
+    // Add show element for non-available presence
+    if (presence !== 'available') {
+      presenceStanza.append(xml("show", {}, presence));
+    }
+
+    // Add status message if provided
+    if (status) {
+      presenceStanza.append(xml("status", {}, status));
+    }
+
+    xmpp.send(presenceStanza).catch(console.error);
   }, []);
 
   /* ---------- roster/presence ---------- */
@@ -1296,6 +1322,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     connectionState,
     conversations,
     contacts,
+    userPresence,
     connect,
     disconnect,
     sendMessage,
@@ -1303,6 +1330,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadConversationHistory,
     markMessageRead,
     markConversationRead,
+    setPresence,
 
     // muc
     rooms,
@@ -1332,6 +1360,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     connectionState,
     conversations,
     contacts,
+    userPresence,
     connect,
     disconnect,
     sendMessage,
@@ -1339,6 +1368,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadConversationHistory,
     markMessageRead,
     markConversationRead,
+    setPresence,
     rooms,
     createRoom,
     joinRoom,

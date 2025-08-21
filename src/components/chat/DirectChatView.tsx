@@ -14,6 +14,7 @@ import { MessageComposer } from './MessageComposer';
 import { MessageBodyRenderer } from './MessageBodyRenderer';
 import { MessageStatus } from './MessageStatus';
 import { DateSeparator } from './DateSeparator';
+import { PresencePicker } from './PresencePicker';
 import { insertDateSeparators, formatFullDateTime } from '@/lib/dateUtils';
 
 export const DirectChatView = () => {
@@ -30,13 +31,15 @@ export const DirectChatView = () => {
     connectionState, 
     conversations, 
     contacts, 
+    userPresence,
     connect, 
     disconnect, 
     sendMessage,
     startConversation,
     loadConversationHistory,
     markMessageRead,
-    markConversationRead
+    markConversationRead,
+    setPresence
   } = useXmpp();
   
   const {
@@ -159,6 +162,17 @@ export const DirectChatView = () => {
       {/* Conversations List */}
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">
+          {/* User Presence */}
+          {connectionState === 'connected' && userPresence && (
+            <div className="mb-4">
+              <PresencePicker
+                currentPresence={userPresence.presence}
+                currentStatus={userPresence.status}
+                onPresenceChange={(presence, status) => setPresence(presence, status)}
+              />
+            </div>
+          )}
+          
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
@@ -217,12 +231,17 @@ export const DirectChatView = () => {
                                 <p className="font-medium text-sm truncate">{contact.name}</p>
                                 <p className="text-xs text-muted-foreground truncate">{contact.jid}</p>
                               </div>
-                              <Badge 
-                                variant={contact.presence === 'available' ? 'default' : 'secondary'}
-                                className="text-xs"
-                              >
-                                {contact.presence}
-                              </Badge>
+                               <div className="flex items-center">
+                                <div className={`w-2 h-2 rounded-full mr-2 ${
+                                  contact.presence === 'available' ? 'bg-status-connected' :
+                                  contact.presence === 'away' ? 'bg-status-connecting' :
+                                  contact.presence === 'dnd' ? 'bg-status-error' :
+                                  'bg-status-disconnected'
+                                }`} />
+                                <span className="text-xs text-muted-foreground capitalize">
+                                  {contact.presence}
+                                </span>
+                              </div>
                             </div>
                           ))}
                           {filteredContacts.length === 0 && (
@@ -329,9 +348,31 @@ export const DirectChatView = () => {
                 <Avatar className="h-10 w-10">
                   <AvatarFallback>{getInitials(selectedConv.name)}</AvatarFallback>
                 </Avatar>
-                <div>
+                <div className="flex-1">
                   <h2 className="font-medium">{selectedConv.name}</h2>
-                  <p className="text-sm text-muted-foreground">{selectedConv.jid}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm text-muted-foreground">{selectedConv.jid}</p>
+                    {/* Contact presence indicator */}
+                    {(() => {
+                      const contact = contacts.find(c => c.jid === selectedConv.jid);
+                      if (contact) {
+                        return (
+                          <div className="flex items-center gap-1">
+                            <div className={`w-2 h-2 rounded-full ${
+                              contact.presence === 'available' ? 'bg-status-connected' :
+                              contact.presence === 'away' ? 'bg-status-connecting' :
+                              contact.presence === 'dnd' ? 'bg-status-error' :
+                              'bg-status-disconnected'
+                            }`} />
+                            <span className="text-xs text-muted-foreground capitalize">
+                              {contact.presence}
+                            </span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
                 </div>
               </div>
             </div>
