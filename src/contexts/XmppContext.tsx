@@ -98,6 +98,8 @@ type Ctx = {
   loadRoomHistory: (roomJid: string) => Promise<void>;
   markRoomRead: (roomJid: string) => void;
 
+  listMucServices: () => Promise<string[]>;
+  listRooms: (serviceJid: string) => Promise<Array<{jid: string; name: string}>>;
   // diagnostics (for SettingsPage)
   effectiveJid: string;
   lastError: string | null;
@@ -540,7 +542,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 "iq",
                 { type: "set", id: queryId },
                 xml("query", "urn:xmpp:mam:2",
-                  xml("x", "jabber:x:data",
+                  xml("x", { xmlns: "jabber:x:data", type: "submit" },
                     xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
                     xml("field", { var: "with" }, xml("value", {}, jid)),
                   ),
@@ -677,7 +679,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       "iq",
       { type: "set", id: queryId },
       xml("query", "urn:xmpp:mam:2",
-        xml("x", "jabber:x:data",
+        xml("x", { xmlns: "jabber:x:data", type: "submit" },
           xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
           xml("field", { var: "with" }, xml("value", {}, bareJid)),
         ),
@@ -955,7 +957,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       "iq",
       { type: "set", to: roomJid, id: queryId },
       xml("query", "urn:xmpp:mam:2",
-        xml("x", "jabber:x:data",
+        xml("x", { xmlns: "jabber:x:data", type: "submit" },
           xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
         ),
         xml("set", "http://jabber.org/protocol/rsm",
@@ -1029,6 +1031,63 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, unreadCount: 0 } : r));
   }, []);
 
+  const listMucServices = useCallback(async (): Promise<string[]> => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) throw new Error("Not connected");
+    
+    const domain = settings?.xmpp?.domain;
+    if (!domain) throw new Error("No domain configured");
+    
+    const iq = xml("iq", { type: "get", to: domain, id: crypto.randomUUID() },
+      xml("query", "http://jabber.org/protocol/disco#items")
+    );
+    
+    try {
+      const res: any = await xmpp.iqCaller.request(iq);
+      const items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+      const services: string[] = [];
+      
+      for (const item of items) {
+        const jid = item.attrs?.jid;
+        if (jid && jid.includes("conference")) {
+          services.push(jid);
+        }
+      }
+      
+      // Fallback to default conference service if none found
+      if (services.length === 0) {
+        services.push(`conference.${domain}`);
+      }
+      
+      return services;
+    } catch (e) {
+      console.error("Failed to discover MUC services:", e);
+      return [`conference.${domain}`]; // fallback
+    }
+  }, [settings?.xmpp?.domain]);
+
+  const listRooms = useCallback(async (serviceJid: string): Promise<Array<{jid: string; name: string}>> => {
+    const xmpp = xmppRef.current;
+    if (!xmpp) throw new Error("Not connected");
+    
+    const iq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
+      xml("query", "http://jabber.org/protocol/disco#items")
+    );
+    
+    try {
+      const res: any = await xmpp.iqCaller.request(iq);
+      const items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+      
+      return items.map((item: any) => ({
+        jid: item.attrs?.jid || "",
+        name: item.attrs?.name || item.attrs?.jid?.split("@")[0] || "Unknown Room"
+      })).filter((room: any) => room.jid);
+    } catch (e) {
+      console.error("Failed to list rooms:", e);
+      return [];
+    }
+  }, []);
+
   const runWebSocketDiagnostics = useCallback(async () => {
     setLastAttemptAt(new Date());
     setLastError(null);
@@ -1083,6 +1142,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadRoomHistory,
     markRoomRead,
 
+    // room discovery
+    listMucServices,
+    listRooms,
+
     // diagnostics
     effectiveJid,
     lastError,
@@ -1112,6 +1175,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     muteRoom,
     loadRoomHistory,
     markRoomRead,
+    listMucServices,
+    listRooms,
     effectiveJid,
     lastError,
     lastAttemptAt,

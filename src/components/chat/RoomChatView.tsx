@@ -1,4 +1,4 @@
-import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff } from 'lucide-react';
+import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -20,6 +20,12 @@ export const RoomChatView = () => {
   const [joinRoomNick, setJoinRoomNick] = useState('');
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [isJoinRoomOpen, setIsJoinRoomOpen] = useState(false);
+  const [isBrowseRoomsOpen, setIsBrowseRoomsOpen] = useState(false);
+  const [availableServices, setAvailableServices] = useState<string[]>([]);
+  const [selectedService, setSelectedService] = useState<string>('');
+  const [availableRooms, setAvailableRooms] = useState<Array<{jid: string; name: string}>>([]);
+  const [loadingServices, setLoadingServices] = useState(false);
+  const [loadingRooms, setLoadingRooms] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
   
   const { settings } = useSettings();
@@ -37,7 +43,9 @@ export const RoomChatView = () => {
     setRoomAffiliation,
     muteRoom,
     loadRoomHistory,
-    markRoomRead
+    markRoomRead,
+    listMucServices,
+    listRooms
   } = useXmpp();
 
   const filteredRooms = rooms.filter((room) => {
@@ -97,6 +105,56 @@ export const RoomChatView = () => {
       console.error('Failed to load room history:', error);
     } finally {
       setLoadingHistory(null);
+    }
+  };
+
+  const handleBrowseRooms = async () => {
+    if (connectionState !== 'connected') return;
+    
+    setIsBrowseRoomsOpen(true);
+    setLoadingServices(true);
+    try {
+      const services = await listMucServices();
+      setAvailableServices(services);
+      if (services.length > 0) {
+        setSelectedService(services[0]);
+        await loadRoomsForService(services[0]);
+      }
+    } catch (error) {
+      console.error('Failed to browse rooms:', error);
+    } finally {
+      setLoadingServices(false);
+    }
+  };
+
+  const loadRoomsForService = async (serviceJid: string) => {
+    if (!serviceJid || connectionState !== 'connected') return;
+    
+    setLoadingRooms(true);
+    try {
+      const roomList = await listRooms(serviceJid);
+      setAvailableRooms(roomList);
+    } catch (error) {
+      console.error('Failed to load rooms for service:', error);
+      setAvailableRooms([]);
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
+  const handleServiceChange = (serviceJid: string) => {
+    setSelectedService(serviceJid);
+    loadRoomsForService(serviceJid);
+  };
+
+  const handleJoinFromBrowse = async (roomJid: string) => {
+    if (!joinRoomNick.trim()) return;
+    
+    const success = await joinRoom(roomJid, joinRoomNick.trim());
+    if (success) {
+      setSelectedRoom(roomJid);
+      setIsBrowseRoomsOpen(false);
+      setJoinRoomNick('');
     }
   };
 
@@ -212,6 +270,82 @@ export const RoomChatView = () => {
                   >
                     Join Room
                   </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+            
+            <Dialog open={isBrowseRoomsOpen} onOpenChange={setIsBrowseRoomsOpen}>
+              <DialogTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleBrowseRooms}
+                  disabled={connectionState !== 'connected'}
+                >
+                  <Globe className="h-4 w-4 mr-2" />
+                  Browse
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Browse Rooms</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Your Nickname</label>
+                    <Input
+                      placeholder="nickname"
+                      value={joinRoomNick}
+                      onChange={(e) => setJoinRoomNick(e.target.value)}
+                    />
+                  </div>
+                  {availableServices.length > 1 && (
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">Conference Service</label>
+                      <select 
+                        className="w-full p-2 border rounded-md"
+                        value={selectedService}
+                        onChange={(e) => handleServiceChange(e.target.value)}
+                      >
+                        {availableServices.map(service => (
+                          <option key={service} value={service}>{service}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Available Rooms</label>
+                    <div className="border rounded-md max-h-60 overflow-y-auto">
+                      {loadingServices || loadingRooms ? (
+                        <div className="p-4 text-center text-muted-foreground">
+                          Loading rooms...
+                        </div>
+                      ) : availableRooms.length === 0 ? (
+                        <div className="p-4 text-center text-muted-foreground">
+                          No rooms found
+                        </div>
+                      ) : (
+                        availableRooms.map(room => (
+                          <div 
+                            key={room.jid}
+                            className="p-3 border-b last:border-b-0 hover:bg-muted/50 flex justify-between items-center"
+                          >
+                            <div>
+                              <div className="font-medium">{room.name}</div>
+                              <div className="text-sm text-muted-foreground">{room.jid}</div>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              onClick={() => handleJoinFromBrowse(room.jid)}
+                              disabled={!joinRoomNick.trim()}
+                            >
+                              Join
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </DialogContent>
             </Dialog>
