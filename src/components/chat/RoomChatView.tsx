@@ -1,4 +1,4 @@
-import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2 } from 'lucide-react';
+import { Send, Search, Users, UserPlus, Check, CheckCheck, Eye, Clock, AlertCircle, Crown, Shield, User as UserIcon, Ban, UserMinus, Volume2, VolumeX, Trash2, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -228,17 +228,22 @@ export const RoomChatView = () => {
         </div>
         
         <ScrollArea className="flex-1 min-h-0">
-          {connectionState !== 'connected' ? (
-            <div className="p-8 text-center text-muted-foreground">
-              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-medium mb-2">Not Connected</p>
-              <p className="text-sm mb-4">Connect to XMPP server in Settings to view rooms</p>
-            </div>
-          ) : filteredRooms.length === 0 ? (
+          {filteredRooms.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-lg font-medium mb-2">No Rooms</p>
-              <p className="text-sm mb-4">Create or join a room to start group chatting</p>
+              <p className="text-sm mb-4">
+                {connectionState === 'connected' 
+                  ? 'Create or join a room to start group chatting'
+                  : 'Rooms will appear here when connected'
+                }
+              </p>
+              {connectionState !== 'connected' && (
+                <div className="flex items-center justify-center gap-2 mt-2">
+                  <WifiOff className="h-4 w-4" />
+                  <span className="text-xs">Offline</span>
+                </div>
+              )}
             </div>
           ) : (
             filteredRooms.map((room) => {

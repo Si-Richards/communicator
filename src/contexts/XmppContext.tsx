@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { client, xml, jid as xmppJid } from "@xmpp/client";
 import { useSettings } from "./SettingsContext";
+import { useXmppPersistence } from "@/hooks/useXmppPersistence";
 
 /* ---------- Shared types ---------- */
 export type MessageStatus = "sending" | "sent" | "delivered" | "read" | "error";
@@ -126,6 +127,40 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rooms, setRooms] = useState<MucRoom[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
+
+  /* ---------- persistence ---------- */
+
+  const handleHydrateConversations = useCallback((storedConversations: Conversation[]) => {
+    setConversations(storedConversations);
+  }, []);
+
+  const handleHydrateRooms = useCallback((storedRooms: MucRoom[]) => {
+    setRooms(storedRooms);
+  }, []);
+
+  const rejoinRoomsRef = useRef<string[]>([]);
+  const loadHistoryRef = useRef<string[]>([]);
+
+  const handleRejoinRooms = useCallback((roomJids: string[]) => {
+    rejoinRoomsRef.current = roomJids;
+  }, []);
+
+  const handleLoadRecentHistory = useCallback((conversationJids: string[]) => {
+    loadHistoryRef.current = conversationJids;
+  }, []);
+
+  const currentAccount = myBareJidRef.current || (settings?.xmpp ? `${settings.xmpp.username}@${settings.xmpp.domain}` : null);
+
+  const { clearStorage } = useXmppPersistence({
+    currentAccount,
+    conversations,
+    rooms,
+    connectionState,
+    onHydrateConversations: handleHydrateConversations,
+    onHydrateRooms: handleHydrateRooms,
+    onRejoinRooms: handleRejoinRooms,
+    onLoadRecentHistory: handleLoadRecentHistory,
+  });
 
   /* ---------- helpers ---------- */
 
@@ -472,6 +507,56 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await xmpp.send(xml("presence")); // announce available
         await fetchRoster();
+        
+        // Re-join previously joined rooms
+        setTimeout(async () => {
+          for (const roomJid of rejoinRoomsRef.current) {
+            try {
+              const room = rooms.find(r => r.jid === roomJid);
+              if (room && room.nick) {
+                console.log(`Re-joining room: ${roomJid} as ${room.nick}`);
+                ensureRoom(roomJid, { nick: room.nick, joined: true });
+                const mucX = xml("x", "http://jabber.org/protocol/muc");
+                const presence = xml("presence", { to: `${roomJid}/${room.nick}` }, mucX);
+                await xmpp.send(presence);
+              }
+            } catch (e) {
+              console.error("Re-join room failed", e);
+            }
+          }
+        }, 500);
+        
+        // Load recent conversation history
+        setTimeout(async () => {
+          for (const jid of loadHistoryRef.current) {
+            try {
+              console.log(`Loading history for conversation: ${jid}`);
+              ensureConversation(jid);
+              const conv = conversations.find(c => c.jid === jid);
+              const before = conv?.mamBefore ?? "";
+              const queryId = crypto.randomUUID();
+
+              const iq = xml(
+                "iq",
+                { type: "set", id: queryId },
+                xml("query", "urn:xmpp:mam:2",
+                  xml("x", "jabber:x:data",
+                    xml("field", { var: "FORM_TYPE", type: "hidden" }, xml("value", {}, "urn:xmpp:mam:2")),
+                    xml("field", { var: "with" }, xml("value", {}, jid)),
+                  ),
+                  xml("set", "http://jabber.org/protocol/rsm",
+                    before === "" ? xml("before") : xml("before", {}, before),
+                    xml("max", {}, "10"),
+                  )
+                )
+              );
+
+              await xmpp.iqCaller.request(iq);
+            } catch (e) {
+              console.error(`Loading history for ${jid} failed:`, e);
+            }
+          }
+        }, 1000);
       } catch (e) {
         console.warn("Post-online init failed:", e);
       }

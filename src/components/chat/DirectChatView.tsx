@@ -263,17 +263,22 @@ export const DirectChatView = () => {
         </div>
         
         <ScrollArea className="flex-1 min-h-0">
-          {connectionState !== 'connected' ? (
-            <div className="p-8 text-center text-muted-foreground">
-              <WifiOff className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-medium mb-2">Not Connected</p>
-              <p className="text-sm mb-4">Connect to XMPP server in Settings to view messages</p>
-            </div>
-          ) : filteredConversations.length === 0 && searchTerm === '' ? (
+          {filteredConversations.length === 0 && searchTerm === '' ? (
             <div className="p-8 text-center text-muted-foreground">
               <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-lg font-medium mb-2">No Conversations</p>
-              <p className="text-sm mb-4">Start a new chat to begin messaging</p>
+              <p className="text-sm mb-4">
+                {connectionState === 'connected' 
+                  ? 'Start a new chat to begin messaging'
+                  : 'Conversations will appear here when connected'
+                }
+              </p>
+              {connectionState !== 'connected' && (
+                <div className="flex items-center justify-center gap-2 mt-2">
+                  <WifiOff className="h-4 w-4" />
+                  <span className="text-xs">Offline</span>
+                </div>
+              )}
             </div>
           ) : filteredConversations.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
