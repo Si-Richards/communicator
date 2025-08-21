@@ -232,11 +232,16 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const ensureRoom = useCallback((roomJid: string, init?: Partial<MucRoom>) => {
     setRooms(prev => {
-      const idx = prev.findIndex(r => r.jid === roomJid);
+      // Canonicalize JID to prevent duplicates
+      const canonicalJid = xmppJid(roomJid).bare().toString();
+      
+      // Find existing room by canonical JID
+      const idx = prev.findIndex(r => xmppJid(r.jid).bare().toString() === canonicalJid);
+      
       if (idx === -1) {
         const room: MucRoom = {
-          jid: roomJid,
-          name: roomJid.split("@")[0],
+          jid: canonicalJid,
+          name: canonicalJid.split("@")[0],
           nick: init?.nick || "",
           joined: init?.joined ?? false,
           isOwner: init?.isOwner ?? false,
@@ -247,11 +252,25 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           lastActivity: new Date(0),
           hasMoreHistory: true,
           mamBefore: null,
+          ...init,
         };
         return [room, ...prev];
       } else {
+        // Merge with existing room
+        const existing = prev[idx];
         const copy = prev.slice();
-        copy[idx] = { ...prev[idx], ...init };
+        copy[idx] = { 
+          ...existing, 
+          ...init,
+          // Merge messages and deduplicate
+          messages: init?.messages ? 
+            [...existing.messages, ...init.messages]
+              .filter((msg, i, arr) => arr.findIndex(m => m.id === msg.id) === i)
+              .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()) :
+            existing.messages,
+          // Merge occupants
+          occupants: init?.occupants ? init.occupants : existing.occupants,
+        };
         return copy;
       }
     });
@@ -800,7 +819,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const presence = xml("presence", { to: `${roomJid}/${room.nick}`, type: "unavailable" });
     xmpp.send(presence).catch(console.error);
 
-    setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, joined: false } : r));
+    // Optimistically remove self from occupants and update joined status
+    setRooms(prev => prev.map(r => r.jid === roomJid ? { 
+      ...r, 
+      joined: false,
+      occupants: r.occupants.filter(o => o.nick !== r.nick)
+    } : r));
   }, [rooms]);
 
   const destroyRoom = useCallback(async (roomJid: string, reason?: string) => {

@@ -21,6 +21,7 @@ export const RoomChatView = () => {
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [isJoinRoomOpen, setIsJoinRoomOpen] = useState(false);
   const [isBrowseRoomsOpen, setIsBrowseRoomsOpen] = useState(false);
+  const [isMembersOpen, setIsMembersOpen] = useState(false);
   const [availableServices, setAvailableServices] = useState<string[]>([]);
   const [selectedService, setSelectedService] = useState<string>('');
   const [availableRooms, setAvailableRooms] = useState<Array<{jid: string; name: string}>>([]);
@@ -47,6 +48,11 @@ export const RoomChatView = () => {
     listMucServices,
     listRooms
   } = useXmpp();
+
+  const handleLeaveRoom = (roomJid: string) => {
+    leaveRoom(roomJid);
+    setSelectedRoom(null); // Clear selection when leaving
+  };
 
   const filteredRooms = rooms.filter((room) => {
     const name = room.name || room.jid.split('@')[0] || '';
@@ -452,6 +458,14 @@ export const RoomChatView = () => {
                     <Button
                       variant="outline"
                       size="sm"
+                      onClick={() => setIsMembersOpen(true)}
+                    >
+                      <Users className="h-4 w-4 mr-1" />
+                      Members
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => muteRoom(selectedRoomData.jid, !selectedRoomData.isMuted)}
                     >
                       {selectedRoomData.isMuted ? (
@@ -463,7 +477,7 @@ export const RoomChatView = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => leaveRoom(selectedRoomData.jid)}
+                      onClick={() => handleLeaveRoom(selectedRoomData.jid)}
                     >
                       Leave
                     </Button>
@@ -580,55 +594,57 @@ export const RoomChatView = () => {
               </div>
             </div>
 
-            {/* Occupants Sidebar */}
-            <div className="w-80 border-l border-border flex flex-col">
-              <div className="p-4 border-b border-border">
-                <h3 className="font-medium">Members ({selectedRoomData.occupants.length})</h3>
-              </div>
-              <ScrollArea className="flex-1">
-                <div className="p-4 space-y-2">
-                  {selectedRoomData.occupants.map((occupant) => (
-                    <div key={occupant.nick} className="flex items-center justify-between p-2 hover:bg-muted rounded">
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback className="text-xs">
-                            {getInitials(occupant.nick)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <div className="flex items-center gap-1">
-                            <p className="font-medium text-sm">{occupant.nick}</p>
-                            {getRoleIcon(occupant)}
+            {/* Members Dialog */}
+            <Dialog open={isMembersOpen} onOpenChange={setIsMembersOpen}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Members ({selectedRoomData.occupants.length})</DialogTitle>
+                </DialogHeader>
+                <ScrollArea className="max-h-96">
+                  <div className="space-y-2">
+                    {selectedRoomData.occupants.map((occupant) => (
+                      <div key={occupant.nick} className="flex items-center justify-between p-2 hover:bg-muted rounded">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="text-xs">
+                              {getInitials(occupant.nick)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <div className="flex items-center gap-1">
+                              <p className="font-medium text-sm">{occupant.nick}</p>
+                              {getRoleIcon(occupant)}
+                            </div>
+                            <p className="text-xs text-muted-foreground">{occupant.affiliation || 'none'}</p>
                           </div>
-                          <p className="text-xs text-muted-foreground">{occupant.affiliation || 'none'}</p>
                         </div>
+                        {selectedRoomData.isOwner && occupant.nick !== selectedRoomData.nick && (
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => kickFromRoom(selectedRoomData.jid, occupant.nick, 'Kicked by room owner')}
+                              className="h-6 w-6 p-0"
+                            >
+                              <UserMinus className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => occupant.jid && banFromRoom(selectedRoomData.jid, occupant.jid, 'Banned by room owner')}
+                              className="h-6 w-6 p-0"
+                              disabled={!occupant.jid}
+                            >
+                              <Ban className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      {selectedRoomData.isOwner && occupant.nick !== selectedRoomData.nick && (
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => kickFromRoom(selectedRoomData.jid, occupant.nick, 'Kicked by room owner')}
-                            className="h-6 w-6 p-0"
-                          >
-                            <UserMinus className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => occupant.jid && banFromRoom(selectedRoomData.jid, occupant.jid, 'Banned by room owner')}
-                            className="h-6 w-6 p-0"
-                            disabled={!occupant.jid}
-                          >
-                            <Ban className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </DialogContent>
+            </Dialog>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
