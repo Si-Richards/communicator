@@ -1,10 +1,13 @@
 import { Phone, Users, History, Settings, User, RefreshCw, Moon, Voicemail, MessageSquare, MessageCircle, UsersRound } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useJanusContext } from "@/contexts/JanusContext"
+import { useXmpp } from "@/contexts/XmppContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { PresencePicker } from "@/components/chat/PresencePicker"
 import { cn } from "@/lib/utils"
 
 import {
@@ -35,25 +38,61 @@ export function AppSidebar() {
   const location = useLocation()
   const currentPath = location.pathname
   const { callState, setDoNotDisturb } = useJanusContext()
+  const { connectionState, userPresence, setPresence } = useXmpp()
 
   const isActive = (path: string) => currentPath === path
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
     isActive ? "bg-accent text-accent-foreground font-medium" : "hover:bg-accent/50"
 
   return (
-    <Sidebar
-      collapsible="icon"
-    >
-      <SidebarContent>
-        <SidebarGroup>
-          {/* Avatar at top */}
-          <div className="flex justify-center py-4">
-            <Avatar className="h-12 w-12">
-              <AvatarFallback className="bg-primary/10 text-primary">
-                <User className="h-6 w-6" />
-              </AvatarFallback>
-            </Avatar>
-          </div>
+    <TooltipProvider>
+      <Sidebar
+        collapsible="icon"
+      >
+        <SidebarContent>
+          <SidebarGroup>
+            {/* Avatar at top */}
+            <div className="flex justify-center py-4">
+              <Avatar className="h-12 w-12">
+                <AvatarFallback className="bg-primary/10 text-primary">
+                  <User className="h-6 w-6" />
+                </AvatarFallback>
+              </Avatar>
+            </div>
+
+            {/* Chat Status - Compact presence picker */}
+            {connectionState === 'connected' && userPresence && (
+              <div className="px-2 mb-4">
+                {state === "collapsed" ? (
+                  <div className="flex justify-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="relative">
+                          <PresencePicker
+                            currentPresence={userPresence.presence}
+                            currentStatus={userPresence.status}
+                            onPresenceChange={(presence, status) => setPresence(presence, status)}
+                          />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        <p>{userPresence.presence === 'available' ? 'Available' : 
+                            userPresence.presence === 'away' ? 'Away' :
+                            userPresence.presence === 'dnd' ? 'Do Not Disturb' :
+                            userPresence.presence === 'xa' ? 'Extended Away' : 'Offline'}</p>
+                        {userPresence.status && <p className="text-xs text-muted-foreground">{userPresence.status}</p>}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                ) : (
+                  <PresencePicker
+                    currentPresence={userPresence.presence}
+                    currentStatus={userPresence.status}
+                    onPresenceChange={(presence, status) => setPresence(presence, status)}
+                  />
+                )}
+              </div>
+            )}
 
 
           <SidebarGroupContent>
@@ -109,5 +148,6 @@ export function AppSidebar() {
         </div>
       </SidebarFooter>
     </Sidebar>
+    </TooltipProvider>
   )
 }

@@ -131,6 +131,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectBackoffRef = useRef(1000); // Start with 1 second
   const autoTriedRef = useRef(false);
+  const presenceDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -290,24 +291,47 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setPresence = useCallback((presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable', status?: string) => {
     const xmpp = xmppRef.current;
-    if (!xmpp) return;
-
+    const connected = connectionState === 'connected';
+    
+    // Always update local UI state
     setUserPresence({ presence, status });
-
-    const presenceStanza = xml("presence");
-
-    // Add show element for non-available presence
-    if (presence !== 'available') {
-      presenceStanza.append(xml("show", {}, presence));
+    
+    // Don't send if not connected - just update UI
+    if (!xmpp || !connected) {
+      console.log("Presence update - not connected, UI state only");
+      return;
     }
 
-    // Add status message if provided
-    if (status) {
-      presenceStanza.append(xml("status", {}, status));
+    // Debounce rapid presence changes
+    if (presenceDebounceRef.current) {
+      clearTimeout(presenceDebounceRef.current);
     }
+    
+    presenceDebounceRef.current = setTimeout(() => {
+      if (!xmppRef.current || connectionState !== 'connected') return;
+      
+      let presenceStanza;
+      
+      if (presence === 'unavailable') {
+        // Use type="unavailable" for offline
+        presenceStanza = xml("presence", { type: "unavailable" });
+      } else {
+        presenceStanza = xml("presence");
+        
+        // Add show element for away states
+        if (presence !== 'available') {
+          presenceStanza.append(xml("show", {}, presence));
+        }
+      }
 
-    xmpp.send(presenceStanza).catch(console.error);
-  }, []);
+      // Add status message if provided
+      if (status) {
+        presenceStanza.append(xml("status", {}, status));
+      }
+
+      xmpp.send(presenceStanza).catch(console.error);
+    }, 300);
+  }, [connectionState]);
 
   /* ---------- roster/presence ---------- */
 
@@ -517,6 +541,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return false;
     }
 
+    // Clear any pending reconnect timers when starting fresh connection
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
     if (!settings?.xmpp?.websocketUrl || !settings?.xmpp?.domain || !settings?.xmpp?.username || !settings?.xmpp?.password) {
       setLastError("Missing XMPP configuration");
       setConnectionState("error");
@@ -559,6 +589,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setConnectionState("connected");
           reconnectBackoffRef.current = 1000; // Reset backoff on successful connection
           connectingRef.current = false; // Clear connecting flag
+          
+          // Clear any pending reconnect timers on successful connection
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
           
           // Post-connection initialization with proper connection checks
           setTimeout(async () => {
@@ -659,8 +695,13 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLastError(`XMPP error: ${e?.message || String(e)}`);
         setConnectionState("error");
         connectingRef.current = false; // Clear connecting flag on error
-        if (!manualDisconnectRef.current) {
+        
+        // Don't schedule reconnect for "conflict" errors (replaced by new connection)
+        const isConflictError = e?.condition === 'conflict' || e?.message?.includes('conflict');
+        if (!manualDisconnectRef.current && !isConflictError) {
           scheduleReconnect("error");
+        } else if (isConflictError) {
+          console.log("Ignoring conflict error - replaced by new connection");
         }
       });
 

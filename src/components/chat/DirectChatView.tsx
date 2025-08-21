@@ -162,16 +162,6 @@ export const DirectChatView = () => {
       {/* Conversations List */}
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">
-          {/* User Presence */}
-          {connectionState === 'connected' && userPresence && (
-            <div className="mb-4">
-              <PresencePicker
-                currentPresence={userPresence.presence}
-                currentStatus={userPresence.status}
-                onPresenceChange={(presence, status) => setPresence(presence, status)}
-              />
-            </div>
-          )}
           
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
