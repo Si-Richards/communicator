@@ -2,7 +2,7 @@ import { Search, Users, User as UserIcon, BookUser } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useState, useEffect, useMemo } from 'react';
@@ -28,6 +28,8 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const [loadingServices, setLoadingServices] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [allRooms, setAllRooms] = useState<Array<{jid: string; name: string; service: string}>>([]);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const { settings } = useSettings();
   const { 
@@ -63,39 +65,62 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     return () => clearTimeout(timeoutId);
   }, [searchTerm, searchUsers, uiConnection]);
 
-  // Load MUC services when dialog opens
+  // Load MUC services when dialog opens and load all rooms across services
   useEffect(() => {
     if (open && uiConnection === 'connected' && availableServices.length === 0) {
       handleLoadServices();
+    } else if (uiConnection !== 'connected') {
+      setConnectionError(uiConnection === 'offline' ? 'Not connected to server' : 
+                        uiConnection === 'reconnecting' ? 'Reconnecting to server...' : 
+                        'Connection error');
+    } else {
+      setConnectionError(null);
     }
   }, [open, uiConnection]);
 
   const handleLoadServices = async () => {
     setLoadingServices(true);
+    setConnectionError(null);
     try {
       const services = await listMucServices();
       setAvailableServices(services);
       if (services.length > 0) {
         setSelectedService(services[0]);
-        await loadRoomsForService(services[0]);
+        // Load rooms from all services, not just the first one
+        await loadAllRooms(services);
       }
     } catch (error) {
       console.error('Failed to load MUC services:', error);
+      setConnectionError('Failed to load conference services');
     } finally {
       setLoadingServices(false);
     }
   };
 
-  const loadRoomsForService = async (serviceJid: string) => {
-    if (!serviceJid || uiConnection !== 'connected') return;
-    
+  const loadAllRooms = async (services: string[]) => {
     setLoadingRooms(true);
     try {
-      const roomList = await listRooms(serviceJid);
-      setAvailableRooms(roomList);
+      const allRoomsData: Array<{jid: string; name: string; service: string}> = [];
+      
+      // Load rooms from all services in parallel
+      const roomPromises = services.map(async (service) => {
+        try {
+          const rooms = await listRooms(service);
+          return rooms.map(room => ({...room, service}));
+        } catch (error) {
+          console.error(`Failed to load rooms for ${service}:`, error);
+          return [];
+        }
+      });
+      
+      const roomResults = await Promise.all(roomPromises);
+      roomResults.forEach(rooms => allRoomsData.push(...rooms));
+      
+      setAllRooms(allRoomsData);
+      setAvailableRooms(allRoomsData);
     } catch (error) {
-      console.error('Failed to load rooms for service:', error);
-      setAvailableRooms([]);
+      console.error('Failed to load rooms:', error);
+      setConnectionError('Failed to load chat rooms');
     } finally {
       setLoadingRooms(false);
     }
@@ -103,7 +128,15 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
 
   const handleServiceChange = (serviceJid: string) => {
     setSelectedService(serviceJid);
-    loadRoomsForService(serviceJid);
+    // Filter allRooms by selected service
+    const serviceRooms = allRooms.filter(room => room.service === serviceJid);
+    setAvailableRooms(serviceRooms);
+  };
+
+  const handleRetry = () => {
+    if (uiConnection === 'connected') {
+      handleLoadServices();
+    }
   };
 
   const handleUserSelect = (jid: string) => {
@@ -140,7 +173,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
            contact.jid.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
-  const filteredRooms = availableRooms.filter((room) => {
+  const filteredRooms = (selectedService ? availableRooms : allRooms).filter((room) => {
     return room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            room.jid.toLowerCase().includes(searchTerm.toLowerCase());
   });
@@ -157,9 +190,27 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
             <BookUser className="h-5 w-5" />
             Phonebook
           </DialogTitle>
+          <DialogDescription>
+            Search for users and join chat rooms on the XMPP network.
+          </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">
+          {/* Connection Status */}
+          {connectionError && (
+            <div className="p-3 bg-destructive/10 text-destructive rounded-md border border-destructive/20 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-destructive rounded-full" />
+                <span className="text-sm">{connectionError}</span>
+              </div>
+              {uiConnection === 'connected' && (
+                <Button size="sm" variant="outline" onClick={handleRetry}>
+                  Retry
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -168,6 +219,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
+              disabled={uiConnection !== 'connected'}
             />
           </div>
 
@@ -236,14 +288,15 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
               </h3>
 
               {/* Service Selector */}
-              {availableServices.length > 1 && (
+              {availableServices.length > 0 && (
                 <div>
                   <label className="text-xs font-medium mb-1 block">Conference Service</label>
                   <Select value={selectedService} onValueChange={handleServiceChange}>
                     <SelectTrigger className="text-sm">
-                      <SelectValue />
+                      <SelectValue placeholder="All services" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="">All services</SelectItem>
                       {availableServices.map(service => (
                         <SelectItem key={service} value={service}>{service}</SelectItem>
                       ))}
