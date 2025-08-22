@@ -79,6 +79,8 @@ type Ctx = {
   conversations: Conversation[];
   contacts: Contact[];
   userPresence?: { presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable'; status?: string };
+  nickname: string;
+  setNickname: (nickname: string) => void;
   connect: () => Promise<boolean>;
   disconnect: () => Promise<void>;
   sendMessage: (toBareJid: string, body: string) => Promise<boolean>;
@@ -103,8 +105,11 @@ type Ctx = {
   loadRoomHistory: (roomJid: string) => Promise<void>;
   markRoomRead: (roomJid: string) => void;
 
+  // discovery
   listMucServices: () => Promise<string[]>;
   listRooms: (serviceJid: string) => Promise<Array<{jid: string; name: string}>>;
+  searchUsers: (searchTerm: string) => Promise<Array<{jid: string; name: string}>>;
+  
   // diagnostics (for SettingsPage)
   effectiveJid: string;
   lastError: string | null;
@@ -144,6 +149,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
   const [userPresence, setUserPresence] = useState<{ presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable'; status?: string }>({ presence: 'available' });
+  const [nickname, setNickname] = useState<string>(settings?.xmpp?.username || '');
 
   /* ---------- persistence ---------- */
 
@@ -1323,41 +1329,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRooms(prev => prev.map(r => r.jid === roomJid ? { ...r, unreadCount: 0 } : r));
   }, []);
 
-  const listMucServices = useCallback(async (): Promise<string[]> => {
-    const xmpp = xmppRef.current;
-    if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
-    
-    const domain = settings?.xmpp?.domain;
-    if (!domain) throw new Error("No domain configured");
-    
-    const iq = xml("iq", { type: "get", to: domain, id: crypto.randomUUID() },
-      xml("query", "http://jabber.org/protocol/disco#items")
-    );
-    
-    try {
-      const res: any = await xmpp.iqCaller.request(iq);
-      const items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
-      const services: string[] = [];
-      
-      for (const item of items) {
-        const jid = item.attrs?.jid;
-        if (jid && jid.includes("conference")) {
-          services.push(jid);
-        }
-      }
-      
-      // Fallback to default conference service if none found
-      if (services.length === 0) {
-        services.push(`conference.${domain}`);
-      }
-      
-      return services;
-    } catch (e) {
-      console.error("Failed to discover MUC services:", e);
-      return [`conference.${domain}`]; // fallback
-    }
-  }, [settings?.xmpp?.domain]);
-
   const listRooms = useCallback(async (serviceJid: string): Promise<Array<{jid: string; name: string}>> => {
     const xmpp = xmppRef.current;
     if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
@@ -1433,6 +1404,156 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return "offline";
   }, [connectionState, showReconnecting]);
 
+  // Enhanced MUC services discovery - gets all services with items
+  const listMucServices = useCallback(async (): Promise<string[]> => {
+    if (!xmppRef.current || connectionState !== 'connected') return [];
+    
+    try {
+      // First get server disco info to find all services
+      const domain = settings?.xmpp?.domain;
+      if (!domain) return [];
+      
+      // Query server for services
+      const discoItemsIq = xml("iq", { type: "get", to: domain, id: crypto.randomUUID() },
+        xml("query", "http://jabber.org/protocol/disco#items")
+      );
+      
+      const itemsRes: any = await xmppRef.current.iqCaller.request(discoItemsIq);
+      const items = itemsRes.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+      
+      // Check each service for MUC support
+      const mucServices: string[] = [];
+      
+      for (const item of items) {
+        const serviceJid = item.attrs.jid;
+        if (!serviceJid) continue;
+        
+        try {
+          const discoInfoIq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
+            xml("query", "http://jabber.org/protocol/disco#info")
+          );
+          
+          const infoRes: any = await xmppRef.current.iqCaller.request(discoInfoIq);
+          const features = infoRes.getChild("query", "http://jabber.org/protocol/disco#info")?.getChildren("feature") ?? [];
+          
+          // Check if service supports MUC
+          const supportsMuc = features.some((f: any) => f.attrs.var === "http://jabber.org/protocol/muc");
+          if (supportsMuc) {
+            mucServices.push(serviceJid);
+          }
+        } catch (e) {
+          // Skip services that don't respond or error out
+          continue;
+        }
+      }
+      
+      // Fallback to common conference service names if none found
+      if (mucServices.length === 0) {
+        const commonServices = [
+          `conference.${domain}`,
+          `rooms.${domain}`,
+          `muc.${domain}`,
+          `chat.${domain}`
+        ];
+        
+        for (const service of commonServices) {
+          try {
+            const discoInfoIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
+              xml("query", "http://jabber.org/protocol/disco#info")
+            );
+            await xmppRef.current.iqCaller.request(discoInfoIq);
+            mucServices.push(service);
+          } catch (e) {
+            // Service doesn't exist, skip
+            continue;
+          }
+        }
+      }
+      
+      return mucServices;
+    } catch (error) {
+      console.error("Failed to discover MUC services:", error);
+      return [];
+    }
+  }, [xmppRef, connectionState, settings?.xmpp?.domain]);
+
+  // User directory search using XEP-0055
+  const searchUsers = useCallback(async (searchTerm: string): Promise<Array<{jid: string; name: string}>> => {
+    if (!xmppRef.current || connectionState !== 'connected' || !searchTerm.trim()) return [];
+    
+    try {
+      const domain = settings?.xmpp?.domain;
+      if (!domain) return [];
+      
+      // Try common user directory service names
+      const searchServices = [
+        `search.${domain}`,
+        `users.${domain}`,
+        `directory.${domain}`,
+        domain // Sometimes the server itself provides search
+      ];
+      
+      for (const service of searchServices) {
+        try {
+          // First check if service supports search
+          const discoInfoIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
+            xml("query", "http://jabber.org/protocol/disco#info")
+          );
+          
+          const infoRes: any = await xmppRef.current.iqCaller.request(discoInfoIq);
+          const features = infoRes.getChild("query", "http://jabber.org/protocol/disco#info")?.getChildren("feature") ?? [];
+          
+          const supportsSearch = features.some((f: any) => f.attrs.var === "jabber:iq:search");
+          if (!supportsSearch) continue;
+          
+          // Get search form
+          const searchFormIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
+            xml("query", "jabber:iq:search")
+          );
+          
+          const formRes: any = await xmppRef.current.iqCaller.request(searchFormIq);
+          const query = formRes.getChild("query", "jabber:iq:search");
+          
+          // Perform search
+          const searchIq = xml("iq", { type: "set", to: service, id: crypto.randomUUID() },
+            xml("query", "jabber:iq:search",
+              xml("nick", {}, searchTerm),
+              xml("name", {}, searchTerm),
+              xml("email", {}, searchTerm)
+            )
+          );
+          
+          const searchRes: any = await xmppRef.current.iqCaller.request(searchIq);
+          const results = searchRes.getChild("query", "jabber:iq:search")?.getChildren("item") ?? [];
+          
+          const users = results.map((item: any) => ({
+            jid: item.attrs.jid || '',
+            name: item.getChildText("name") || item.getChildText("nick") || item.attrs.jid?.split('@')[0] || ''
+          })).filter((user: any) => user.jid);
+          
+          if (users.length > 0) {
+            return users;
+          }
+        } catch (e) {
+          // Try next service
+          continue;
+        }
+      }
+      
+      return [];
+    } catch (error) {
+      console.error("Failed to search users:", error);
+      return [];
+    }
+  }, [xmppRef, connectionState, settings?.xmpp?.domain]);
+
+  // Update nickname initialization
+  useEffect(() => {
+    if (settings?.xmpp?.username && !nickname) {
+      setNickname(settings.xmpp.username);
+    }
+  }, [settings?.xmpp?.username, nickname]);
+
   const value = useMemo<Ctx>(() => ({
     // direct
     connectionState,
@@ -1440,6 +1561,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     conversations,
     contacts,
     userPresence,
+    nickname,
+    setNickname,
     connect,
     disconnect,
     sendMessage,
@@ -1464,9 +1587,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadRoomHistory,
     markRoomRead,
 
-    // room discovery
+    // discovery
     listMucServices,
     listRooms,
+    searchUsers,
 
     // diagnostics
     effectiveJid,
@@ -1479,6 +1603,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     conversations,
     contacts,
     userPresence,
+    nickname,
+    setNickname,
     connect,
     disconnect,
     sendMessage,
@@ -1502,6 +1628,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     markRoomRead,
     listMucServices,
     listRooms,
+    searchUsers,
     effectiveJid,
     lastError,
     lastAttemptAt,

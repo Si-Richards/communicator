@@ -1,4 +1,4 @@
-import { Phone, Users, History, Settings, User, RefreshCw, Moon, Voicemail, MessageSquare, MessageCircle, UsersRound } from "lucide-react"
+import { Phone, Users, History, Settings, User, RefreshCw, Moon, Voicemail, MessageSquare, MessageCircle, UsersRound, Edit3, Check, X } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useJanusContext } from "@/contexts/JanusContext"
 import { useXmpp } from "@/contexts/XmppContext"
@@ -6,10 +6,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { PresencePicker } from "@/components/chat/PresencePicker"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { cn } from "@/lib/utils"
+import { useState } from "react"
 
 import {
   Sidebar,
@@ -39,11 +41,31 @@ export function AppSidebar() {
   const location = useLocation()
   const currentPath = location.pathname
   const { callState, setDoNotDisturb } = useJanusContext()
-  const { connectionState, uiConnection, userPresence, setPresence } = useXmpp()
+  const { connectionState, uiConnection, userPresence, setPresence, nickname, setNickname } = useXmpp()
+  
+  const [isEditingNickname, setIsEditingNickname] = useState(false)
+  const [tempNickname, setTempNickname] = useState('')
 
   const isActive = (path: string) => currentPath === path
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
     isActive ? "bg-accent text-accent-foreground font-medium" : "hover:bg-accent/50"
+
+  const handleNicknameEdit = () => {
+    setTempNickname(nickname)
+    setIsEditingNickname(true)
+  }
+
+  const handleNicknameSave = () => {
+    if (tempNickname.trim()) {
+      setNickname(tempNickname.trim())
+    }
+    setIsEditingNickname(false)
+  }
+
+  const handleNicknameCancel = () => {
+    setTempNickname('')
+    setIsEditingNickname(false)
+  }
 
   return (
     <TooltipProvider>
@@ -53,12 +75,75 @@ export function AppSidebar() {
         <SidebarContent>
           <SidebarGroup>
             {/* Avatar at top */}
-            <div className="flex justify-center py-4">
+            <div className="flex flex-col items-center py-4 space-y-2">
               <Avatar className="h-12 w-12">
                 <AvatarFallback className="bg-primary/10 text-primary">
                   <User className="h-6 w-6" />
                 </AvatarFallback>
               </Avatar>
+              
+              {/* Nickname editor */}
+              {state === "collapsed" ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleNicknameEdit}
+                      className="h-6 text-xs text-muted-foreground hover:text-foreground px-1"
+                    >
+                      {nickname || 'Set nickname'}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>Click to edit nickname: {nickname}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <div className="w-full px-2">
+                  {isEditingNickname ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={tempNickname}
+                        onChange={(e) => setTempNickname(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleNicknameSave()
+                          if (e.key === 'Escape') handleNicknameCancel()
+                        }}
+                        className="h-6 text-xs"
+                        placeholder="Nickname"
+                        autoFocus
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleNicknameSave}
+                        className="h-6 w-6 p-0"
+                      >
+                        <Check className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleNicknameCancel}
+                        className="h-6 w-6 p-0"
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleNicknameEdit}
+                      className="h-6 w-full justify-between text-xs text-muted-foreground hover:text-foreground px-2"
+                    >
+                      <span className="truncate">{nickname || 'Set nickname'}</span>
+                      <Edit3 className="h-3 w-3 ml-1 flex-shrink-0" />
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Chat Status - Always visible presence area */}

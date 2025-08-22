@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { useSettings } from '@/contexts/SettingsContext';
 
@@ -21,28 +21,47 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   onSelect 
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [nickname, setNickname] = useState('');
   const [availableServices, setAvailableServices] = useState<string[]>([]);
   const [selectedService, setSelectedService] = useState<string>('');
   const [availableRooms, setAvailableRooms] = useState<Array<{jid: string; name: string}>>([]);
+  const [searchedUsers, setSearchedUsers] = useState<Array<{jid: string; name: string}>>([]);
   const [loadingServices, setLoadingServices] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   const { settings } = useSettings();
   const { 
     uiConnection,
     contacts,
+    nickname,
     listMucServices,
     listRooms,
+    searchUsers,
     joinRoom
   } = useXmpp();
 
-  // Initialize nickname from settings
+  // Enhanced user search with debouncing
   useEffect(() => {
-    if (settings?.xmpp?.username && !nickname) {
-      setNickname(settings.xmpp.username);
+    if (!searchTerm.trim() || uiConnection !== 'connected') {
+      setSearchedUsers([]);
+      return;
     }
-  }, [settings?.xmpp?.username, nickname]);
+
+    const timeoutId = setTimeout(async () => {
+      setLoadingUsers(true);
+      try {
+        const users = await searchUsers(searchTerm);
+        setSearchedUsers(users);
+      } catch (error) {
+        console.error('Failed to search users:', error);
+        setSearchedUsers([]);
+      } finally {
+        setLoadingUsers(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, searchUsers, uiConnection]);
 
   // Load MUC services when dialog opens
   useEffect(() => {
@@ -104,7 +123,18 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     }
   };
 
-  const filteredContacts = contacts.filter((contact) => {
+  // Combine roster contacts with searched users, removing duplicates
+  const allUsers = useMemo(() => {
+    const contactSet = new Set(contacts.map(c => c.jid));
+    const uniqueSearchedUsers = searchedUsers.filter(u => !contactSet.has(u.jid));
+    
+    return [
+      ...contacts.map(c => ({ jid: c.jid, name: c.name, presence: c.presence })),
+      ...uniqueSearchedUsers.map(u => ({ jid: u.jid, name: u.name, presence: 'unavailable' as const }))
+    ];
+  }, [contacts, searchedUsers]);
+
+  const filteredContacts = allUsers.filter((contact) => {
     const name = contact.name || contact.jid.split('@')[0] || '';
     return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            contact.jid.toLowerCase().includes(searchTerm.toLowerCase());
@@ -146,16 +176,22 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
             <div className="space-y-3">
               <h3 className="font-medium text-sm flex items-center gap-2">
                 <UserIcon className="h-4 w-4" />
-                Users ({filteredContacts.length})
+                Users ({filteredContacts.length}) {loadingUsers && '• Searching...'}
               </h3>
               
               <ScrollArea className="h-64 border rounded-md">
-                {filteredContacts.length === 0 ? (
+                {loadingUsers && searchTerm.trim() ? (
+                  <div className="p-4 text-center text-muted-foreground">
+                    <UserIcon className="h-8 w-8 mx-auto mb-2 opacity-50 animate-pulse" />
+                    <p className="text-sm">Searching for users...</p>
+                  </div>
+                ) : filteredContacts.length === 0 ? (
                   <div className="p-4 text-center text-muted-foreground">
                     <UserIcon className="h-8 w-8 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">
                       {searchTerm ? 'No users match your search' : 'No contacts available'}
                     </p>
+                    {searchTerm && <p className="text-xs mt-1">Try searching the user directory</p>}
                   </div>
                 ) : (
                   <div className="p-2">
@@ -198,17 +234,6 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                 <Users className="h-4 w-4" />
                 Rooms ({filteredRooms.length})
               </h3>
-              
-              {/* Nickname Input */}
-              <div>
-                <label className="text-xs font-medium mb-1 block">Your Nickname</label>
-                <Input
-                  placeholder="nickname"
-                  value={nickname}
-                  onChange={(e) => setNickname(e.target.value)}
-                  className="text-sm"
-                />
-              </div>
 
               {/* Service Selector */}
               {availableServices.length > 1 && (
