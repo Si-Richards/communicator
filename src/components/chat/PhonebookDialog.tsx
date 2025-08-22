@@ -67,8 +67,11 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
 
   // Load MUC services when dialog opens and load all rooms across services
   useEffect(() => {
-    if (open && uiConnection === 'connected' && availableServices.length === 0) {
-      handleLoadServices();
+    if (open && uiConnection === 'connected') {
+      if (availableServices.length === 0) {
+        console.log('PhonebookDialog: Loading services on open');
+        handleLoadServices();
+      }
     } else if (uiConnection !== 'connected') {
       setConnectionError(uiConnection === 'offline' ? 'Not connected to server' : 
                         uiConnection === 'reconnecting' ? 'Reconnecting to server...' : 
@@ -82,12 +85,16 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     setLoadingServices(true);
     setConnectionError(null);
     try {
+      console.log('PhonebookDialog: Loading MUC services');
       const services = await listMucServices();
+      console.log('PhonebookDialog: Found services:', services);
       setAvailableServices(services);
       if (services.length > 0) {
         setSelectedService("all");
         // Load rooms from all services, not just the first one
         await loadAllRooms(services);
+      } else {
+        setConnectionError('No conference services found on this server');
       }
     } catch (error) {
       console.error('Failed to load MUC services:', error);
@@ -100,12 +107,15 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const loadAllRooms = async (services: string[]) => {
     setLoadingRooms(true);
     try {
+      console.log('PhonebookDialog: Loading rooms from services:', services);
       const allRoomsData: Array<{jid: string; name: string; service: string}> = [];
       
       // Load rooms from all services in parallel
       const roomPromises = services.map(async (service) => {
         try {
+          console.log(`PhonebookDialog: Loading rooms from ${service}`);
           const rooms = await listRooms(service);
+          console.log(`PhonebookDialog: Loaded ${rooms.length} rooms from ${service}`);
           return rooms.map(room => ({...room, service}));
         } catch (error) {
           console.error(`Failed to load rooms for ${service}:`, error);
@@ -116,8 +126,13 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       const roomResults = await Promise.all(roomPromises);
       roomResults.forEach(rooms => allRoomsData.push(...rooms));
       
+      console.log(`PhonebookDialog: Total rooms loaded: ${allRoomsData.length}`);
       setAllRooms(allRoomsData);
       setAvailableRooms(allRoomsData);
+      
+      if (allRoomsData.length === 0) {
+        setConnectionError('No public rooms found. This server may not have public rooms or they may be hidden.');
+      }
     } catch (error) {
       console.error('Failed to load rooms:', error);
       setConnectionError('Failed to load chat rooms');
@@ -286,10 +301,21 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
 
             {/* Rooms Section */}
             <div className="space-y-3">
-              <h3 className="font-medium text-sm flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                Rooms ({filteredRooms.length})
-              </h3>
+            <div className="flex items-center justify-between">
+                <h3 className="font-medium text-sm flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Rooms ({filteredRooms.length})
+                </h3>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={handleLoadServices}
+                  disabled={loadingServices || loadingRooms || uiConnection !== 'connected'}
+                  className="text-xs h-7"
+                >
+                  {loadingServices || loadingRooms ? 'Loading...' : 'Refresh'}
+                </Button>
+              </div>
 
               {/* Service Selector */}
               {availableServices.length > 0 && (

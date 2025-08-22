@@ -1331,8 +1331,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const listRooms = useCallback(async (serviceJid: string): Promise<Array<{jid: string; name: string}>> => {
     const xmpp = xmppRef.current;
-    if (!xmpp || connectionState !== "connected") throw new Error("Not connected");
+    if (!xmpp || connectionState !== "connected") {
+      console.log("listRooms: Not connected, returning empty array");
+      return [];
+    }
     
+    console.log(`listRooms: Querying service ${serviceJid}`);
     const iq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
       xml("query", "http://jabber.org/protocol/disco#items")
     );
@@ -1341,12 +1345,15 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res: any = await xmpp.iqCaller.request(iq);
       const items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
       
-      return items.map((item: any) => ({
+      const rooms = items.map((item: any) => ({
         jid: item.attrs?.jid || "",
         name: item.attrs?.name || item.attrs?.jid?.split("@")[0] || "Unknown Room"
       })).filter((room: any) => room.jid);
+      
+      console.log(`listRooms: Found ${rooms.length} rooms from ${serviceJid}`);
+      return rooms;
     } catch (e) {
-      console.error("Failed to list rooms:", e);
+      console.error(`Failed to list rooms from ${serviceJid}:`, e);
       return [];
     }
   }, []);
@@ -1477,7 +1484,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [xmppRef, connectionState, settings?.xmpp?.domain]);
 
-  // User directory search using XEP-0055
+  // Enhanced user directory search using XEP-0055
   const searchUsers = useCallback(async (searchTerm: string): Promise<Array<{jid: string; name: string}>> => {
     if (!xmppRef.current || connectionState !== 'connected' || !searchTerm.trim()) return [];
     
@@ -1485,17 +1492,60 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const domain = settings?.xmpp?.domain;
       if (!domain) return [];
       
-      // Try common user directory service names
-      const searchServices = [
-        `search.${domain}`,
-        `users.${domain}`,
-        `directory.${domain}`,
-        domain // Sometimes the server itself provides search
-      ];
+      console.log(`searchUsers: Searching for "${searchTerm}" on ${domain}`);
+      
+      // First discover available search services via disco#items
+      let searchServices: string[] = [];
+      try {
+        const discoItemsIq = xml("iq", { type: "get", to: domain, id: crypto.randomUUID() },
+          xml("query", "http://jabber.org/protocol/disco#items")
+        );
+        
+        const itemsRes: any = await xmppRef.current.iqCaller.request(discoItemsIq);
+        const items = itemsRes.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+        
+        // Check each service for search support
+        for (const item of items) {
+          const serviceJid = item.attrs?.jid;
+          if (!serviceJid) continue;
+          
+          try {
+            const discoInfoIq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
+              xml("query", "http://jabber.org/protocol/disco#info")
+            );
+            
+            const infoRes: any = await xmppRef.current.iqCaller.request(discoInfoIq);
+            const features = infoRes.getChild("query", "http://jabber.org/protocol/disco#info")?.getChildren("feature") ?? [];
+            
+            const supportsSearch = features.some((f: any) => f.attrs.var === "jabber:iq:search");
+            if (supportsSearch) {
+              searchServices.push(serviceJid);
+            }
+          } catch (e) {
+            // Service doesn't respond or doesn't support search
+            continue;
+          }
+        }
+      } catch (e) {
+        console.log('searchUsers: Failed to discover services via disco, using fallback list');
+      }
+      
+      // Fallback to common user directory service names if none discovered
+      if (searchServices.length === 0) {
+        searchServices = [
+          `search.${domain}`,
+          `users.${domain}`, 
+          `directory.${domain}`,
+          `vjud.${domain}`,
+          domain // Sometimes the server itself provides search
+        ];
+      }
+      
+      console.log(`searchUsers: Trying services:`, searchServices);
       
       for (const service of searchServices) {
         try {
-          // First check if service supports search
+          // Verify service supports search
           const discoInfoIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
             xml("query", "http://jabber.org/protocol/disco#info")
           );
@@ -1504,9 +1554,14 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const features = infoRes.getChild("query", "http://jabber.org/protocol/disco#info")?.getChildren("feature") ?? [];
           
           const supportsSearch = features.some((f: any) => f.attrs.var === "jabber:iq:search");
-          if (!supportsSearch) continue;
+          if (!supportsSearch) {
+            console.log(`searchUsers: ${service} doesn't support search`);
+            continue;
+          }
           
-          // Get search form
+          console.log(`searchUsers: ${service} supports search, querying...`);
+          
+          // Get search form to see what fields are supported
           const searchFormIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
             xml("query", "jabber:iq:search")
           );
@@ -1514,32 +1569,85 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const formRes: any = await xmppRef.current.iqCaller.request(searchFormIq);
           const query = formRes.getChild("query", "jabber:iq:search");
           
-          // Perform search
-          const searchIq = xml("iq", { type: "set", to: service, id: crypto.randomUUID() },
-            xml("query", "jabber:iq:search",
-              xml("nick", {}, searchTerm),
-              xml("name", {}, searchTerm),
-              xml("email", {}, searchTerm)
-            )
-          );
+          // Check if service uses data forms (XEP-0004)
+          const dataForm = query?.getChild("x", "jabber:x:data");
+          
+          let searchIq;
+          if (dataForm) {
+            // Use data form approach
+            console.log(`searchUsers: Using data form for ${service}`);
+            const formType = dataForm.getChildText("field[var='FORM_TYPE']/value") || "jabber:iq:search";
+            
+            searchIq = xml("iq", { type: "set", to: service, id: crypto.randomUUID() },
+              xml("query", "jabber:iq:search",
+                xml("x", { xmlns: "jabber:x:data", type: "submit" },
+                  xml("field", { var: "FORM_TYPE" }, xml("value", {}, formType)),
+                  xml("field", { var: "search" }, xml("value", {}, searchTerm)),
+                  xml("field", { var: "Username" }, xml("value", {}, searchTerm)),
+                  xml("field", { var: "Name" }, xml("value", {}, searchTerm)),
+                  xml("field", { var: "Email" }, xml("value", {}, searchTerm))
+                )
+              )
+            );
+          } else {
+            // Use simple field approach
+            console.log(`searchUsers: Using simple fields for ${service}`);
+            searchIq = xml("iq", { type: "set", to: service, id: crypto.randomUUID() },
+              xml("query", "jabber:iq:search",
+                xml("nick", {}, searchTerm),
+                xml("first", {}, searchTerm),
+                xml("last", {}, searchTerm),
+                xml("name", {}, searchTerm),
+                xml("email", {}, searchTerm)
+              )
+            );
+          }
           
           const searchRes: any = await xmppRef.current.iqCaller.request(searchIq);
-          const results = searchRes.getChild("query", "jabber:iq:search")?.getChildren("item") ?? [];
+          const searchQuery = searchRes.getChild("query", "jabber:iq:search");
           
-          const users = results.map((item: any) => ({
-            jid: item.attrs.jid || '',
-            name: item.getChildText("name") || item.getChildText("nick") || item.attrs.jid?.split('@')[0] || ''
-          })).filter((user: any) => user.jid);
+          // Handle both data form results and simple item results
+          let users = [];
+          const resultForm = searchQuery?.getChild("x", "jabber:x:data");
+          
+          if (resultForm) {
+            // Parse data form results
+            const reportedFields = resultForm.getChild("reported")?.getChildren("field") ?? [];
+            const items = resultForm.getChildren("item");
+            
+            users = items.map((item: any) => {
+              const fields = item.getChildren("field");
+              const userData: any = {};
+              fields.forEach((field: any) => {
+                userData[field.attrs.var] = field.getChildText("value");
+              });
+              
+              return {
+                jid: userData.jid || userData.username || '',
+                name: userData.fn || userData.name || userData.first || userData.nick || userData.jid?.split('@')[0] || ''
+              };
+            }).filter((user: any) => user.jid);
+          } else {
+            // Parse simple item results
+            const items = searchQuery?.getChildren("item") ?? [];
+            users = items.map((item: any) => ({
+              jid: item.attrs.jid || '',
+              name: item.getChildText("name") || item.getChildText("nick") || item.getChildText("fn") || item.attrs.jid?.split('@')[0] || ''
+            })).filter((user: any) => user.jid);
+          }
+          
+          console.log(`searchUsers: Found ${users.length} users from ${service}`);
           
           if (users.length > 0) {
             return users;
           }
         } catch (e) {
-          // Try next service
+          console.log(`searchUsers: Failed to search on ${service}:`, e);
           continue;
         }
       }
       
+      console.log('searchUsers: No results found from any service');
       return [];
     } catch (error) {
       console.error("Failed to search users:", error);
