@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { PresencePicker } from "@/components/chat/PresencePicker"
+import { StatusIndicator } from "@/components/ui/status-indicator"
 import { cn } from "@/lib/utils"
 
 import {
@@ -38,7 +39,7 @@ export function AppSidebar() {
   const location = useLocation()
   const currentPath = location.pathname
   const { callState, setDoNotDisturb } = useJanusContext()
-  const { connectionState, userPresence, setPresence } = useXmpp()
+  const { connectionState, uiConnection, userPresence, setPresence } = useXmpp()
 
   const isActive = (path: string) => currentPath === path
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
@@ -60,39 +61,59 @@ export function AppSidebar() {
               </Avatar>
             </div>
 
-            {/* Chat Status - Compact presence picker */}
-            {connectionState === 'connected' && userPresence && (
-              <div className="px-2 mb-4">
-                {state === "collapsed" ? (
-                  <div className="flex justify-center">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="relative">
+            {/* Chat Status - Always visible presence area */}
+            <div className="px-2 mb-4">
+              {state === "collapsed" ? (
+                <div className="flex justify-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="relative">
+                        {uiConnection === "connected" ? (
                           <PresencePicker
-                            currentPresence={userPresence.presence}
-                            currentStatus={userPresence.status}
+                            currentPresence={userPresence?.presence || 'available'}
+                            currentStatus={userPresence?.status}
                             onPresenceChange={(presence, status) => setPresence(presence, status)}
                           />
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        <p>{userPresence.presence === 'available' ? 'Available' : 
-                            userPresence.presence === 'away' ? 'Away' :
-                            userPresence.presence === 'dnd' ? 'Do Not Disturb' :
-                            userPresence.presence === 'xa' ? 'Extended Away' : 'Offline'}</p>
-                        {userPresence.status && <p className="text-xs text-muted-foreground">{userPresence.status}</p>}
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                ) : (
-                  <PresencePicker
-                    currentPresence={userPresence.presence}
-                    currentStatus={userPresence.status}
-                    onPresenceChange={(presence, status) => setPresence(presence, status)}
-                  />
-                )}
-              </div>
-            )}
+                        ) : (
+                          <StatusIndicator
+                            variant={uiConnection === "reconnecting" ? "connecting" : "disconnected"}
+                            label=""
+                          />
+                        )}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      {uiConnection === "connected" ? (
+                        <>
+                          <p>{userPresence?.presence === 'available' ? 'Available' : 
+                              userPresence?.presence === 'away' ? 'Away' :
+                              userPresence?.presence === 'dnd' ? 'Do Not Disturb' :
+                              userPresence?.presence === 'xa' ? 'Extended Away' : 'Offline'}</p>
+                          {userPresence?.status && <p className="text-xs text-muted-foreground">{userPresence.status}</p>}
+                        </>
+                      ) : (
+                        <p>{uiConnection === "reconnecting" ? "Reconnecting..." : "Offline"}</p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              ) : (
+                <>
+                  {uiConnection === "connected" ? (
+                    <PresencePicker
+                      currentPresence={userPresence?.presence || 'available'}
+                      currentStatus={userPresence?.status}
+                      onPresenceChange={(presence, status) => setPresence(presence, status)}
+                    />
+                  ) : (
+                    <StatusIndicator
+                      variant={uiConnection === "reconnecting" ? "connecting" : "disconnected"}
+                      label={uiConnection === "reconnecting" ? "Reconnecting..." : "Offline"}
+                    />
+                  )}
+                </>
+              )}
+            </div>
 
 
           <SidebarGroupContent>

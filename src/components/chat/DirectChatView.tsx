@@ -14,7 +14,7 @@ import { MessageComposer } from './MessageComposer';
 import { MessageBodyRenderer } from './MessageBodyRenderer';
 import { MessageStatus } from './MessageStatus';
 import { DateSeparator } from './DateSeparator';
-import { PresencePicker } from './PresencePicker';
+
 import { insertDateSeparators, formatFullDateTime } from '@/lib/dateUtils';
 
 export const DirectChatView = () => {

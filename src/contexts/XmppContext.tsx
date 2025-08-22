@@ -70,10 +70,12 @@ export type MucRoom = {
 };
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
+type UiConnectionState = "connected" | "reconnecting" | "offline";
 
 type Ctx = {
   // direct
   connectionState: ConnectionState;
+  uiConnection: UiConnectionState;
   conversations: Conversation[];
   contacts: Contact[];
   userPresence?: { presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable'; status?: string };
@@ -132,8 +134,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reconnectBackoffRef = useRef(1000); // Start with 1 second
   const autoTriedRef = useRef(false);
   const presenceDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectGraceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
+  const [showReconnecting, setShowReconnecting] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [rooms, setRooms] = useState<MucRoom[]>([]);
@@ -178,6 +182,25 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   /* ---------- helpers ---------- */
 
   const bumpGen = () => { genRef.current += 1; return genRef.current; };
+
+  const startReconnectGrace = useCallback(() => {
+    setShowReconnecting(true);
+    if (reconnectGraceTimerRef.current) {
+      clearTimeout(reconnectGraceTimerRef.current);
+    }
+    reconnectGraceTimerRef.current = setTimeout(() => {
+      setShowReconnecting(false);
+      reconnectGraceTimerRef.current = null;
+    }, 10000); // 10 seconds
+  }, []);
+
+  const clearReconnectGrace = useCallback(() => {
+    if (reconnectGraceTimerRef.current) {
+      clearTimeout(reconnectGraceTimerRef.current);
+      reconnectGraceTimerRef.current = null;
+    }
+    setShowReconnecting(false);
+  }, []);
 
   const ensureConversation = useCallback((bareJid: string, init?: Partial<Conversation>) => {
     setConversations(prev => {
@@ -587,6 +610,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (status === "online") {
           setConnectionState("connected");
+          clearReconnectGrace(); // Clear grace period on successful connection
           reconnectBackoffRef.current = 1000; // Reset backoff on successful connection
           connectingRef.current = false; // Clear connecting flag
           
@@ -682,6 +706,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           connectingRef.current = false; // Clear connecting flag on disconnect
           if (!manualDisconnectRef.current) {
             console.log("Unexpected disconnect, scheduling reconnect");
+            startReconnectGrace();
             scheduleReconnect("status_disconnect");
           }
         } else if (status === "connecting") {
@@ -699,6 +724,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Don't schedule reconnect for "conflict" errors (replaced by new connection)
         const isConflictError = e?.condition === 'conflict' || e?.message?.includes('conflict');
         if (!manualDisconnectRef.current && !isConflictError) {
+          startReconnectGrace();
           scheduleReconnect("error");
         } else if (isConflictError) {
           console.log("Ignoring conflict error - replaced by new connection");
@@ -790,6 +816,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearTimeout(reconnectTimeoutRef.current);
     }
 
+    if (!manualDisconnectRef.current) {
+      startReconnectGrace();
+    }
+
     const delay = Math.min(reconnectBackoffRef.current, 30000); // Cap at 30 seconds
     console.log(`Scheduling reconnect in ${delay}ms due to: ${reason}`);
 
@@ -820,6 +850,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const disconnect = useCallback(async () => {
     manualDisconnectRef.current = true;
+    clearReconnectGrace(); // Clear grace on manual disconnect
     connectingRef.current = false; // Clear connecting flag
     
     // Clear keepalive timers
@@ -1396,9 +1427,16 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const effectiveJid = myBareJidRef.current || `${settings?.xmpp?.username || ''}@${settings?.xmpp?.domain || ''}`;
 
+  const uiConnection: UiConnectionState = useMemo(() => {
+    if (connectionState === "connected") return "connected";
+    if (showReconnecting) return "reconnecting";
+    return "offline";
+  }, [connectionState, showReconnecting]);
+
   const value = useMemo<Ctx>(() => ({
     // direct
     connectionState,
+    uiConnection,
     conversations,
     contacts,
     userPresence,
@@ -1437,6 +1475,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     runWebSocketDiagnostics,
   }), [
     connectionState,
+    uiConnection,
     conversations,
     contacts,
     userPresence,
