@@ -85,7 +85,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       const services = await listMucServices();
       setAvailableServices(services);
       if (services.length > 0) {
-        setSelectedService(services[0]);
+        setSelectedService("all");
         // Load rooms from all services, not just the first one
         await loadAllRooms(services);
       }
@@ -128,9 +128,13 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
 
   const handleServiceChange = (serviceJid: string) => {
     setSelectedService(serviceJid);
-    // Filter allRooms by selected service
-    const serviceRooms = allRooms.filter(room => room.service === serviceJid);
-    setAvailableRooms(serviceRooms);
+    // Filter allRooms by selected service, or show all if "all" is selected
+    if (serviceJid === "all") {
+      setAvailableRooms(allRooms);
+    } else {
+      const serviceRooms = allRooms.filter(room => room.service === serviceJid);
+      setAvailableRooms(serviceRooms);
+    }
   };
 
   const handleRetry = () => {
@@ -173,7 +177,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
            contact.jid.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
-  const filteredRooms = (selectedService ? availableRooms : allRooms).filter((room) => {
+  const filteredRooms = availableRooms.filter((room) => {
     return room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            room.jid.toLowerCase().includes(searchTerm.toLowerCase());
   });
@@ -296,7 +300,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                       <SelectValue placeholder="All services" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All services</SelectItem>
+                      <SelectItem value="all">All services</SelectItem>
                       {availableServices.map(service => (
                         <SelectItem key={service} value={service}>{service}</SelectItem>
                       ))}
