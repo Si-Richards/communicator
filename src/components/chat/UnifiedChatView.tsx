@@ -347,9 +347,18 @@ export const UnifiedChatView = () => {
 
                     // TypeScript assertion - we know this is a message after the date separator check
                     const message = item as any; // Using any to avoid complex type intersection issues
-                    const isOwn = isDirectChat 
-                      ? xmppJid(message.from).bare().toString() !== selectedConversation?.jid 
-                      : message.from.includes(`/${selectedRoom?.nick}`);
+                    const fromStr: string = typeof message.from === 'string' ? message.from : '';
+                    let isOwn = false;
+                    if (isDirectChat) {
+                      try {
+                        const bareFrom = fromStr ? xmppJid(fromStr).bare().toString() : '';
+                        isOwn = bareFrom !== (selectedConversation?.jid || '');
+                      } catch {
+                        isOwn = false;
+                      }
+                    } else {
+                      isOwn = fromStr.includes(`/${selectedRoom?.nick || ''}`);
+                    }
 
                     return (
                       <div
@@ -366,7 +375,7 @@ export const UnifiedChatView = () => {
                           >
                             {!isDirectChat && isOwn && (
                               <p className="text-xs font-medium mb-1 opacity-70">
-                                {message.from.split('/')[1] || 'Unknown'}
+                                {(fromStr.split('/')[1] || fromStr || 'Unknown')}
                               </p>
                             )}
                             <MessageBodyRenderer body={message.body} />
