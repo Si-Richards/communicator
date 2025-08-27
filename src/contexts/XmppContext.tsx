@@ -32,6 +32,7 @@ export type Conversation = {
   lastActivity: Date;
   hasMoreHistory?: boolean;     // RSM: if false => no more pages
   mamBefore?: string | null;    // RSM cursor
+  archived?: boolean;           // whether conversation is archived/hidden
 };
 
 export type Contact = {
@@ -67,6 +68,7 @@ export type MucRoom = {
   lastActivity: Date;
   hasMoreHistory?: boolean;     // for MAM paging
   mamBefore?: string | null;    // RSM cursor
+  archived?: boolean;           // whether room is archived/hidden
 };
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
@@ -109,6 +111,12 @@ type Ctx = {
   listMucServices: () => Promise<string[]>;
   listRooms: (serviceJid: string) => Promise<Array<{jid: string; name: string}>>;
   searchUsers: (searchTerm: string) => Promise<Array<{jid: string; name: string}>>;
+  
+  // archive/delete
+  archiveConversation: (bareJid: string, archived?: boolean) => void;
+  archiveRoom: (roomJid: string, archived?: boolean) => void;
+  removeConversation: (bareJid: string) => void;
+  removeRoom: (roomJid: string) => void;
   
   // diagnostics (for SettingsPage)
   effectiveJid: string;
@@ -184,6 +192,28 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     onRejoinRooms: handleRejoinRooms,
     onLoadRecentHistory: handleLoadRecentHistory,
   });
+
+  /* ---------- archive/delete helpers ---------- */
+
+  const archiveConversation = useCallback((bareJid: string, archived: boolean = true) => {
+    setConversations(prev => prev.map(conv => 
+      conv.jid === bareJid ? { ...conv, archived } : conv
+    ));
+  }, []);
+
+  const archiveRoom = useCallback((roomJid: string, archived: boolean = true) => {
+    setRooms(prev => prev.map(room => 
+      room.jid === roomJid ? { ...room, archived } : room
+    ));
+  }, []);
+
+  const removeConversation = useCallback((bareJid: string) => {
+    setConversations(prev => prev.filter(conv => conv.jid !== bareJid));
+  }, []);
+
+  const removeRoom = useCallback((roomJid: string) => {
+    setRooms(prev => prev.filter(room => room.jid !== roomJid));
+  }, []);
 
   /* ---------- helpers ---------- */
 
@@ -1524,12 +1554,21 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       console.log(`searchUsers: Searching for "${searchTerm}" on ${domain}`);
       
-      // Check if searchTerm looks like a JID, if so return it directly
+      // Check if searchTerm looks like a JID, but exclude MUC domains
       if (searchTerm.includes('@') && searchTerm.split('@').length === 2) {
         const [user, searchDomain] = searchTerm.split('@');
         if (user && searchDomain) {
-          console.log(`searchUsers: Direct JID match for ${searchTerm}`);
-          return [{ jid: searchTerm, name: user }];
+          // Exclude MUC domains from user search
+          const isMucDomain = searchDomain.includes('conference.') || 
+                            searchDomain.includes('muc.') || 
+                            searchDomain.includes('rooms.');
+          if (!isMucDomain) {
+            console.log(`searchUsers: Direct JID match for ${searchTerm}`);
+            return [{ jid: searchTerm, name: user }];
+          } else {
+            console.log(`searchUsers: Skipping MUC JID ${searchTerm} in user search`);
+            return [];
+          }
         }
       }
       
@@ -1720,6 +1759,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     listRooms,
     searchUsers,
 
+    // archive/delete
+    archiveConversation,
+    archiveRoom,
+    removeConversation,
+    removeRoom,
+
     // diagnostics
     effectiveJid,
     lastError,
@@ -1757,6 +1802,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     listMucServices,
     listRooms,
     searchUsers,
+    archiveConversation,
+    archiveRoom,
+    removeConversation,
+    removeRoom,
     effectiveJid,
     lastError,
     lastAttemptAt,

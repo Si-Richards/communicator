@@ -183,14 +183,22 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     }
   };
 
-  // Combine roster contacts with searched users, removing duplicates
+  // Filter out MUC JIDs from user search and combine with contacts
   const allUsers = useMemo(() => {
     const contactSet = new Set(contacts.map(c => c.jid));
-    const uniqueSearchedUsers = searchedUsers.filter(u => !contactSet.has(u.jid));
+    
+    // Filter out MUC JIDs from searched users (they should appear in rooms instead)
+    const filteredSearchedUsers = searchedUsers.filter(u => {
+      const domain = u.jid.split('@')[1];
+      const isMucDomain = domain && (domain.includes('conference.') || 
+                                   domain.includes('muc.') || 
+                                   domain.includes('rooms.'));
+      return !contactSet.has(u.jid) && !isMucDomain;
+    });
     
     return [
       ...contacts.map(c => ({ jid: c.jid, name: c.name, presence: c.presence })),
-      ...uniqueSearchedUsers.map(u => ({ jid: u.jid, name: u.name, presence: 'unavailable' as const }))
+      ...filteredSearchedUsers.map(u => ({ jid: u.jid, name: u.name, presence: 'unavailable' as const }))
     ];
   }, [contacts, searchedUsers]);
 
@@ -208,7 +216,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   // Detect if search term looks like a MUC JID for quick join
   const mucJidPattern = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   const isValidMucJid = searchTerm.trim() && mucJidPattern.test(searchTerm.trim()) && 
-                       searchTerm.includes('@conference.') || searchTerm.includes('@muc.') || searchTerm.includes('@rooms.');
+                       (searchTerm.includes('@conference.') || searchTerm.includes('@muc.') || searchTerm.includes('@rooms.'));
 
   const handleQuickRoomJoin = async () => {
     if (!isValidMucJid || !nickname.trim()) return;

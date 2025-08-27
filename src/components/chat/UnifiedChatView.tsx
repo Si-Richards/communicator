@@ -1,10 +1,12 @@
-import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX } from 'lucide-react';
+import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useState, useEffect, useMemo } from 'react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { MessageComposer } from './MessageComposer';
@@ -13,6 +15,7 @@ import { MessageStatus } from './MessageStatus';
 import { DateSeparator } from './DateSeparator';
 import { PhonebookDialog } from './PhonebookDialog';
 import { insertDateSeparators } from '@/lib/dateUtils';
+import { jid as xmppJid } from '@xmpp/client';
 
 interface UnifiedItem {
   kind: 'direct' | 'room';
@@ -23,6 +26,7 @@ interface UnifiedItem {
   lastMessage?: string;
   isOwner?: boolean;
   isMuted?: boolean;
+  archived?: boolean;
 }
 
 export const UnifiedChatView = () => {
@@ -32,6 +36,7 @@ export const UnifiedChatView = () => {
   const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   const [isPhonebookOpen, setIsPhonebookOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   const { 
     uiConnection,
@@ -44,7 +49,13 @@ export const UnifiedChatView = () => {
     loadRoomHistory,
     markConversationRead,
     markRoomRead,
-    startConversation
+    startConversation,
+    archiveConversation,
+    archiveRoom,
+    removeConversation,
+    removeRoom,
+    joinRoom,
+    nickname
   } = useXmpp();
 
   // Merge conversations and rooms into unified list
@@ -55,7 +66,8 @@ export const UnifiedChatView = () => {
       name: conv.name,
       lastActivity: conv.lastActivity,
       unreadCount: conv.unreadCount,
-      lastMessage: conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].body : 'No messages'
+      lastMessage: conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].body : 'No messages',
+      archived: conv.archived
     }));
 
     const roomItems: UnifiedItem[] = rooms.map(room => ({
@@ -66,16 +78,19 @@ export const UnifiedChatView = () => {
       unreadCount: room.unreadCount,
       lastMessage: room.messages.length > 0 ? room.messages[room.messages.length - 1].body : 'No messages',
       isOwner: room.isOwner,
-      isMuted: room.isMuted
+      isMuted: room.isMuted,
+      archived: room.archived
     }));
 
     return [...directItems, ...roomItems];
   }, [conversations, rooms]);
 
-  // Filter and sort unified items
+  // Filter and sort unified items (including archive toggle)
   const filteredItems = unifiedItems.filter((item) => {
-    return item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-           item.jid.includes(searchTerm);
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         item.jid.includes(searchTerm);
+    const archiveMatch = showArchived ? item.archived : !item.archived;
+    return matchesSearch && archiveMatch;
   });
 
   const sortedItems = [...filteredItems].sort((a, b) => {
@@ -114,6 +129,29 @@ export const UnifiedChatView = () => {
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedItem) return;
 
+    // Check if trying to send a direct message to a MUC JID
+    if (selectedItem.kind === 'direct') {
+      const domain = selectedItem.jid.split('@')[1];
+      const isMucDomain = domain && (domain.includes('conference.') || 
+                                   domain.includes('muc.') || 
+                                   domain.includes('rooms.'));
+      
+      if (isMucDomain) {
+        // This is actually a MUC room - offer to join it instead
+        if (confirm(`This appears to be a chat room. Would you like to join "${selectedItem.jid}" as a room instead?`)) {
+          try {
+            await joinRoom(selectedItem.jid, nickname.trim());
+            setSelectedItem({ kind: 'room', jid: selectedItem.jid });
+            return;
+          } catch (error) {
+            console.error('Failed to join room:', error);
+            return;
+          }
+        }
+        return;
+      }
+    }
+
     const success = selectedItem.kind === 'direct'
       ? await sendMessage(selectedItem.jid, newMessage.trim())
       : await sendRoomMessage(selectedItem.jid, newMessage.trim());
@@ -146,6 +184,38 @@ export const UnifiedChatView = () => {
     }
     setSelectedItem({ kind, jid });
     setIsPhonebookOpen(false);
+  };
+
+  const handleArchiveItem = (item: UnifiedItem) => {
+    if (item.kind === 'direct') {
+      archiveConversation(item.jid);
+    } else {
+      archiveRoom(item.jid);
+    }
+    // If the archived item was selected, clear selection
+    if (selectedItem?.jid === item.jid) {
+      setSelectedItem(null);
+    }
+  };
+
+  const handleDeleteItem = (item: UnifiedItem) => {
+    if (item.kind === 'direct') {
+      removeConversation(item.jid);
+    } else {
+      removeRoom(item.jid);
+    }
+    // If the deleted item was selected, clear selection
+    if (selectedItem?.jid === item.jid) {
+      setSelectedItem(null);
+    }
+  };
+
+  const handleUnarchiveItem = (item: UnifiedItem) => {
+    if (item.kind === 'direct') {
+      archiveConversation(item.jid, false);
+    } else {
+      archiveRoom(item.jid, false);
+    }
   };
 
   const getInitials = (name: string) => {
@@ -280,7 +350,7 @@ export const UnifiedChatView = () => {
                     // TypeScript assertion - we know this is a message after the date separator check
                     const message = item as any; // Using any to avoid complex type intersection issues
                     const isOwn = isDirectChat 
-                      ? message.from === selectedConversation?.jid 
+                      ? xmppJid(message.from).bare().toString() !== selectedConversation?.jid 
                       : message.from.includes(`/${selectedRoom?.nick}`);
 
                     return (
@@ -351,17 +421,28 @@ export const UnifiedChatView = () => {
               Phonebook
             </Button>
             
-            <Select value={sortMode} onValueChange={(value: 'newest' | 'a-z' | 'z-a') => setSortMode(value)}>
-              <SelectTrigger className="w-28">
-                <ArrowUpDown className="h-4 w-4 mr-1" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="newest">Newest</SelectItem>
-                <SelectItem value="a-z">A–Z</SelectItem>
-                <SelectItem value="z-a">Z–A</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant={showArchived ? "default" : "outline"}
+                onClick={() => setShowArchived(!showArchived)}
+              >
+                <Archive className="h-4 w-4 mr-1" />
+                {showArchived ? 'Hide' : 'Show'} Archived
+              </Button>
+              
+              <Select value={sortMode} onValueChange={(value: 'newest' | 'a-z' | 'z-a') => setSortMode(value)}>
+                <SelectTrigger className="w-28">
+                  <ArrowUpDown className="h-4 w-4 mr-1" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest</SelectItem>
+                  <SelectItem value="a-z">A–Z</SelectItem>
+                  <SelectItem value="z-a">Z–A</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           
           <div className="relative">
@@ -399,14 +480,16 @@ export const UnifiedChatView = () => {
               const isSelected = selectedItem?.jid === item.jid && selectedItem?.kind === item.kind;
               
               return (
-                <div
+                 <div
                   key={`${item.kind}-${item.jid}`}
-                  onClick={() => setSelectedItem({ kind: item.kind, jid: item.jid })}
-                  className={`p-4 border-b border-border cursor-pointer hover:bg-muted/50 ${
+                  className={`group relative p-4 border-b border-border cursor-pointer hover:bg-muted/50 ${
                     isSelected ? 'bg-muted' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div 
+                    className="flex items-center gap-3"
+                    onClick={() => setSelectedItem({ kind: item.kind, jid: item.jid })}
+                  >
                     <Avatar className="h-10 w-10">
                       <AvatarFallback>{getInitials(item.name)}</AvatarFallback>
                     </Avatar>
@@ -417,6 +500,7 @@ export const UnifiedChatView = () => {
                           {item.kind === 'room' && <Users className="h-3 w-3 text-muted-foreground" />}
                           {item.isOwner && <Crown className="h-3 w-3 text-yellow-500" />}
                           {item.isMuted && <VolumeX className="h-3 w-3 text-muted-foreground" />}
+                          {item.archived && <Archive className="h-3 w-3 text-muted-foreground" />}
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted-foreground">{timestamp}</span>
@@ -429,6 +513,53 @@ export const UnifiedChatView = () => {
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{item.lastMessage}</p>
                     </div>
+                  </div>
+                  
+                  {/* Actions menu */}
+                  <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {item.archived ? (
+                          <DropdownMenuItem onClick={() => handleUnarchiveItem(item)}>
+                            <MessageSquare className="h-4 w-4 mr-2" />
+                            Unarchive
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem onClick={() => handleArchiveItem(item)}>
+                            <Archive className="h-4 w-4 mr-2" />
+                            Archive
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete {item.kind === 'direct' ? 'Conversation' : 'Room'}?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will permanently delete "{item.name}" and all its messages. This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDeleteItem(item)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
               );
