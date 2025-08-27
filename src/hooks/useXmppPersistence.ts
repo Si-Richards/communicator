@@ -3,15 +3,15 @@
  */
 
 import { useEffect, useCallback } from 'react';
-import { XmppConversation, MucRoom } from '@/types/xmpp';
+import { Conversation, MucRoom } from '@/contexts/XmppContext';
 import { xmppStorage } from '@/lib/xmppStorage';
 
 interface UseXmppPersistenceProps {
   currentAccount: string | null;
-  conversations: XmppConversation[];
+  conversations: Conversation[];
   rooms: MucRoom[];
   connectionState: string;
-  onHydrateConversations: (conversations: XmppConversation[]) => void;
+  onHydrateConversations: (conversations: Conversation[]) => void;
   onHydrateRooms: (rooms: MucRoom[]) => void;
   onRejoinRooms: (roomJids: string[]) => void;
   onLoadRecentHistory: (conversationJids: string[]) => void;

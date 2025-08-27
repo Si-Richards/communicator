@@ -15,7 +15,7 @@ interface StoredData {
 }
 
 interface AccountData {
-  conversations: XmppConversation[];
+  conversations: Conversation[];
   rooms: MucRoom[];
   lastSync: string;
 }
@@ -59,7 +59,7 @@ export class XmppStorage {
     }
   }
 
-  private trimMessages(messages: XmppMessage[], maxCount: number) {
+  private trimMessages(messages: (ChatMessage | RoomMessage)[], maxCount: number) {
     if (messages.length <= maxCount) return messages;
     
     // Keep most recent messages, but ensure we have both sent and received
@@ -67,7 +67,7 @@ export class XmppStorage {
     return sorted.slice(0, maxCount);
   }
 
-  saveConversations(conversations: XmppConversation[]) {
+  saveConversations(conversations: Conversation[]) {
     if (!this.currentAccount) return;
     
     // Debounce saves
@@ -123,7 +123,7 @@ export class XmppStorage {
     }, 1000);
   }
 
-  loadConversations(): XmppConversation[] {
+  loadConversations(): Conversation[] {
     if (!this.currentAccount) return [];
     
     const data = this.getStorageData();

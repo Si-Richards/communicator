@@ -37,8 +37,6 @@ export const UnifiedChatView = () => {
   const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   const [isPhonebookOpen, setIsPhonebookOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const [showJoinRoomDialog, setShowJoinRoomDialog] = useState(false);
-  const [joinRoomJid, setJoinRoomJid] = useState('');
 
   const { 
     uiConnection,
@@ -64,24 +62,24 @@ export const UnifiedChatView = () => {
   const unifiedItems: UnifiedItem[] = useMemo(() => {
     const directItems: UnifiedItem[] = conversations.map(conv => ({
       kind: 'direct' as const,
-      jid: conv.jid || '',
-      name: conv.name || conv.jid?.split('@')[0] || 'Unknown',
-      lastActivity: conv.lastActivity || new Date(0),
-      unreadCount: conv.unreadCount || 0,
-      lastMessage: conv.messages && conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].body : 'No messages',
-      archived: conv.archived || false
+      jid: conv.jid,
+      name: conv.name,
+      lastActivity: conv.lastActivity,
+      unreadCount: conv.unreadCount,
+      lastMessage: conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].body : 'No messages',
+      archived: conv.archived
     }));
 
     const roomItems: UnifiedItem[] = rooms.map(room => ({
       kind: 'room' as const,
-      jid: room.jid || '',
-      name: room.name || room.jid?.split('@')[0] || 'Unknown Room',
-      lastActivity: room.lastActivity || new Date(0),
-      unreadCount: room.unreadCount || 0,
-      lastMessage: room.messages && room.messages.length > 0 ? room.messages[room.messages.length - 1].body : 'No messages',
-      isOwner: room.isOwner || false,
-      isMuted: room.isMuted || false,
-      archived: room.archived || false
+      jid: room.jid,
+      name: room.name,
+      lastActivity: room.lastActivity,
+      unreadCount: room.unreadCount,
+      lastMessage: room.messages.length > 0 ? room.messages[room.messages.length - 1].body : 'No messages',
+      isOwner: room.isOwner,
+      isMuted: room.isMuted,
+      archived: room.archived
     }));
 
     return [...directItems, ...roomItems];
@@ -89,11 +87,8 @@ export const UnifiedChatView = () => {
 
   // Filter and sort unified items (including archive toggle)
   const filteredItems = unifiedItems.filter((item) => {
-    const searchLower = searchTerm.toLowerCase();
-    const itemName = item.name || '';
-    const itemJid = item.jid || '';
-    const matchesSearch = itemName.toLowerCase().includes(searchLower) ||
-                         itemJid.toLowerCase().includes(searchLower);
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         item.jid.includes(searchTerm);
     const archiveMatch = showArchived ? item.archived : !item.archived;
     return matchesSearch && archiveMatch;
   });
@@ -101,11 +96,11 @@ export const UnifiedChatView = () => {
   const sortedItems = [...filteredItems].sort((a, b) => {
     switch (sortMode) {
       case 'newest':
-        return (b.lastActivity?.getTime() || 0) - (a.lastActivity?.getTime() || 0);
+        return b.lastActivity.getTime() - a.lastActivity.getTime();
       case 'a-z':
-        return (a.name || '').localeCompare(b.name || '');
+        return a.name.localeCompare(b.name);
       case 'z-a':
-        return (b.name || '').localeCompare(a.name || '');
+        return b.name.localeCompare(a.name);
       default:
         return 0;
     }
@@ -136,16 +131,23 @@ export const UnifiedChatView = () => {
 
     // Check if trying to send a direct message to a MUC JID
     if (selectedItem.kind === 'direct') {
-      const jidStr = selectedItem.jid || '';
-      const domain = jidStr.includes('@') ? jidStr.split('@')[1] : '';
+      const domain = selectedItem.jid.split('@')[1];
       const isMucDomain = domain && (domain.includes('conference.') || 
                                    domain.includes('muc.') || 
                                    domain.includes('rooms.'));
       
       if (isMucDomain) {
-        // This is actually a MUC room - show non-blocking dialog
-        setShowJoinRoomDialog(true);
-        setJoinRoomJid(selectedItem.jid);
+        // This is actually a MUC room - offer to join it instead
+        if (confirm(`This appears to be a chat room. Would you like to join "${selectedItem.jid}" as a room instead?`)) {
+          try {
+            await joinRoom(selectedItem.jid, nickname.trim());
+            setSelectedItem({ kind: 'room', jid: selectedItem.jid });
+            return;
+          } catch (error) {
+            console.error('Failed to join room:', error);
+            return;
+          }
+        }
         return;
       }
     }
@@ -217,8 +219,7 @@ export const UnifiedChatView = () => {
   };
 
   const getInitials = (name: string) => {
-    const safeName = name || 'Unknown';
-    return safeName.split(' ').map(n => n[0] || '').join('').toUpperCase() || 'U';
+    return name.split(' ').map(n => n[0]).join('').toUpperCase();
   };
 
   const renderMessageThread = () => {
@@ -300,7 +301,7 @@ export const UnifiedChatView = () => {
         <div className="flex-1 min-h-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="p-4 pb-6">
-              {!data.messages || data.messages.length === 0 ? (
+              {data.messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-muted-foreground min-h-[400px]">
                   <div className="text-center">
                     <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -341,25 +342,16 @@ export const UnifiedChatView = () => {
                     </div>
                   )}
                   
-                  {insertDateSeparators(data.messages || []).map((item, index) => {
+                  {insertDateSeparators(data.messages).map((item, index) => {
                     if ('type' in item && item.type === 'date-separator') {
                       return <DateSeparator key={item.id} date={item.date} />;
                     }
 
                     // TypeScript assertion - we know this is a message after the date separator check
                     const message = item as any; // Using any to avoid complex type intersection issues
-                    const fromStr: string = typeof message.from === 'string' ? message.from : '';
-                    let isOwn = false;
-                    if (isDirectChat) {
-                      try {
-                        const bareFrom = fromStr ? xmppJid(fromStr).bare().toString() : '';
-                        isOwn = bareFrom !== (selectedConversation?.jid || '');
-                      } catch {
-                        isOwn = false;
-                      }
-                    } else {
-                      isOwn = fromStr.includes(`/${selectedRoom?.nick || ''}`);
-                    }
+                    const isOwn = isDirectChat 
+                      ? xmppJid(message.from).bare().toString() !== selectedConversation?.jid 
+                      : message.from.includes(`/${selectedRoom?.nick}`);
 
                     return (
                       <div
@@ -376,7 +368,7 @@ export const UnifiedChatView = () => {
                           >
                             {!isDirectChat && isOwn && (
                               <p className="text-xs font-medium mb-1 opacity-70">
-                                {(fromStr.split('/')[1] || fromStr || 'Unknown')}
+                                {message.from.split('/')[1] || 'Unknown'}
                               </p>
                             )}
                             <MessageBodyRenderer body={message.body} />
@@ -413,37 +405,8 @@ export const UnifiedChatView = () => {
     );
   };
 
-  const handleJoinRoom = async () => {
-    try {
-      await joinRoom(joinRoomJid, nickname.trim());
-      setSelectedItem({ kind: 'room', jid: joinRoomJid });
-      setShowJoinRoomDialog(false);
-      setJoinRoomJid('');
-    } catch (error) {
-      console.error('Failed to join room:', error);
-    }
-  };
-
   return (
     <div className="h-full flex overflow-hidden">
-      {/* Join Room Dialog */}
-      <AlertDialog open={showJoinRoomDialog} onOpenChange={setShowJoinRoomDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Join Chat Room</AlertDialogTitle>
-            <AlertDialogDescription>
-              This appears to be a chat room. Would you like to join "{joinRoomJid}" as a room?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleJoinRoom}>
-              Join Room
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
       {/* Items List */}
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">
@@ -513,7 +476,7 @@ export const UnifiedChatView = () => {
             </div>
           ) : (
             sortedItems.map((item) => {
-              const timestamp = item.lastActivity?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
+              const timestamp = item.lastActivity.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
               const isSelected = selectedItem?.jid === item.jid && selectedItem?.kind === item.kind;
               
               return (
