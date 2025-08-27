@@ -70,10 +70,8 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   // Load MUC services when dialog opens and load all rooms across services
   useEffect(() => {
     if (open && uiConnection === 'connected') {
-      if (availableServices.length === 0) {
-        console.log('PhonebookDialog: Loading services on open');
-        handleLoadServices();
-      }
+      console.log('PhonebookDialog: Loading services on open');
+      handleLoadServices();
     } else if (uiConnection !== 'connected') {
       setConnectionError(uiConnection === 'offline' ? 'Not connected to server' : 
                         uiConnection === 'reconnecting' ? 'Reconnecting to server...' : 
@@ -85,10 +83,11 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
 
   // Auto-refresh when connection is restored
   useEffect(() => {
-    if (connectionState === 'connected' && open && availableServices.length > 0) {
-      loadAllRooms(availableServices);
+    if (connectionState === 'connected' && open) {
+      console.log('PhonebookDialog: Connection restored, reloading services and rooms');
+      handleLoadServices();
     }
-  }, [connectionState, open, availableServices.length]);
+  }, [connectionState, open]);
 
   const handleLoadServices = async () => {
     setLoadingServices(true);
@@ -206,6 +205,22 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
            room.jid.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
+  // Detect if search term looks like a MUC JID for quick join
+  const mucJidPattern = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  const isValidMucJid = searchTerm.trim() && mucJidPattern.test(searchTerm.trim()) && 
+                       searchTerm.includes('@conference.') || searchTerm.includes('@muc.') || searchTerm.includes('@rooms.');
+
+  const handleQuickRoomJoin = async () => {
+    if (!isValidMucJid || !nickname.trim()) return;
+    await handleRoomJoin(searchTerm.trim());
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && isValidMucJid && nickname.trim()) {
+      handleQuickRoomJoin();
+    }
+  };
+
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
   };
@@ -247,13 +262,37 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search users and rooms... (try full JID like user@domain.com)"
+              placeholder="Search users and rooms... (try full JID like room@conference.domain.com)"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyPress={handleKeyPress}
               className="pl-10"
               disabled={uiConnection !== 'connected'}
             />
           </div>
+
+          {/* Quick Join Room by JID */}
+          {isValidMucJid && (
+            <div className="p-3 bg-primary/10 border border-primary/20 rounded-md">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-primary">Join room by JID</p>
+                  <p className="text-xs text-muted-foreground truncate">{searchTerm.trim()}</p>
+                </div>
+                <Button 
+                  size="sm" 
+                  onClick={handleQuickRoomJoin}
+                  disabled={!nickname.trim()}
+                  className="ml-2"
+                >
+                  Join
+                </Button>
+              </div>
+              {!nickname.trim() && (
+                <p className="text-xs text-muted-foreground mt-1">Set a nickname in settings to join rooms</p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Users Section */}

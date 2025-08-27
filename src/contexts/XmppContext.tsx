@@ -1337,21 +1337,51 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     
     console.log(`listRooms: Querying service ${serviceJid}`);
-    const iq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
+    
+    // First try standard disco#items
+    let iq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
       xml("query", "http://jabber.org/protocol/disco#items")
     );
     
     try {
-      const res: any = await xmpp.iqCaller.request(iq);
-      const items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+      let res: any = await xmpp.iqCaller.request(iq);
+      let items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+      
+      // If no rooms found, try with MUC rooms node
+      if (items.length === 0) {
+        console.log(`listRooms: No rooms from standard query, trying MUC rooms node on ${serviceJid}`);
+        iq = xml("iq", { type: "get", to: serviceJid, id: crypto.randomUUID() },
+          xml("query", { "xmlns": "http://jabber.org/protocol/disco#items", "node": "http://jabber.org/protocol/muc#rooms" })
+        );
+        
+        try {
+          res = await xmpp.iqCaller.request(iq);
+          items = res.getChild("query", "http://jabber.org/protocol/disco#items")?.getChildren("item") ?? [];
+          if (items.length > 0) {
+            console.log(`listRooms: Found ${items.length} rooms using MUC rooms node`);
+          }
+        } catch (nodeError) {
+          console.log(`listRooms: MUC rooms node query failed for ${serviceJid}:`, nodeError);
+        }
+      } else {
+        console.log(`listRooms: Found ${items.length} rooms using standard disco#items`);
+      }
       
       const rooms = items.map((item: any) => ({
         jid: item.attrs?.jid || "",
         name: item.attrs?.name || item.attrs?.jid?.split("@")[0] || "Unknown Room"
       })).filter((room: any) => room.jid);
       
-      console.log(`listRooms: Found ${rooms.length} rooms from ${serviceJid}`);
-      return rooms;
+      // Remove duplicates based on JID
+      const uniqueRooms = rooms.reduce((acc: Array<{jid: string; name: string}>, room: {jid: string; name: string}) => {
+        if (!acc.find(r => r.jid === room.jid)) {
+          acc.push(room);
+        }
+        return acc;
+      }, []);
+      
+      console.log(`listRooms: Returning ${uniqueRooms.length} unique rooms from ${serviceJid}`);
+      return uniqueRooms;
     } catch (e) {
       console.error(`Failed to list rooms from ${serviceJid}:`, e);
       return [];
