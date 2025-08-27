@@ -34,12 +34,14 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const { settings } = useSettings();
   const { 
     uiConnection,
+    connectionState,
     contacts,
     nickname,
     listMucServices,
     listRooms,
     searchUsers,
-    joinRoom
+    joinRoom,
+    connect
   } = useXmpp();
 
   // Enhanced user search with debouncing
@@ -80,6 +82,13 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       setConnectionError(null);
     }
   }, [open, uiConnection]);
+
+  // Auto-refresh when connection is restored
+  useEffect(() => {
+    if (connectionState === 'connected' && open && availableServices.length > 0) {
+      loadAllRooms(availableServices);
+    }
+  }, [connectionState, open, availableServices.length]);
 
   const handleLoadServices = async () => {
     setLoadingServices(true);
@@ -222,9 +231,13 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                 <div className="w-2 h-2 bg-destructive rounded-full" />
                 <span className="text-sm">{connectionError}</span>
               </div>
-              {uiConnection === 'connected' && (
+              {uiConnection === 'connected' ? (
                 <Button size="sm" variant="outline" onClick={handleRetry}>
                   Retry
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => connect()}>
+                  Connect
                 </Button>
               )}
             </div>
@@ -234,7 +247,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search users and rooms..."
+              placeholder="Search users and rooms... (try full JID like user@domain.com)"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
@@ -260,9 +273,9 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                   <div className="p-4 text-center text-muted-foreground">
                     <UserIcon className="h-8 w-8 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">
-                      {searchTerm ? 'No users match your search' : 'No contacts available'}
+                    {searchTerm ? 'No users found' : 'No contacts available'}
                     </p>
-                    {searchTerm && <p className="text-xs mt-1">Try searching the user directory</p>}
+                    {searchTerm && uiConnection === 'connected' && <p className="text-xs mt-1">User directory search may not be available on this server</p>}
                   </div>
                 ) : (
                   <div className="p-2">

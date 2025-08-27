@@ -1494,6 +1494,15 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       console.log(`searchUsers: Searching for "${searchTerm}" on ${domain}`);
       
+      // Check if searchTerm looks like a JID, if so return it directly
+      if (searchTerm.includes('@') && searchTerm.split('@').length === 2) {
+        const [user, searchDomain] = searchTerm.split('@');
+        if (user && searchDomain) {
+          console.log(`searchUsers: Direct JID match for ${searchTerm}`);
+          return [{ jid: searchTerm, name: user }];
+        }
+      }
+      
       // First discover available search services via disco#items
       let searchServices: string[] = [];
       try {
@@ -1520,46 +1529,27 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const supportsSearch = features.some((f: any) => f.attrs.var === "jabber:iq:search");
             if (supportsSearch) {
               searchServices.push(serviceJid);
+              console.log(`searchUsers: Found search service: ${serviceJid}`);
             }
           } catch (e) {
-            // Service doesn't respond or doesn't support search
+            // Service doesn't respond or doesn't support search - this is normal
             continue;
           }
         }
       } catch (e) {
-        console.log('searchUsers: Failed to discover services via disco, using fallback list');
+        console.log('searchUsers: Failed to discover services via disco');
       }
       
-      // Fallback to common user directory service names if none discovered
       if (searchServices.length === 0) {
-        searchServices = [
-          `search.${domain}`,
-          `users.${domain}`, 
-          `directory.${domain}`,
-          `vjud.${domain}`,
-          domain // Sometimes the server itself provides search
-        ];
+        console.log('searchUsers: No search services discovered');
+        return [];
       }
       
-      console.log(`searchUsers: Trying services:`, searchServices);
+      console.log(`searchUsers: Using discovered services:`, searchServices);
       
       for (const service of searchServices) {
         try {
-          // Verify service supports search
-          const discoInfoIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
-            xml("query", "http://jabber.org/protocol/disco#info")
-          );
-          
-          const infoRes: any = await xmppRef.current.iqCaller.request(discoInfoIq);
-          const features = infoRes.getChild("query", "http://jabber.org/protocol/disco#info")?.getChildren("feature") ?? [];
-          
-          const supportsSearch = features.some((f: any) => f.attrs.var === "jabber:iq:search");
-          if (!supportsSearch) {
-            console.log(`searchUsers: ${service} doesn't support search`);
-            continue;
-          }
-          
-          console.log(`searchUsers: ${service} supports search, querying...`);
+          console.log(`searchUsers: Searching on ${service}...`);
           
           // Get search form to see what fields are supported
           const searchFormIq = xml("iq", { type: "get", to: service, id: crypto.randomUUID() },
@@ -1642,7 +1632,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return users;
           }
         } catch (e) {
-          console.log(`searchUsers: Failed to search on ${service}:`, e);
+          console.log(`searchUsers: Search failed on ${service} - this is normal if the service doesn't exist`);
           continue;
         }
       }
