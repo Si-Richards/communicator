@@ -136,7 +136,8 @@ export const UnifiedChatView = () => {
 
     // Check if trying to send a direct message to a MUC JID
     if (selectedItem.kind === 'direct') {
-      const domain = selectedItem.jid.split('@')[1];
+      const jidStr = selectedItem.jid || '';
+      const domain = jidStr.includes('@') ? jidStr.split('@')[1] : '';
       const isMucDomain = domain && (domain.includes('conference.') || 
                                    domain.includes('muc.') || 
                                    domain.includes('rooms.'));
