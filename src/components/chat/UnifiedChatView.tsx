@@ -62,24 +62,24 @@ export const UnifiedChatView = () => {
   const unifiedItems: UnifiedItem[] = useMemo(() => {
     const directItems: UnifiedItem[] = conversations.map(conv => ({
       kind: 'direct' as const,
-      jid: conv.jid,
-      name: conv.name,
-      lastActivity: conv.lastActivity,
-      unreadCount: conv.unreadCount,
-      lastMessage: conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].body : 'No messages',
-      archived: conv.archived
+      jid: conv.jid || '',
+      name: conv.name || conv.jid?.split('@')[0] || 'Unknown',
+      lastActivity: conv.lastActivity || new Date(0),
+      unreadCount: conv.unreadCount || 0,
+      lastMessage: conv.messages && conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].body : 'No messages',
+      archived: conv.archived || false
     }));
 
     const roomItems: UnifiedItem[] = rooms.map(room => ({
       kind: 'room' as const,
-      jid: room.jid,
-      name: room.name,
-      lastActivity: room.lastActivity,
-      unreadCount: room.unreadCount,
-      lastMessage: room.messages.length > 0 ? room.messages[room.messages.length - 1].body : 'No messages',
-      isOwner: room.isOwner,
-      isMuted: room.isMuted,
-      archived: room.archived
+      jid: room.jid || '',
+      name: room.name || room.jid?.split('@')[0] || 'Unknown Room',
+      lastActivity: room.lastActivity || new Date(0),
+      unreadCount: room.unreadCount || 0,
+      lastMessage: room.messages && room.messages.length > 0 ? room.messages[room.messages.length - 1].body : 'No messages',
+      isOwner: room.isOwner || false,
+      isMuted: room.isMuted || false,
+      archived: room.archived || false
     }));
 
     return [...directItems, ...roomItems];
@@ -87,8 +87,11 @@ export const UnifiedChatView = () => {
 
   // Filter and sort unified items (including archive toggle)
   const filteredItems = unifiedItems.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.jid.includes(searchTerm);
+    const searchLower = searchTerm.toLowerCase();
+    const itemName = item.name || '';
+    const itemJid = item.jid || '';
+    const matchesSearch = itemName.toLowerCase().includes(searchLower) ||
+                         itemJid.toLowerCase().includes(searchLower);
     const archiveMatch = showArchived ? item.archived : !item.archived;
     return matchesSearch && archiveMatch;
   });
@@ -96,11 +99,11 @@ export const UnifiedChatView = () => {
   const sortedItems = [...filteredItems].sort((a, b) => {
     switch (sortMode) {
       case 'newest':
-        return b.lastActivity.getTime() - a.lastActivity.getTime();
+        return (b.lastActivity?.getTime() || 0) - (a.lastActivity?.getTime() || 0);
       case 'a-z':
-        return a.name.localeCompare(b.name);
+        return (a.name || '').localeCompare(b.name || '');
       case 'z-a':
-        return b.name.localeCompare(a.name);
+        return (b.name || '').localeCompare(a.name || '');
       default:
         return 0;
     }
@@ -219,7 +222,8 @@ export const UnifiedChatView = () => {
   };
 
   const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+    const safeName = name || 'Unknown';
+    return safeName.split(' ').map(n => n[0] || '').join('').toUpperCase() || 'U';
   };
 
   const renderMessageThread = () => {
@@ -301,7 +305,7 @@ export const UnifiedChatView = () => {
         <div className="flex-1 min-h-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="p-4 pb-6">
-              {data.messages.length === 0 ? (
+              {!data.messages || data.messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-muted-foreground min-h-[400px]">
                   <div className="text-center">
                     <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -342,7 +346,7 @@ export const UnifiedChatView = () => {
                     </div>
                   )}
                   
-                  {insertDateSeparators(data.messages).map((item, index) => {
+                  {insertDateSeparators(data.messages || []).map((item, index) => {
                     if ('type' in item && item.type === 'date-separator') {
                       return <DateSeparator key={item.id} date={item.date} />;
                     }
@@ -476,7 +480,7 @@ export const UnifiedChatView = () => {
             </div>
           ) : (
             sortedItems.map((item) => {
-              const timestamp = item.lastActivity.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const timestamp = item.lastActivity?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
               const isSelected = selectedItem?.jid === item.jid && selectedItem?.kind === item.kind;
               
               return (
