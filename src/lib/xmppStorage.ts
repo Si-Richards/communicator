@@ -3,7 +3,7 @@
  * Handles saving/loading conversations and rooms per account
  */
 
-import { Conversation, MucRoom, ChatMessage, RoomMessage } from '@/contexts/XmppContext';
+import { XmppConversation, MucRoom, XmppMessage } from '@/types/xmpp';
 
 const STORAGE_VERSION = '1.0.0';
 const MAX_MESSAGES_PER_CONVERSATION = 100;
