@@ -87,8 +87,10 @@ export const UnifiedChatView = () => {
 
   // Filter and sort unified items (including archive toggle)
   const filteredItems = unifiedItems.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.jid.includes(searchTerm);
+    const name = item.name || '';
+    const jid = item.jid || '';
+    const matchesSearch = name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         jid.includes(searchTerm);
     const archiveMatch = showArchived ? item.archived : !item.archived;
     return matchesSearch && archiveMatch;
   });
@@ -130,8 +132,9 @@ export const UnifiedChatView = () => {
     if (!newMessage.trim() || !selectedItem) return;
 
     // Check if trying to send a direct message to a MUC JID
-    if (selectedItem.kind === 'direct') {
-      const domain = selectedItem.jid.split('@')[1];
+    if (selectedItem.kind === 'direct' && selectedItem.jid) {
+      const jidParts = selectedItem.jid.split('@');
+      const domain = jidParts.length > 1 ? jidParts[1] : '';
       const isMucDomain = domain && (domain.includes('conference.') || 
                                    domain.includes('muc.') || 
                                    domain.includes('rooms.'));
@@ -140,7 +143,7 @@ export const UnifiedChatView = () => {
         // This is actually a MUC room - offer to join it instead
         if (confirm(`This appears to be a chat room. Would you like to join "${selectedItem.jid}" as a room instead?`)) {
           try {
-            await joinRoom(selectedItem.jid, nickname.trim());
+            await joinRoom(selectedItem.jid, nickname?.trim() || 'User');
             setSelectedItem({ kind: 'room', jid: selectedItem.jid });
             return;
           } catch (error) {
@@ -219,7 +222,8 @@ export const UnifiedChatView = () => {
   };
 
   const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+    if (!name) return '?';
+    return name.split(' ').map(n => n?.[0] || '').join('').toUpperCase() || '?';
   };
 
   const renderMessageThread = () => {
@@ -349,9 +353,12 @@ export const UnifiedChatView = () => {
 
                     // TypeScript assertion - we know this is a message after the date separator check
                     const message = item as any; // Using any to avoid complex type intersection issues
+                    
+                    // Null safety for message.from
+                    const messageFrom = message?.from || '';
                     const isOwn = isDirectChat 
-                      ? xmppJid(message.from).bare().toString() !== selectedConversation?.jid 
-                      : message.from.includes(`/${selectedRoom?.nick}`);
+                      ? messageFrom && xmppJid(messageFrom).bare().toString() !== selectedConversation?.jid 
+                      : messageFrom && selectedRoom?.nick && messageFrom.includes(`/${selectedRoom.nick}`);
 
                     return (
                       <div
@@ -366,12 +373,12 @@ export const UnifiedChatView = () => {
                                 : 'bg-primary text-primary-foreground'
                             }`}
                           >
-                            {!isDirectChat && isOwn && (
+                            {!isDirectChat && isOwn && messageFrom && (
                               <p className="text-xs font-medium mb-1 opacity-70">
-                                {message.from.split('/')[1] || 'Unknown'}
+                                {messageFrom.includes('/') ? messageFrom.split('/')[1] : 'Unknown'}
                               </p>
                             )}
-                            <MessageBodyRenderer body={message.body} />
+                            <MessageBodyRenderer body={message.body || ''} />
                           </div>
                           <div className={`flex items-center gap-1 mt-1 text-xs text-muted-foreground ${
                             isOwn ? 'justify-start' : 'justify-end'
