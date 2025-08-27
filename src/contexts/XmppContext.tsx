@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { client, xml, jid as xmppJid } from "@xmpp/client";
 import { useSettings } from "./SettingsContext";
+import { toast } from "@/hooks/use-toast";
 import { useXmppPersistence } from "@/hooks/useXmppPersistence";
 import { XmppStreamManager } from "@/lib/xmppStreamManagement";
 import { XmppFeatureDetector } from "@/lib/xmppFeatureDetector";
@@ -818,6 +819,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const sendMessage = useCallback(async (toBareJid: string, body: string): Promise<boolean> => {
     if (!messageHandlerRef.current) return false;
 
+    const originId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
     try {
       // Queue if offline
       if (connectionState !== 'connected') {
@@ -827,21 +830,33 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           type: 'chat',
           priority: 'normal'
         });
+        
+        // Show toast notification
+        toast({
+          title: "Message queued",
+          description: "Message will be sent when connection is restored",
+        });
+        
         return false;
       }
 
-      const messageId = await messageHandlerRef.current.sendMessage(toBareJid, body, 'chat');
+      const messageId = await messageHandlerRef.current.sendMessage(toBareJid, body, 'chat', {
+        requestReceipt: true,
+        markable: true,
+        originId
+      });
       
       // Add to conversation locally
       ensureConversation(toBareJid);
       const message: XmppMessage = {
-        id: messageId,
+        id: originId,
         from: myBareJidRef.current,
         to: toBareJid,
         body,
         timestamp: new Date(),
         type: 'chat',
-        status: 'sending'
+        status: 'sending',
+        originId
       };
       
       setConversations(prev => {
@@ -868,7 +883,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           const conv = prev[idx];
           const messages = conv.messages.map(m => 
-            m.id === messageId ? { ...m, status: 'sent' as MessageStatus } : m
+            m.id === originId ? { ...m, status: 'sent' as MessageStatus } : m
           );
           
           const copy = prev.slice();

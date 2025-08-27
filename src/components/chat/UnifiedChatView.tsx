@@ -37,6 +37,8 @@ export const UnifiedChatView = () => {
   const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   const [isPhonebookOpen, setIsPhonebookOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [showJoinRoomDialog, setShowJoinRoomDialog] = useState(false);
+  const [joinRoomJid, setJoinRoomJid] = useState('');
 
   const { 
     uiConnection,
@@ -140,17 +142,9 @@ export const UnifiedChatView = () => {
                                    domain.includes('rooms.'));
       
       if (isMucDomain) {
-        // This is actually a MUC room - offer to join it instead
-        if (confirm(`This appears to be a chat room. Would you like to join "${selectedItem.jid}" as a room instead?`)) {
-          try {
-            await joinRoom(selectedItem.jid, nickname.trim());
-            setSelectedItem({ kind: 'room', jid: selectedItem.jid });
-            return;
-          } catch (error) {
-            console.error('Failed to join room:', error);
-            return;
-          }
-        }
+        // This is actually a MUC room - show non-blocking dialog
+        setShowJoinRoomDialog(true);
+        setJoinRoomJid(selectedItem.jid);
         return;
       }
     }
@@ -409,8 +403,37 @@ export const UnifiedChatView = () => {
     );
   };
 
+  const handleJoinRoom = async () => {
+    try {
+      await joinRoom(joinRoomJid, nickname.trim());
+      setSelectedItem({ kind: 'room', jid: joinRoomJid });
+      setShowJoinRoomDialog(false);
+      setJoinRoomJid('');
+    } catch (error) {
+      console.error('Failed to join room:', error);
+    }
+  };
+
   return (
     <div className="h-full flex overflow-hidden">
+      {/* Join Room Dialog */}
+      <AlertDialog open={showJoinRoomDialog} onOpenChange={setShowJoinRoomDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Join Chat Room</AlertDialogTitle>
+            <AlertDialogDescription>
+              This appears to be a chat room. Would you like to join "{joinRoomJid}" as a room?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleJoinRoom}>
+              Join Room
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Items List */}
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">

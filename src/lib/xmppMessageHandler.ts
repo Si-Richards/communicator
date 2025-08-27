@@ -35,8 +35,8 @@ export class XmppMessageHandler {
   ): Promise<string> {
     if (!this.xmpp) throw new Error('XMPP client not available');
 
-    const messageId = options.originId || crypto.randomUUID();
-    const stanzaId = crypto.randomUUID();
+    const messageId = options.originId || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const stanzaId = `stanza-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     const messageStanza = xml('message', {
       to,
