@@ -164,7 +164,8 @@ export class MucManager {
   async inviteToRoom(roomJid: string, userJid: string, reason?: string): Promise<void> {
     const message = XmppUtils.createMessage('normal', roomJid);
     const x = xml('x', { xmlns: 'http://jabber.org/protocol/muc#user' });
-    const invite = xml('invite', { to: userJid });
+    const invite = xml('invite');
+    invite.attrs.to = userJid;
     
     if (reason) {
       invite.c('reason').t(reason);
@@ -175,7 +176,7 @@ export class MucManager {
     
     await this.client.send(message);
     
-    logger.info('Invitation sent:', roomJid, userJid, reason);
+    logger.info('Invitation sent:', { roomJid, userJid, reason });
   }
 
   async kickFromRoom(roomJid: string, nick: string, reason?: string): Promise<void> {
@@ -278,7 +279,8 @@ export class MucManager {
   private async configureRoom(roomJid: string, config: any): Promise<void> {
     const iq = XmppUtils.createIq('set', roomJid);
     const query = xml('query', { xmlns: 'http://jabber.org/protocol/muc#owner' });
-    const x = xml('x', { xmlns: 'jabber:x:data', type: 'submit' });
+    const x = xml('x', { xmlns: 'jabber:x:data' });
+    x.attrs.type = 'submit';
     
     // Add configuration fields
     if (config.name) {
@@ -327,7 +329,9 @@ export class MucManager {
   private async setRole(roomJid: string, nick: string, role: RoomRole, reason?: string): Promise<void> {
     const iq = XmppUtils.createIq('set', roomJid);
     const query = xml('query', { xmlns: 'http://jabber.org/protocol/muc#admin' });
-    const item = xml('item', { nick, role });
+    const item = xml('item');
+    item.attrs.nick = nick;
+    item.attrs.role = role;
     
     if (reason) {
       item.c('reason').t(reason);
@@ -342,7 +346,9 @@ export class MucManager {
   private async setAffiliation(roomJid: string, jid: string, affiliation: RoomAffiliation, reason?: string): Promise<void> {
     const iq = XmppUtils.createIq('set', roomJid);
     const query = xml('query', { xmlns: 'http://jabber.org/protocol/muc#admin' });
-    const item = xml('item', { jid, affiliation });
+    const item = xml('item');
+    item.attrs.jid = jid;
+    item.attrs.affiliation = affiliation;
     
     if (reason) {
       item.c('reason').t(reason);
@@ -397,7 +403,7 @@ export class MucManager {
     }
     
     this.eventBus.emit('room:occupantsChanged', { room });
-    logger.debug('Room occupant update:', roomJid, nick, type);
+    logger.debug('Room occupant update:', { roomJid, nick, type });
   }
 
   private handleRoomMessage(stanza: any, roomJid: string): void {
@@ -435,7 +441,7 @@ export class MucManager {
           reason 
         });
         
-        logger.info('Room invitation received:', roomJid, from, reason);
+        logger.info('Room invitation received:', { roomJid, from, reason });
       }
     }
   }

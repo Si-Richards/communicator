@@ -303,7 +303,7 @@ export class MessageManager {
     const message = this.parseMessage(messageStanza);
     if (!message) return;
 
-    logger.debug('Received carbon message:', direction, message);
+    logger.debug('Received carbon message:', { direction, messageId: message.id });
     this.eventBus.emit('message:carbon', { message, direction });
   }
 

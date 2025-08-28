@@ -60,7 +60,7 @@ export class FileUploadManager {
               }
             }
             
-            logger.info('Discovered upload service:', domain, 'max size:', this.maxFileSize);
+            logger.info('Discovered upload service:', { domain, maxFileSize: this.maxFileSize });
             return domain;
           }
         } catch (error) {
@@ -148,11 +148,9 @@ export class FileUploadManager {
   private async requestUploadSlot(filename: string, size: number, contentType?: string): Promise<FileUploadSlot> {
     return new Promise((resolve, reject) => {
       const iq = XmppUtils.createIq('get', this.uploadService);
-      const request = xml('request', { 
-        xmlns: 'urn:xmpp:http:upload:0',
-        filename,
-        size: size.toString()
-      });
+      const request = xml('request', { xmlns: 'urn:xmpp:http:upload:0' });
+      request.attrs.filename = filename;
+      request.attrs.size = size.toString();
       
       if (contentType) {
         request.attrs['content-type'] = contentType;
