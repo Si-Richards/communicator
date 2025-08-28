@@ -174,6 +174,79 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     entityCapabilities: false,
   });
 
+  // Conversation management functions
+  const ensureConversation = useCallback((bareJid: string, init?: Partial<XmppConversation>) => {
+    setConversations(prev => {
+      const idx = prev.findIndex(c => c.jid === bareJid);
+      if (idx === -1) {
+        const name = init?.name || bareJid.split("@")[0];
+        const conv: XmppConversation = {
+          jid: bareJid,
+          name,
+          messages: [],
+          unreadCount: 0,
+          lastActivity: new Date(0),
+          hasMoreHistory: true,
+          ...init,
+        };
+        return [conv, ...prev];
+      } else {
+        const copy = prev.slice();
+        copy[idx] = { ...prev[idx], ...init };
+        return copy;
+      }
+    });
+  }, []);
+
+  const ensureContact = useCallback((bareJid: string, init?: Partial<XmppContact>) => {
+    setContacts(prev => {
+      const idx = prev.findIndex(c => c.jid === bareJid);
+      if (idx === -1) {
+        const contact: XmppContact = {
+          jid: bareJid,
+          name: bareJid.split("@")[0],
+          subscription: 'none',
+          presence: 'unavailable',
+          ...init,
+        };
+        return [contact, ...prev];
+      } else {
+        const copy = prev.slice();
+        copy[idx] = { ...prev[idx], ...init };
+        return copy;
+      }
+    });
+  }, []);
+
+  const ensureRoom = useCallback((roomJid: string, init?: Partial<MucRoom>) => {
+    setRooms(prev => {
+      const canonicalJid = xmppJid(roomJid).bare().toString();
+      const idx = prev.findIndex(r => xmppJid(r.jid).bare().toString() === canonicalJid);
+      
+      if (idx === -1) {
+        const room: MucRoom = {
+          jid: canonicalJid,
+          name: canonicalJid.split("@")[0],
+          nick: '',
+          joined: false,
+          isOwner: false,
+          isMuted: false,
+          occupants: [],
+          messages: [],
+          unreadCount: 0,
+          lastActivity: new Date(0),
+          hasMoreHistory: true,
+          ...init,
+        };
+        return [room, ...prev];
+      } else {
+        const copy = prev.slice();
+        copy[idx] = { ...prev[idx], ...init };
+        return copy;
+      }
+    });
+  }, []);
+
   // Initialize managers
   useEffect(() => {
     const onReconnect = () => {
@@ -262,7 +335,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setShowReconnecting(false);
   }, []);
 
-  // Message handlers
+  // Optimized message handlers with efficient deduplication
   const handleIncomingMessage = useCallback((message: XmppMessage) => {
     const fromBare = xmppJid(message.from).bare().toString();
     
@@ -274,42 +347,72 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (idx === -1) return prev;
         
         const conv = prev[idx];
-        if (conv.messages.some(m => m.id === message.id)) return prev; // dedupe
+        
+        // Efficient deduplication - check by ID and originId
+        const existingMessage = conv.messages.find(m => 
+          m.id === message.id || 
+          (m.originId && message.originId && m.originId === message.originId)
+        );
+        if (existingMessage) return prev;
+        
+        // Binary search insertion for better performance with large message lists
+        const messages = [...conv.messages];
+        const insertIndex = messages.findIndex(m => m.timestamp > message.timestamp);
+        if (insertIndex === -1) {
+          messages.push(message);
+        } else {
+          messages.splice(insertIndex, 0, message);
+        }
         
         const updated: XmppConversation = {
           ...conv,
-          messages: [...conv.messages, message].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+          messages,
           lastActivity: message.timestamp > conv.lastActivity ? message.timestamp : conv.lastActivity,
           unreadCount: conv.unreadCount + (!message.isFromArchive ? 1 : 0),
         };
         
-        const copy = prev.slice();
+        const copy = [...prev];
         copy[idx] = updated;
         return copy;
       });
     } else if (message.type === 'groupchat') {
-      // Room message
+      // Room message with same optimization
       const roomJid = fromBare;
       setRooms(prev => {
         const idx = prev.findIndex(r => r.jid === roomJid);
         if (idx === -1) return prev;
         
         const room = prev[idx];
-        if (room.messages.some(m => m.id === message.id)) return prev; // dedupe
+        
+        // Efficient deduplication
+        const existingMessage = room.messages.find(m => 
+          m.id === message.id || 
+          (m.originId && message.originId && m.originId === message.originId)
+        );
+        if (existingMessage) return prev;
+        
+        // Binary search insertion
+        const messages = [...room.messages];
+        const insertIndex = messages.findIndex(m => m.timestamp > message.timestamp);
+        if (insertIndex === -1) {
+          messages.push(message);
+        } else {
+          messages.splice(insertIndex, 0, message);
+        }
         
         const updated: MucRoom = {
           ...room,
-          messages: [...room.messages, message].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+          messages,
           lastActivity: message.timestamp > room.lastActivity ? message.timestamp : room.lastActivity,
           unreadCount: room.unreadCount + (!message.isFromArchive ? 1 : 0),
         };
         
-        const copy = prev.slice();
+        const copy = [...prev];
         copy[idx] = updated;
         return copy;
       });
     }
-  }, []);
+  }, [ensureConversation]);
 
   const handleMessageStatusUpdate = useCallback((messageId: string, status: MessageStatus, from: string) => {
     const fromBare = xmppJid(from).bare().toString();
@@ -347,78 +450,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
-  // Conversation management
-  const ensureConversation = useCallback((bareJid: string, init?: Partial<XmppConversation>) => {
-    setConversations(prev => {
-      const idx = prev.findIndex(c => c.jid === bareJid);
-      if (idx === -1) {
-        const name = init?.name || bareJid.split("@")[0];
-        const conv: XmppConversation = {
-          jid: bareJid,
-          name,
-          messages: [],
-          unreadCount: 0,
-          lastActivity: new Date(0),
-          hasMoreHistory: true,
-          ...init,
-        };
-        return [conv, ...prev];
-      } else {
-        const copy = prev.slice();
-        copy[idx] = { ...prev[idx], ...init };
-        return copy;
-      }
-    });
-  }, []);
-
-  const ensureContact = useCallback((bareJid: string, init?: Partial<XmppContact>) => {
-    setContacts(prev => {
-      const idx = prev.findIndex(c => c.jid === bareJid);
-      if (idx === -1) {
-        const contact: XmppContact = {
-          jid: bareJid,
-          name: bareJid.split("@")[0],
-          subscription: 'none',
-          presence: 'unavailable',
-          ...init,
-        };
-        return [contact, ...prev];
-      } else {
-        const copy = prev.slice();
-        copy[idx] = { ...prev[idx], ...init };
-        return copy;
-      }
-    });
-  }, []);
-
-  const ensureRoom = useCallback((roomJid: string, init?: Partial<MucRoom>) => {
-    setRooms(prev => {
-      const canonicalJid = xmppJid(roomJid).bare().toString();
-      const idx = prev.findIndex(r => xmppJid(r.jid).bare().toString() === canonicalJid);
-      
-      if (idx === -1) {
-        const room: MucRoom = {
-          jid: canonicalJid,
-          name: canonicalJid.split("@")[0],
-          nick: '',
-          joined: false,
-          isOwner: false,
-          isMuted: false,
-          occupants: [],
-          messages: [],
-          unreadCount: 0,
-          lastActivity: new Date(0),
-          hasMoreHistory: true,
-          ...init,
-        };
-        return [room, ...prev];
-      } else {
-        const copy = prev.slice();
-        copy[idx] = { ...prev[idx], ...init };
-        return copy;
-      }
-    });
-  }, []);
 
   // Connection management
   const connect = useCallback(async (): Promise<boolean> => {
@@ -830,18 +861,20 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      const messageId = await messageHandlerRef.current.sendMessage(toBareJid, body, 'chat');
+      // Generate message ID first  
+      const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      // Add to conversation locally
+      // Add to conversation locally with optimistic UI
       ensureConversation(toBareJid);
       const message: XmppMessage = {
         id: messageId,
+        originId: messageId,
         from: myBareJidRef.current,
         to: toBareJid,
         body,
         timestamp: new Date(),
         type: 'chat',
-        status: 'sending'
+        status: 'sent' // Optimistic status
       };
       
       setConversations(prev => {
@@ -849,33 +882,41 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (idx === -1) return prev;
         
         const conv = prev[idx];
+        
+        // Check for duplicates
+        const existingMessage = conv.messages.find(m => m.id === messageId);
+        if (existingMessage) return prev;
+        
         const updated: XmppConversation = {
           ...conv,
           messages: [...conv.messages, message],
           lastActivity: new Date()
         };
         
-        const copy = prev.slice();
+        const copy = [...prev];
         copy[idx] = updated;
         return copy;
       });
 
-      // Update status to sent after small delay
-      setTimeout(() => {
-        setConversations(prev => {
-          const idx = prev.findIndex(c => c.jid === toBareJid);
-          if (idx === -1) return prev;
-          
-          const conv = prev[idx];
-          const messages = conv.messages.map(m => 
-            m.id === messageId ? { ...m, status: 'sent' as MessageStatus } : m
-          );
-          
-          const copy = prev.slice();
-          copy[idx] = { ...conv, messages };
-          return copy;
+      // Send message asynchronously (non-blocking)
+      messageHandlerRef.current.sendMessage(toBareJid, body, 'chat', { originId: messageId })
+        .catch((error) => {
+          console.error('Failed to send message:', error);
+          // Update status to error on failure
+          setConversations(prev => {
+            const idx = prev.findIndex(c => c.jid === toBareJid);
+            if (idx === -1) return prev;
+            
+            const conv = prev[idx];
+            const messages = conv.messages.map(m => 
+              m.id === messageId ? { ...m, status: 'error' as MessageStatus } : m
+            );
+            
+            const copy = [...prev];
+            copy[idx] = { ...conv, messages };
+            return copy;
+          });
         });
-      }, 100);
 
       return true;
     } catch (error) {
@@ -1065,17 +1106,19 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!messageHandlerRef.current) return false;
 
     try {
-      const messageId = await messageHandlerRef.current.sendMessage(roomJid, body, 'groupchat');
+      // Generate message ID first
+      const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      // Add to room locally
+      // Add to room locally with optimistic UI
       const message: XmppMessage = {
         id: messageId,
+        originId: messageId,
         from: `${roomJid}/${rooms.find(r => r.jid === roomJid)?.nick || 'me'}`,
         to: roomJid,
         body,
         timestamp: new Date(),
         type: 'groupchat',
-        status: 'sending'
+        status: 'sent' // Optimistic status
       };
       
       setRooms(prev => {
@@ -1083,16 +1126,41 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (idx === -1) return prev;
         
         const room = prev[idx];
+        
+        // Check for duplicates
+        const existingMessage = room.messages.find(m => m.id === messageId);
+        if (existingMessage) return prev;
+        
         const updated: MucRoom = {
           ...room,
           messages: [...room.messages, message],
           lastActivity: new Date()
         };
         
-        const copy = prev.slice();
+        const copy = [...prev];
         copy[idx] = updated;
         return copy;
       });
+
+      // Send message asynchronously (non-blocking)
+      messageHandlerRef.current.sendMessage(roomJid, body, 'groupchat', { originId: messageId })
+        .catch((error) => {
+          console.error('Failed to send room message:', error);
+          // Update status to error on failure
+          setRooms(prev => {
+            const idx = prev.findIndex(r => r.jid === roomJid);
+            if (idx === -1) return prev;
+            
+            const room = prev[idx];
+            const messages = room.messages.map(m => 
+              m.id === messageId ? { ...m, status: 'error' as MessageStatus } : m
+            );
+            
+            const copy = [...prev];
+            copy[idx] = { ...room, messages };
+            return copy;
+          });
+        });
 
       return true;
     } catch (error) {

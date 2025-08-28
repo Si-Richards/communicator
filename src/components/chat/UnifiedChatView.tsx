@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { MessageComposer } from './MessageComposer';
 import { MessageBodyRenderer } from './MessageBodyRenderer';
@@ -37,6 +37,8 @@ export const UnifiedChatView = () => {
   const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   const [isPhonebookOpen, setIsPhonebookOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [showMucDialog, setShowMucDialog] = useState(false);
+  const [pendingMucJid, setPendingMucJid] = useState('');
 
   const { 
     uiConnection,
@@ -58,7 +60,7 @@ export const UnifiedChatView = () => {
     nickname
   } = useXmpp();
 
-  // Merge conversations and rooms into unified list
+  // Memoized computation for unified items
   const unifiedItems: UnifiedItem[] = useMemo(() => {
     const directItems: UnifiedItem[] = conversations.map(conv => ({
       kind: 'direct' as const,
@@ -85,28 +87,32 @@ export const UnifiedChatView = () => {
     return [...directItems, ...roomItems];
   }, [conversations, rooms]);
 
-  // Filter and sort unified items (including archive toggle)
-  const filteredItems = unifiedItems.filter((item) => {
-    const name = item.name || '';
-    const jid = item.jid || '';
-    const matchesSearch = name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         jid.includes(searchTerm);
-    const archiveMatch = showArchived ? item.archived : !item.archived;
-    return matchesSearch && archiveMatch;
-  });
+  // Memoized filtering and sorting for performance
+  const filteredItems = useMemo(() => {
+    return unifiedItems.filter((item) => {
+      const name = item.name || '';
+      const jid = item.jid || '';
+      const matchesSearch = name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           jid.includes(searchTerm);
+      const archiveMatch = showArchived ? item.archived : !item.archived;
+      return matchesSearch && archiveMatch;
+    });
+  }, [unifiedItems, searchTerm, showArchived]);
 
-  const sortedItems = [...filteredItems].sort((a, b) => {
-    switch (sortMode) {
-      case 'newest':
-        return b.lastActivity.getTime() - a.lastActivity.getTime();
-      case 'a-z':
-        return a.name.localeCompare(b.name);
-      case 'z-a':
-        return b.name.localeCompare(a.name);
-      default:
-        return 0;
-    }
-  });
+  const sortedItems = useMemo(() => {
+    return [...filteredItems].sort((a, b) => {
+      switch (sortMode) {
+        case 'newest':
+          return b.lastActivity.getTime() - a.lastActivity.getTime();
+        case 'a-z':
+          return a.name.localeCompare(b.name);
+        case 'z-a':
+          return b.name.localeCompare(a.name);
+        default:
+          return 0;
+      }
+    });
+  }, [filteredItems, sortMode]);
 
   // Get selected item data
   const selectedConversation = selectedItem?.kind === 'direct' 
@@ -128,7 +134,7 @@ export const UnifiedChatView = () => {
     }
   }, [selectedItem, selectedConversation?.unreadCount, selectedRoom?.unreadCount, markConversationRead, markRoomRead]);
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = useCallback(async () => {
     if (!newMessage.trim() || !selectedItem) return;
 
     // Check if trying to send a direct message to a MUC JID
@@ -136,33 +142,27 @@ export const UnifiedChatView = () => {
       const jidParts = selectedItem.jid.split('@');
       const domain = jidParts.length > 1 ? jidParts[1] : '';
       const isMucDomain = domain && (domain.includes('conference.') || 
-                                   domain.includes('muc.') || 
-                                   domain.includes('rooms.'));
+                                    domain.includes('muc.') || 
+                                    domain.includes('rooms.'));
       
       if (isMucDomain) {
         // This is actually a MUC room - offer to join it instead
-        if (confirm(`This appears to be a chat room. Would you like to join "${selectedItem.jid}" as a room instead?`)) {
-          try {
-            await joinRoom(selectedItem.jid, nickname?.trim() || 'User');
-            setSelectedItem({ kind: 'room', jid: selectedItem.jid });
-            return;
-          } catch (error) {
-            console.error('Failed to join room:', error);
-            return;
-          }
-        }
+        setPendingMucJid(selectedItem.jid);
+        setShowMucDialog(true);
         return;
       }
     }
 
-    const success = selectedItem.kind === 'direct'
-      ? await sendMessage(selectedItem.jid, newMessage.trim())
-      : await sendRoomMessage(selectedItem.jid, newMessage.trim());
+    const messageText = newMessage.trim();
+    setNewMessage(''); // Clear input immediately for better UX
 
-    if (success) {
-      setNewMessage('');
-    }
-  };
+    const success = selectedItem.kind === 'direct'
+      ? await sendMessage(selectedItem.jid, messageText)
+      : await sendRoomMessage(selectedItem.jid, messageText);
+
+    // Note: We don't revert the cleared message on failure for better UX
+    // The message will appear in the chat with error status if it fails
+  }, [newMessage, selectedItem, sendMessage, sendRoomMessage]);
 
   const handleLoadHistory = async (jid: string, kind: 'direct' | 'room') => {
     if (loadingHistory === jid) return;
@@ -224,6 +224,19 @@ export const UnifiedChatView = () => {
   const getInitials = (name: string) => {
     if (!name) return '?';
     return name.split(' ').map(n => n?.[0] || '').join('').toUpperCase() || '?';
+  };
+
+  const handleJoinRoom = async () => {
+    if (!pendingMucJid) return;
+    
+    try {
+      await joinRoom(pendingMucJid, nickname?.trim() || 'User');
+      setSelectedItem({ kind: 'room', jid: pendingMucJid });
+      setShowMucDialog(false);
+      setPendingMucJid('');
+    } catch (error) {
+      console.error('Failed to join room:', error);
+    }
   };
 
   const renderMessageThread = () => {
@@ -585,6 +598,23 @@ export const UnifiedChatView = () => {
         onOpenChange={setIsPhonebookOpen}
         onSelect={handleSelectFromPhonebook}
       />
+
+      <AlertDialog open={showMucDialog} onOpenChange={setShowMucDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Join Chat Room</AlertDialogTitle>
+            <AlertDialogDescription>
+              This appears to be a chat room. Would you like to join "{pendingMucJid}" as a room instead?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingMucJid('')}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleJoinRoom}>
+              Join Room
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

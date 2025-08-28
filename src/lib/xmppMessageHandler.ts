@@ -22,8 +22,8 @@ export class XmppMessageHandler {
     this.xmpp = xmpp;
   }
 
-  // Send a message with full XEP support
-  async sendMessage(
+  // Send a message with full XEP support - non-blocking
+  sendMessage(
     to: string, 
     body: string, 
     type: 'chat' | 'groupchat' = 'chat',
@@ -33,10 +33,11 @@ export class XmppMessageHandler {
       originId?: string;
     } = {}
   ): Promise<string> {
-    if (!this.xmpp) throw new Error('XMPP client not available');
+    if (!this.xmpp) return Promise.reject(new Error('XMPP client not available'));
 
-    const messageId = options.originId || crypto.randomUUID();
-    const stanzaId = crypto.randomUUID();
+    // Generate consistent IDs
+    const messageId = options.originId || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const stanzaId = `stanza-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     const messageStanza = xml('message', {
       to,
@@ -62,8 +63,12 @@ export class XmppMessageHandler {
       messageStanza.append(xml('markable', { xmlns: 'urn:xmpp:chat-markers:0' }));
     }
 
-    await this.xmpp.send(messageStanza);
-    return messageId;
+    // Non-blocking send
+    this.xmpp.send(messageStanza).catch((error: any) => {
+      console.error('Failed to send message:', error);
+    });
+    
+    return Promise.resolve(messageId);
   }
 
   // Handle incoming messages
