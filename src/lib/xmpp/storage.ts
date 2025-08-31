@@ -72,6 +72,11 @@ class XmppStorage {
     return transaction.objectStore(storeName);
   }
 
+  // Public method for accessing stores from outside the class
+  async getPublicStore(storeName: string, mode: IDBTransactionMode = 'readonly'): Promise<IDBObjectStore> {
+    return this.getStore(storeName, mode);
+  }
+
   // Messages
   async saveMessage(message: XmppMessage): Promise<void> {
     const store = await this.getStore('messages', 'readwrite');

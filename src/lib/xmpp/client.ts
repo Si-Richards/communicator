@@ -1,6 +1,6 @@
 import { client, xml, jid as JID } from '@xmpp/client';
 import debug from '@xmpp/debug';
-import { XmppConnectionStatus, XmppMessage, XmppContact, MessagingEventHandlers, XmppFeatureFlags } from '../../types/xmpp';
+import { XmppConnectionStatus, XmppMessage, XmppContact, MessagingEventHandlers, XmppFeatureFlags, TypingIndicator } from '../../types/xmpp';
 import { xmppStorage } from './storage';
 
 export class XmppClient {
@@ -301,12 +301,13 @@ export class XmppClient {
     
     if (composing || paused) {
       const threadId = this.getThreadId(from, stanza.attrs.to, stanza.attrs.type);
-      this.eventHandlers.onTyping?({
+      const typingIndicator: TypingIndicator = {
         jid: from,
         threadId,
         isTyping: !!composing,
         timestamp: new Date()
-      });
+      };
+      this.eventHandlers.onTyping?.(typingIndicator);
     }
   }
 
@@ -573,10 +574,14 @@ export class XmppClient {
             xml('value', {}, jid)
           )
         ),
-        xml('set', { xmlns: 'http://jabber.org/protocol/rsm' },
-          xml('max', {}, max.toString()),
-          ...(before ? [xml('before', {}, before.toISOString())] : [])
-        )
+        (() => {
+          const rsmElement = xml('set', { xmlns: 'http://jabber.org/protocol/rsm' });
+          rsmElement.append(xml('max', {}, max.toString()));
+          if (before) {
+            rsmElement.append(xml('before', {}, before.toISOString()));
+          }
+          return rsmElement;
+        })()
       )
     );
 

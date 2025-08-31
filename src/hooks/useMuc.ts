@@ -119,32 +119,29 @@ export const useMuc = () => {
 
     // In a real implementation, this would also sync with server bookmarks
     // using XEP-0048 (Bookmark Storage) or XEP-0402 (PEP Native Bookmarks)
-    await xmppStorage.getStore('bookmarks', 'readwrite').then(store => {
-      return new Promise<void>((resolve, reject) => {
-        const request = store.put(bookmark);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
+    const store = await xmppStorage.getPublicStore('bookmarks', 'readwrite');
+    return new Promise<void>((resolve, reject) => {
+      const request = store.put(bookmark);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
     });
   }, []);
 
   const removeBookmark = useCallback(async (roomJid: string) => {
-    await xmppStorage.getStore('bookmarks', 'readwrite').then(store => {
-      return new Promise<void>((resolve, reject) => {
-        const request = store.delete(roomJid);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
+    const store = await xmppStorage.getPublicStore('bookmarks', 'readwrite');
+    return new Promise<void>((resolve, reject) => {
+      const request = store.delete(roomJid);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
     });
   }, []);
 
   const getBookmarks = useCallback(async () => {
-    return await xmppStorage.getStore('bookmarks').then(store => {
-      return new Promise<any[]>((resolve, reject) => {
-        const request = store.getAll();
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
+    const store = await xmppStorage.getPublicStore('bookmarks');
+    return new Promise<any[]>((resolve, reject) => {
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
     });
   }, []);
 
