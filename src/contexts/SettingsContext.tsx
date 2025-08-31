@@ -34,6 +34,17 @@ export interface SipSettings {
   realm: string;
 }
 
+export interface XmppSettings {
+  serviceUrl: string;
+  domain: string;
+  resource: string;
+  username: string;
+  password: string;
+  enabled: boolean;
+  autoConnect: boolean;
+  debugMode: boolean;
+}
+
 export interface DictationSettings {
   enabled: boolean;
   language: string;
@@ -62,6 +73,7 @@ export interface AppSettings {
   logs: LogSettings;
   ringtones: RingtoneSettings;
   sip: SipSettings;
+  xmpp: XmppSettings;
   dictation: DictationSettings;
   video: VideoSettings;
   notifications: NotificationSettings;
@@ -75,6 +87,7 @@ interface SettingsContextType {
   updateLogSettings: (updates: Partial<LogSettings>) => void;
   updateRingtoneSettings: (updates: Partial<RingtoneSettings>) => void;
   updateSipSettings: (updates: Partial<SipSettings>) => void;
+  updateXmppSettings: (updates: Partial<XmppSettings>) => void;
   updateDictationSettings: (updates: Partial<DictationSettings>) => void;
   updateVideoSettings: (updates: Partial<VideoSettings>) => void;
   updateNotificationSettings: (updates: Partial<NotificationSettings>) => void;
@@ -107,12 +120,22 @@ const defaultSettings: AppSettings = {
     enabled: true,
     volume: 0.5,
   },
-    sip: {
-      username: '',
-      password: '',
-      server: 'wss://devrtc.voicehost.io:443',
-      realm: 'hpbx.sipconvergence.co.uk',
-    },
+  sip: {
+    username: '',
+    password: '',
+    server: 'wss://devrtc.voicehost.io:443',
+    realm: 'hpbx.sipconvergence.co.uk',
+  },
+  xmpp: {
+    serviceUrl: 'wss://localhost:5443/ws',
+    domain: 'localhost',
+    resource: 'webrtc-app',
+    username: '',
+    password: '',
+    enabled: true,
+    autoConnect: false,
+    debugMode: false,
+  },
   dictation: {
     enabled: true,
     language: 'en-US',
@@ -223,6 +246,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
+  const updateXmppSettings = (updates: Partial<XmppSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      xmpp: { ...prev.xmpp, ...updates },
+    }));
+  };
+
   const updateDictationSettings = (updates: Partial<DictationSettings>) => {
     setSettings(prev => ({
       ...prev,
@@ -274,6 +304,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateLogSettings,
         updateRingtoneSettings,
         updateSipSettings,
+        updateXmppSettings,
         updateDictationSettings,
         updateVideoSettings,
         updateNotificationSettings,
