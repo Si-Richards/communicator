@@ -12,6 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useJanusContext } from '@/contexts/JanusContext';
+import { useXmppConnection } from '@/hooks/useXmppConnection';
 import { notificationManager } from '@/lib/notificationManager';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { videoDeviceManager, VideoDevice, VideoDeviceTestResult } from '@/lib/videoDeviceManager';
@@ -27,6 +28,7 @@ const SettingsPage = () => {
     updateLogSettings,
     updateRingtoneSettings,
     updateSipSettings,
+    updateXmppSettings,
     updateVideoSettings,
     updateNotificationSettings,
     resetToDefaults,
@@ -35,6 +37,7 @@ const SettingsPage = () => {
   } = useSettings();
   const { toast } = useToast();
   const { callState, registerNow, unregisterSipAccount } = useJanusContext();
+  const { status: xmppStatus, connect: connectXmpp, disconnect: disconnectXmpp, isConnected: isXmppConnected } = useXmppConnection();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -62,11 +65,27 @@ const SettingsPage = () => {
     realm: settings.sip.realm
   });
 
+  // XMPP configuration state
+  const [showXmppPassword, setShowXmppPassword] = useState(false);
+  const [tempXmppSettings, setTempXmppSettings] = useState({
+    serviceUrl: settings.xmpp.serviceUrl,
+    domain: settings.xmpp.domain,
+    resource: settings.xmpp.resource,
+    username: settings.xmpp.username,
+    password: settings.xmpp.password
+  });
+
   // Check if all required SIP fields are populated
   const isSipConfigValid = tempSipSettings.username?.trim() && 
                           tempSipSettings.password?.trim() && 
                           tempSipSettings.server?.trim() && 
                           tempSipSettings.realm?.trim();
+
+  // Check if all required XMPP fields are populated
+  const isXmppConfigValid = tempXmppSettings.serviceUrl?.trim() && 
+                           tempXmppSettings.domain?.trim() && 
+                           tempXmppSettings.username?.trim() && 
+                           tempXmppSettings.password?.trim();
 
   // Sync temp settings when main settings change
   useEffect(() => {
@@ -77,6 +96,16 @@ const SettingsPage = () => {
       realm: settings.sip.realm
     });
   }, [settings.sip.username, settings.sip.password, settings.sip.server, settings.sip.realm]);
+
+  useEffect(() => {
+    setTempXmppSettings({
+      serviceUrl: settings.xmpp.serviceUrl,
+      domain: settings.xmpp.domain,
+      resource: settings.xmpp.resource,
+      username: settings.xmpp.username,
+      password: settings.xmpp.password
+    });
+  }, [settings.xmpp.serviceUrl, settings.xmpp.domain, settings.xmpp.resource, settings.xmpp.username, settings.xmpp.password]);
   useEffect(() => {
     // Load devices
     loadDevices();
@@ -289,7 +318,7 @@ const SettingsPage = () => {
         </div>
 
         <Tabs defaultValue="audio-quality" className="w-full">
-          <TabsList className="grid w-full grid-cols-8">
+          <TabsList className="grid w-full grid-cols-9">
             <TabsTrigger value="audio-quality" className="flex items-center gap-2">
               <AudioLines className="h-4 w-4" />
               Audio Quality
@@ -305,6 +334,10 @@ const SettingsPage = () => {
             <TabsTrigger value="sip" className="flex items-center gap-2">
               <Phone className="h-4 w-4" />
               SIP
+            </TabsTrigger>
+            <TabsTrigger value="xmpp" className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4" />
+              XMPP
             </TabsTrigger>
             <TabsTrigger value="notifications" className="flex items-center gap-2">
               <Bell className="h-4 w-4" />
@@ -810,6 +843,171 @@ const SettingsPage = () => {
                       {callState.sipStatus}
                     </span>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="xmpp" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5" />
+                  XMPP Configuration
+                </CardTitle>
+                <CardDescription>
+                  Configure connection to ejabberd server for messaging
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-service-url">Service URL</Label>
+                    <Input
+                      id="xmpp-service-url"
+                      type="text"
+                      placeholder="wss://ejabberd.voicehost.io:443"
+                      value={tempXmppSettings.serviceUrl}
+                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, serviceUrl: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      WebSocket endpoint for XMPP server
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-domain">Domain</Label>
+                    <Input
+                      id="xmpp-domain"
+                      type="text"
+                      placeholder="ejabberd.voicehost.io"
+                      value={tempXmppSettings.domain}
+                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, domain: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      XMPP domain name
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-username">Username</Label>
+                    <Input
+                      id="xmpp-username"
+                      type="text"
+                      placeholder="your-username"
+                      value={tempXmppSettings.username}
+                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, username: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Your XMPP username (without domain)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-password">Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="xmpp-password"
+                        type={showXmppPassword ? "text" : "password"}
+                        placeholder="Enter your XMPP password"
+                        value={tempXmppSettings.password}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, password: e.target.value }))}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowXmppPassword(!showXmppPassword)}
+                      >
+                        {showXmppPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Your XMPP account password
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="xmpp-resource">Resource</Label>
+                    <Input
+                      id="xmpp-resource"
+                      type="text"
+                      placeholder="webclient"
+                      value={tempXmppSettings.resource}
+                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, resource: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Resource identifier (optional)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button 
+                    onClick={() => {
+                      updateXmppSettings(tempXmppSettings);
+                      toast({
+                        title: "XMPP Settings Saved",
+                        description: "Your XMPP configuration has been saved successfully"
+                      });
+                    }}
+                    disabled={!tempXmppSettings.serviceUrl || !tempXmppSettings.domain || !tempXmppSettings.username || !tempXmppSettings.password}
+                  >
+                    Save Configuration
+                  </Button>
+                  
+                  {isXmppConnected ? (
+                    <Button 
+                      variant="outline"
+                      onClick={disconnectXmpp}
+                    >
+                      Disconnect
+                    </Button>
+                  ) : (
+                   <Button 
+                     variant="outline"
+                     onClick={() => {
+                       if (isXmppConfigValid) {
+                         updateXmppSettings(tempXmppSettings);
+                         connectXmpp();
+                       } else {
+                         toast({
+                           title: "Incomplete Configuration",
+                           description: "Please fill in all required XMPP fields",
+                           variant: "destructive"
+                         });
+                       }
+                     }}
+                     disabled={!isXmppConfigValid || xmppStatus.status === 'connecting' || xmppStatus.status === 'resuming'}
+                   >
+                     {xmppStatus.status === 'connecting' || xmppStatus.status === 'resuming' ? 'Connecting...' : 'Connect'}
+                   </Button>
+                  )}
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Connection Status</Label>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      isXmppConnected ? 'bg-green-500' : 'bg-red-500'
+                    }`} />
+                    <span className="text-sm text-muted-foreground">
+                      {xmppStatus.status.charAt(0).toUpperCase() + xmppStatus.status.slice(1)}
+                    </span>
+                  </div>
+                  {xmppStatus.resumeSupported && (
+                    <p className="text-xs text-muted-foreground">
+                      Stream management enabled - supports resume
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>

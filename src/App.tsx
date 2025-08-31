@@ -7,6 +7,7 @@ import { JanusProvider } from "./contexts/JanusContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ContactsProvider } from "./contexts/ContactsContext";
 import { CallHistoryProvider } from "./contexts/CallHistoryContext";
+import { XmppMessagingProvider } from "./contexts/XmppMessagingProvider";
 import { NotificationBootstrap } from "./components/NotificationBootstrap";
 import Layout from "./components/Layout";
 import Dial from "./pages/Dial";
@@ -23,14 +24,15 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <SettingsProvider>
-      <NotificationBootstrap>
-        <ContactsProvider>
-          <CallHistoryProvider>
-            <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <JanusProvider>
-              <BrowserRouter>
+      <XmppMessagingProvider>
+        <NotificationBootstrap>
+          <ContactsProvider>
+            <CallHistoryProvider>
+              <TooltipProvider>
+                <Toaster />
+                <Sonner />
+                <JanusProvider>
+                <BrowserRouter>
                 <Layout>
                   <Routes>
                     <Route path="/" element={<Dial />} />
@@ -44,12 +46,13 @@ const App = () => (
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Layout>
-              </BrowserRouter>
-              </JanusProvider>
-            </TooltipProvider>
-          </CallHistoryProvider>
-        </ContactsProvider>
-      </NotificationBootstrap>
+                </BrowserRouter>
+                </JanusProvider>
+              </TooltipProvider>
+            </CallHistoryProvider>
+          </ContactsProvider>
+        </NotificationBootstrap>
+      </XmppMessagingProvider>
     </SettingsProvider>
   </QueryClientProvider>
 );
