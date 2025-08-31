@@ -1115,7 +1115,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     const normalizeUsername = (username: string) => {
       if (username.startsWith('sip:')) {
         const match = username.match(/sip:([^@]+)@/)
-        return match ? match[1] : username.replace('sip:', '').split('@')[0]
+        return match ? match[1] : username.replace('sip:', '').split('@')?.[0] || 'Unknown'
       }
       return username
     }
@@ -1224,8 +1224,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         },
         video: answerWithVideo ? {
           deviceId: settings.video.cameraDeviceId ? { exact: settings.video.cameraDeviceId } : undefined,
-          width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
-          height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
+          width: { ideal: parseInt(settings.video.resolution?.split('x')?.[0] || '640') },
+          height: { ideal: parseInt(settings.video.resolution?.split('x')?.[1] || '480') },
           frameRate: { ideal: settings.video.frameRate }
         } : false
       }
@@ -1359,8 +1359,8 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         },
         video: startWithVideo ? {
           deviceId: settings.video.cameraDeviceId ? { exact: settings.video.cameraDeviceId } : undefined,
-          width: { ideal: parseInt(settings.video.resolution.split('x')[0]) },
-          height: { ideal: parseInt(settings.video.resolution.split('x')[1]) },
+          width: { ideal: parseInt(settings.video.resolution?.split('x')?.[0] || '640') },
+          height: { ideal: parseInt(settings.video.resolution?.split('x')?.[1] || '480') },
           frameRate: { ideal: settings.video.frameRate }
         } : false,
       }

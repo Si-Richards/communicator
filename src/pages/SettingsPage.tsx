@@ -1042,7 +1042,7 @@ const SettingsPage = () => {
                           {effectiveJid}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Resource: {effectiveJid.split('/')[1] || 'none'}
+                          Resource: {effectiveJid?.split('/')?.[1] || 'none'}
                         </p>
                       </div>
                     )}

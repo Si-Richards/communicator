@@ -166,7 +166,7 @@ const MessageRow = memo(({
   
   const senderName = useMemo(() => {
     if (isFromSelf) return 'You';
-    return message.from?.split('@')[0] || 'Unknown';
+    return message.from?.split('@')?.[0] || 'Unknown';
   }, [isFromSelf, message.from]);
 
   const timeDisplay = useMemo(() => {

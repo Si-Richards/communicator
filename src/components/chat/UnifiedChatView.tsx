@@ -388,7 +388,7 @@ export const UnifiedChatView = () => {
                           >
                             {!isDirectChat && isOwn && messageFrom && (
                               <p className="text-xs font-medium mb-1 opacity-70">
-                                {messageFrom.includes('/') ? messageFrom.split('/')[1] : 'Unknown'}
+                                {messageFrom?.includes('/') ? messageFrom.split('/')[1] : 'Unknown'}
                               </p>
                             )}
                             <MessageBodyRenderer body={message.body || ''} />

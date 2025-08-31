@@ -60,7 +60,7 @@ export const RoomChatView = () => {
   };
 
   const filteredRooms = rooms.filter((room) => {
-    const name = room.name || room.jid.split('@')[0] || '';
+    const name = room.name || room.jid?.split('@')[0] || '';
     return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            room.jid.includes(searchTerm);
   });
@@ -183,7 +183,7 @@ export const RoomChatView = () => {
   };
 
   const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+    return name?.split(' ').map(n => n?.[0] || '').join('').toUpperCase() || '?';
   };
 
 
@@ -554,7 +554,7 @@ export const RoomChatView = () => {
 
                           const message = item as any; // Type assertion for message properties
                           const myNick = selectedRoomData.nick;
-                          const senderNick = message.from.split('/')[1] || message.from;
+                          const senderNick = message.from?.split('/')[1] || message.from;
                           const isSent = senderNick === myNick;
                           
                           return (

@@ -179,7 +179,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setConversations(prev => {
       const idx = prev.findIndex(c => c.jid === bareJid);
       if (idx === -1) {
-        const name = init?.name || bareJid.split("@")[0];
+        const name = init?.name || bareJid?.split("@")?.[0] || 'Unknown';
         const conv: XmppConversation = {
           jid: bareJid,
           name,
@@ -204,7 +204,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (idx === -1) {
         const contact: XmppContact = {
           jid: bareJid,
-          name: bareJid.split("@")[0],
+          name: bareJid?.split("@")?.[0] || 'Unknown',
           subscription: 'none',
           presence: 'unavailable',
           ...init,
@@ -226,7 +226,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (idx === -1) {
         const room: MucRoom = {
           jid: canonicalJid,
-          name: canonicalJid.split("@")[0],
+          name: canonicalJid?.split("@")?.[0] || 'Unknown',
           nick: '',
           joined: false,
           isOwner: false,
@@ -648,7 +648,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const mucUser = stanza.getChild("x", "http://jabber.org/protocol/muc#user");
     if (mucUser && from.includes("/")) {
       const roomJid = fromBare;
-      const nick = from.split("/")[1];
+      const nick = from?.split("/")?.[1] || from;
       const item = mucUser.getChild("item");
       const role: RoomRole = (item?.attrs?.role as RoomRole) || 'none';
       const affiliation: RoomAffiliation = (item?.attrs?.affiliation as RoomAffiliation) || 'none';
@@ -720,7 +720,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       const contactList: XmppContact[] = items.map((item: any) => ({
         jid: item.attrs.jid,
-        name: item.attrs.name || item.attrs.jid.split("@")[0],
+        name: item.attrs.name || item.attrs.jid?.split("@")?.[0] || 'Unknown',
         subscription: item.attrs.subscription || 'none',
         presence: 'unavailable' as PresenceShow,
         ask: item.attrs.ask,
@@ -753,7 +753,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Add to roster
       const rosterIq = xml("iq", { type: "set", id: crypto.randomUUID() },
         xml("query", "jabber:iq:roster",
-          xml("item", { jid, name: name || jid.split("@")[0] })
+          xml("item", { jid, name: name || jid?.split("@")?.[0] || 'Unknown' })
         )
       );
       
@@ -1272,7 +1272,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const items = query.getChildren("item");
       return items.map((item: any) => ({
         jid: item.attrs.jid,
-        name: item.attrs.name || item.attrs.jid.split("@")[0]
+        name: item.attrs.name || item.attrs.jid?.split("@")?.[0] || 'Unknown'
       })).filter(Boolean);
     } catch (error) {
       console.error("Failed to list rooms:", error);

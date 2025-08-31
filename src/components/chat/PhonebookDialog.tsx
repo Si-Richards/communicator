@@ -189,7 +189,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     
     // Filter out MUC JIDs from searched users (they should appear in rooms instead)
     const filteredSearchedUsers = searchedUsers.filter(u => {
-      const domain = u.jid.split('@')[1];
+      const domain = u.jid?.split('@')?.[1];
       const isMucDomain = domain && (domain.includes('conference.') || 
                                    domain.includes('muc.') || 
                                    domain.includes('rooms.'));
@@ -203,7 +203,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   }, [contacts, searchedUsers]);
 
   const filteredContacts = allUsers.filter((contact) => {
-    const name = contact.name || contact.jid.split('@')[0] || '';
+    const name = contact.name || contact.jid?.split('@')?.[0] || '';
     return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            contact.jid.toLowerCase().includes(searchTerm.toLowerCase());
   });
@@ -230,7 +230,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   };
 
   const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+    return name?.split(' ').map(n => n?.[0] || '').join('').toUpperCase() || '?';
   };
 
   return (

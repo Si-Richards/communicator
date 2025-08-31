@@ -67,7 +67,7 @@ export const DirectChatView = () => {
   }, [selectedConversation, conversations, markConversationRead]);
 
   const filteredConversations = conversations.filter((conv) => {
-    const name = conv.name || conv.jid.split('@')[0] || '';
+    const name = conv.name || conv.jid?.split('@')[0] || '';
     return name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            conv.jid.includes(searchTerm);
   });
@@ -86,7 +86,7 @@ export const DirectChatView = () => {
   });
 
   const filteredContacts = contacts.filter((contact) => {
-    const name = contact.name || contact.jid.split('@')[0] || '';
+    const name = contact.name || contact.jid?.split('@')[0] || '';
     return name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
            contact.jid.includes(contactSearchTerm);
   });
@@ -140,7 +140,7 @@ export const DirectChatView = () => {
   }, [transcript, resetTranscript]);
 
   const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+    return name?.split(' ').map(n => n?.[0] || '').join('').toUpperCase() || '?';
   };
 
   const handleLoadHistory = async (jid: string) => {
@@ -412,7 +412,7 @@ export const DirectChatView = () => {
 
                         const message = item as any; // Type assertion for message properties
                         const myBareJid = `${settings.xmpp.username}@${settings.xmpp.domain}`;
-                        const isSent = message.from.split('/')[0] === myBareJid;
+                        const isSent = message.from?.split('/')[0] === myBareJid;
                         
                         return (
                           <div

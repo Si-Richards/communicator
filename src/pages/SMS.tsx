@@ -189,7 +189,7 @@ const SMS = () => {
                       {sms.contact === 'Unknown' ? (
                         <User className="h-5 w-5" />
                       ) : (
-                        sms.contact.split(' ').map(n => n[0]).join('')
+                        sms.contact?.split(' ').map(n => n?.[0] || '').join('') || '?'
                       )}
                     </AvatarFallback>
                   </Avatar>
