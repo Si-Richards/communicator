@@ -12,14 +12,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useJanusContext } from '@/contexts/JanusContext';
-import { useXmppConnection } from '@/hooks/useXmppConnection';
 import { notificationManager } from '@/lib/notificationManager';
 import { audioDeviceManager, AudioDevice, DeviceTestResult } from '@/lib/audioDeviceManager';
 import { videoDeviceManager, VideoDevice, VideoDeviceTestResult } from '@/lib/videoDeviceManager';
 import { logger, LogEntry, LogLevel } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
 import { VideoSurface } from '@/components/VideoSurface';
-import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff, Bell, RefreshCw } from 'lucide-react';
+import { Download, Upload, RotateCcw, Play, Volume2, Mic, Search, Filter, Trash2, Settings, AudioLines, Database, Activity, Info, Phone, Eye, EyeOff, Bell, RefreshCw, Users } from 'lucide-react';
+import { useXmpp } from '@/contexts/XmppContext';
 const SettingsPage = () => {
   const {
     settings,
@@ -28,16 +28,16 @@ const SettingsPage = () => {
     updateLogSettings,
     updateRingtoneSettings,
     updateSipSettings,
-    updateXmppSettings,
     updateVideoSettings,
     updateNotificationSettings,
+    updateXmppSettings,
     resetToDefaults,
     exportSettings,
     importSettings
   } = useSettings();
   const { toast } = useToast();
   const { callState, registerNow, unregisterSipAccount } = useJanusContext();
-  const { status: xmppStatus, connect: connectXmpp, disconnect: disconnectXmpp, isConnected: isXmppConnected } = useXmppConnection();
+  const { connectionState, connect, disconnect, effectiveJid, lastError, lastAttemptAt, runWebSocketDiagnostics } = useXmpp();
 
   // Device management state
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
@@ -68,24 +68,23 @@ const SettingsPage = () => {
   // XMPP configuration state
   const [showXmppPassword, setShowXmppPassword] = useState(false);
   const [tempXmppSettings, setTempXmppSettings] = useState({
-    serviceUrl: settings.xmpp.serviceUrl,
+    websocketUrl: settings.xmpp.websocketUrl,
     domain: settings.xmpp.domain,
-    resource: settings.xmpp.resource,
     username: settings.xmpp.username,
-    password: settings.xmpp.password
+    password: settings.xmpp.password,
+    autoConnect: settings.xmpp.autoConnect,
+    rememberPassword: settings.xmpp.rememberPassword
   });
+
+  // XMPP diagnostics state
+  const [isRunningDiagnostics, setIsRunningDiagnostics] = useState(false);
+  const [diagnosticsResults, setDiagnosticsResults] = useState<{ success: boolean; details: string; } | null>(null);
 
   // Check if all required SIP fields are populated
   const isSipConfigValid = tempSipSettings.username?.trim() && 
                           tempSipSettings.password?.trim() && 
                           tempSipSettings.server?.trim() && 
                           tempSipSettings.realm?.trim();
-
-  // Check if all required XMPP fields are populated
-  const isXmppConfigValid = tempXmppSettings.serviceUrl?.trim() && 
-                           tempXmppSettings.domain?.trim() && 
-                           tempXmppSettings.username?.trim() && 
-                           tempXmppSettings.password?.trim();
 
   // Sync temp settings when main settings change
   useEffect(() => {
@@ -99,13 +98,14 @@ const SettingsPage = () => {
 
   useEffect(() => {
     setTempXmppSettings({
-      serviceUrl: settings.xmpp.serviceUrl,
+      websocketUrl: settings.xmpp.websocketUrl,
       domain: settings.xmpp.domain,
-      resource: settings.xmpp.resource,
       username: settings.xmpp.username,
-      password: settings.xmpp.password
+      password: settings.xmpp.password,
+      autoConnect: settings.xmpp.autoConnect,
+      rememberPassword: settings.xmpp.rememberPassword
     });
-  }, [settings.xmpp.serviceUrl, settings.xmpp.domain, settings.xmpp.resource, settings.xmpp.username, settings.xmpp.password]);
+  }, [settings.xmpp]);
   useEffect(() => {
     // Load devices
     loadDevices();
@@ -319,40 +319,40 @@ const SettingsPage = () => {
 
         <Tabs defaultValue="audio-quality" className="w-full">
           <TabsList className="grid w-full grid-cols-9">
-            <TabsTrigger value="audio-quality" className="flex items-center gap-2">
-              <AudioLines className="h-4 w-4" />
-              Audio Quality
+            <TabsTrigger value="audio-quality" className="flex items-center gap-1 text-xs">
+              <AudioLines className="h-3 w-3" />
+              Audio
             </TabsTrigger>
-            <TabsTrigger value="devices" className="flex items-center gap-2">
-              <Settings className="h-4 w-4" />
+            <TabsTrigger value="devices" className="flex items-center gap-1 text-xs">
+              <Settings className="h-3 w-3" />
               Devices
             </TabsTrigger>
-            <TabsTrigger value="video" className="flex items-center gap-2">
-              <Eye className="h-4 w-4" />
+            <TabsTrigger value="video" className="flex items-center gap-1 text-xs">
+              <Eye className="h-3 w-3" />
               Video
             </TabsTrigger>
-            <TabsTrigger value="sip" className="flex items-center gap-2">
-              <Phone className="h-4 w-4" />
+            <TabsTrigger value="sip" className="flex items-center gap-1 text-xs">
+              <Phone className="h-3 w-3" />
               SIP
             </TabsTrigger>
-            <TabsTrigger value="xmpp" className="flex items-center gap-2">
-              <RefreshCw className="h-4 w-4" />
-              XMPP
+            <TabsTrigger value="xmpp" className="flex items-center gap-1 text-xs">
+              <Users className="h-3 w-3" />
+              Chat
             </TabsTrigger>
-            <TabsTrigger value="notifications" className="flex items-center gap-2">
-              <Bell className="h-4 w-4" />
-              Notifications
+            <TabsTrigger value="notifications" className="flex items-center gap-1 text-xs">
+              <Bell className="h-3 w-3" />
+              Notify
             </TabsTrigger>
-            <TabsTrigger value="advanced" className="flex items-center gap-2">
-              <Database className="h-4 w-4" />
+            <TabsTrigger value="advanced" className="flex items-center gap-1 text-xs">
+              <Database className="h-3 w-3" />
               Advanced
             </TabsTrigger>
-            <TabsTrigger value="logs" className="flex items-center gap-2">
-              <Activity className="h-4 w-4" />
+            <TabsTrigger value="logs" className="flex items-center gap-1 text-xs">
+              <Activity className="h-3 w-3" />
               Logs
             </TabsTrigger>
-            <TabsTrigger value="about" className="flex items-center gap-2">
-              <Info className="h-4 w-4" />
+            <TabsTrigger value="about" className="flex items-center gap-1 text-xs">
+              <Info className="h-3 w-3" />
               About
             </TabsTrigger>
           </TabsList>
@@ -852,162 +852,275 @@ const SettingsPage = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <RefreshCw className="h-5 w-5" />
-                  XMPP Configuration
+                  <Users className="h-5 w-5" />
+                  Chat Configuration
                 </CardTitle>
                 <CardDescription>
-                  Configure connection to ejabberd server for messaging
+                  Configure messaging
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-service-url">Service URL</Label>
-                    <Input
-                      id="xmpp-service-url"
-                      type="text"
-                      placeholder="wss://ejabberd.voicehost.io:443"
-                      value={tempXmppSettings.serviceUrl}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, serviceUrl: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      WebSocket endpoint for XMPP server
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-domain">Domain</Label>
-                    <Input
-                      id="xmpp-domain"
-                      type="text"
-                      placeholder="ejabberd.voicehost.io"
-                      value={tempXmppSettings.domain}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, domain: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      XMPP domain name
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-username">Username</Label>
-                    <Input
-                      id="xmpp-username"
-                      type="text"
-                      placeholder="your-username"
-                      value={tempXmppSettings.username}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, username: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Your XMPP username (without domain)
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-password">Password</Label>
-                    <div className="relative">
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-domain">XMPP Domain</Label>
                       <Input
-                        id="xmpp-password"
-                        type={showXmppPassword ? "text" : "password"}
-                        placeholder="Enter your XMPP password"
-                        value={tempXmppSettings.password}
-                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, password: e.target.value }))}
-                        className="pr-10"
+                        id="xmpp-domain"
+                        type="text"
+                        placeholder="ejabberd.voicehost.io"
+                        value={tempXmppSettings.domain}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, domain: e.target.value }))}
                       />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                        onClick={() => setShowXmppPassword(!showXmppPassword)}
-                      >
-                        {showXmppPassword ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Your XMPP server domain
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Your XMPP account password
-                    </p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-websocket-url">WebSocket URL</Label>
+                      <Input
+                        id="xmpp-websocket-url"
+                        type="url"
+                        placeholder="wss://ejabberd.voicehost.io:443/websocket"
+                        value={tempXmppSettings.websocketUrl}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, websocketUrl: e.target.value }))}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        WebSocket endpoint for XMPP connection
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="xmpp-resource">Resource</Label>
-                    <Input
-                      id="xmpp-resource"
-                      type="text"
-                      placeholder="webclient"
-                      value={tempXmppSettings.resource}
-                      onChange={(e) => setTempXmppSettings(prev => ({ ...prev, resource: e.target.value }))}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-username">Username</Label>
+                      <Input
+                        id="xmpp-username"
+                        type="text"
+                        placeholder="your-username"
+                        value={tempXmppSettings.username}
+                        onChange={(e) => setTempXmppSettings(prev => ({ ...prev, username: e.target.value }))}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Your username (without domain)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="xmpp-password">Password</Label>
+                      <div className="relative">
+                        <Input
+                          id="xmpp-password"
+                          type={showXmppPassword ? "text" : "password"}
+                          placeholder="Enter your XMPP password"
+                          value={tempXmppSettings.password}
+                          onChange={(e) => setTempXmppSettings(prev => ({ ...prev, password: e.target.value }))}
+                          className="pr-10"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                          onClick={() => setShowXmppPassword(!showXmppPassword)}
+                        >
+                          {showXmppPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Your XMPP account password
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="xmpp-auto-connect">Auto Connect</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Automatically connect to XMPP server on app startup
+                      </p>
+                    </div>
+                    <Switch 
+                      id="xmpp-auto-connect" 
+                      checked={tempXmppSettings.autoConnect} 
+                      onCheckedChange={checked => setTempXmppSettings(prev => ({ ...prev, autoConnect: checked }))}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Resource identifier (optional)
-                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="xmpp-remember-password">Remember Password</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Store password locally (encrypted)
+                      </p>
+                    </div>
+                    <Switch 
+                      id="xmpp-remember-password" 
+                      checked={tempXmppSettings.rememberPassword} 
+                      onCheckedChange={checked => setTempXmppSettings(prev => ({ ...prev, rememberPassword: checked }))}
+                    />
                   </div>
                 </div>
 
                 <div className="flex gap-3">
-                  <Button 
-                    onClick={() => {
-                      updateXmppSettings(tempXmppSettings);
-                      toast({
-                        title: "XMPP Settings Saved",
-                        description: "Your XMPP configuration has been saved successfully"
-                      });
-                    }}
-                    disabled={!tempXmppSettings.serviceUrl || !tempXmppSettings.domain || !tempXmppSettings.username || !tempXmppSettings.password}
+                   <Button 
+                     onClick={() => {
+                       // Clear password from settings if remember password is disabled
+                       const settingsToSave = { 
+                         ...tempXmppSettings,
+                         password: tempXmppSettings.rememberPassword ? tempXmppSettings.password : ''
+                       };
+                       updateXmppSettings(settingsToSave);
+                       toast({
+                         title: "XMPP Settings Saved",
+                         description: "Your XMPP configuration has been saved successfully"
+                       });
+                     }}
+                     disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || !tempXmppSettings.websocketUrl}
                   >
                     Save Configuration
                   </Button>
                   
-                  {isXmppConnected ? (
+                  {connectionState === 'connected' ? (
                     <Button 
                       variant="outline"
-                      onClick={disconnectXmpp}
+                      onClick={disconnect}
                     >
                       Disconnect
                     </Button>
                   ) : (
-                   <Button 
-                     variant="outline"
-                     onClick={() => {
-                       if (isXmppConfigValid) {
-                         updateXmppSettings(tempXmppSettings);
-                         connectXmpp();
-                       } else {
-                         toast({
-                           title: "Incomplete Configuration",
-                           description: "Please fill in all required XMPP fields",
-                           variant: "destructive"
-                         });
-                       }
-                     }}
-                     disabled={!isXmppConfigValid || xmppStatus.status === 'connecting' || xmppStatus.status === 'resuming'}
-                   >
-                     {xmppStatus.status === 'connecting' || xmppStatus.status === 'resuming' ? 'Connecting...' : 'Connect'}
-                   </Button>
+                     <Button 
+                       variant="outline"
+                       onClick={async () => {
+                         if (tempXmppSettings.username && tempXmppSettings.password && tempXmppSettings.domain && tempXmppSettings.websocketUrl) {
+                           updateXmppSettings(tempXmppSettings);
+                           // Add small delay to ensure settings are updated before connecting
+                           await new Promise(resolve => setTimeout(resolve, 100));
+                           connect();
+                         } else {
+                           toast({
+                             title: "Incomplete Configuration",
+                             description: "Please fill in all required XMPP fields",
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                       disabled={!tempXmppSettings.username || !tempXmppSettings.password || !tempXmppSettings.domain || !tempXmppSettings.websocketUrl || connectionState === 'connecting'}
+                     >
+                      {connectionState === 'connecting' ? 'Connecting...' : 'Connect Now'}
+                    </Button>
                   )}
                 </div>
 
                 <Separator />
 
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">Connection Status</Label>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${
-                      isXmppConnected ? 'bg-green-500' : 'bg-red-500'
-                    }`} />
-                    <span className="text-sm text-muted-foreground">
-                      {xmppStatus.status.charAt(0).toUpperCase() + xmppStatus.status.slice(1)}
-                    </span>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Connection Status</Label>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        connectionState === 'connected' ? 'bg-green-500' : 
+                        connectionState === 'connecting' ? 'bg-yellow-500' :
+                        connectionState === 'error' ? 'bg-red-500' : 'bg-gray-500'
+                      }`} />
+                      <span className="text-sm text-muted-foreground capitalize">
+                        {connectionState}
+                      </span>
+                    </div>
+                    {effectiveJid && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Connected as</Label>
+                        <p className="text-xs text-green-600 font-mono break-all">
+                          {effectiveJid}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Resource: {effectiveJid.split('/')[1] || 'none'}
+                        </p>
+                      </div>
+                    )}
+                    {lastError && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Last Error</Label>
+                        <p className="text-xs text-red-600">
+                          {lastError}
+                        </p>
+                      </div>
+                    )}
+                    {lastAttemptAt && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Last Attempt</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {lastAttemptAt.toLocaleString()}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  {xmppStatus.resumeSupported && (
-                    <p className="text-xs text-muted-foreground">
-                      Stream management enabled - supports resume
-                    </p>
-                  )}
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">WebSocket Diagnostics</Label>
+                      <Button 
+                        onClick={async () => {
+                          setIsRunningDiagnostics(true);
+                          try {
+                            const result = await runWebSocketDiagnostics();
+                            setDiagnosticsResults(result);
+                          } catch (error) {
+                            setDiagnosticsResults({
+                              success: false,
+                              details: `Diagnostics failed: ${error}`
+                            });
+                          } finally {
+                            setIsRunningDiagnostics(false);
+                          }
+                        }}
+                        disabled={isRunningDiagnostics || !tempXmppSettings.websocketUrl}
+                        variant="outline"
+                        size="sm"
+                      >
+                        {isRunningDiagnostics ? 'Testing...' : 'Run Diagnostics'}
+                      </Button>
+                    </div>
+                    
+                    {diagnosticsResults && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${
+                            diagnosticsResults.success ? 'bg-green-500' : 'bg-red-500'
+                          }`} />
+                          <span className="text-xs font-medium">
+                            {diagnosticsResults.success ? 'WebSocket OK' : 'WebSocket Failed'}
+                          </span>
+                        </div>
+                        <div className="bg-muted/50 rounded-md p-3">
+                          <pre className="text-xs whitespace-pre-wrap font-mono">
+                            {diagnosticsResults.details}
+                          </pre>
+                        </div>
+                        {!diagnosticsResults.success && (
+                          <div className="bg-blue-50 dark:bg-blue-950/50 rounded-md p-3 space-y-2">
+                            <h4 className="text-xs font-medium text-blue-900 dark:text-blue-100">
+                              🔧 Server Configuration Hints
+                            </h4>
+                            <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                              <li>• Ensure ejabberd WebSocket listener is enabled on the correct path (/websocket)</li>
+                              <li>• Check CORS/Origin policy allows your domain ({window.location.origin})</li>
+                              <li>• Verify TLS certificate matches hostname and supports SNI</li>
+                              <li>• Confirm XMPP domain matches server virtual host configuration</li>
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
