@@ -56,24 +56,6 @@ export interface NotificationSettings {
   showPreviewText: boolean;
 }
 
-export interface ChatSettings {
-  enableMarkdown: boolean;
-  showDeliveryStatus: boolean;
-  enableEmojis: boolean;
-  enableGifs: boolean;
-  showDateSeparators: boolean;
-}
-
-export interface XmppSettings {
-  websocketUrl: string;
-  domain: string;
-  username: string;
-  password: string;
-  resource?: string;
-  autoConnect: boolean;
-  rememberPassword: boolean;
-}
-
 export interface AppSettings {
   audioQuality: AudioQualitySettings;
   audioDevices: AudioDeviceSettings;
@@ -83,8 +65,6 @@ export interface AppSettings {
   dictation: DictationSettings;
   video: VideoSettings;
   notifications: NotificationSettings;
-  xmpp: XmppSettings;
-  chat: ChatSettings;
   version: string;
 }
 
@@ -98,8 +78,6 @@ interface SettingsContextType {
   updateDictationSettings: (updates: Partial<DictationSettings>) => void;
   updateVideoSettings: (updates: Partial<VideoSettings>) => void;
   updateNotificationSettings: (updates: Partial<NotificationSettings>) => void;
-  updateXmppSettings: (updates: Partial<XmppSettings>) => void;
-  updateChatSettings: (updates: Partial<ChatSettings>) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
   importSettings: (jsonString: string) => boolean;
@@ -153,21 +131,6 @@ const defaultSettings: AppSettings = {
     enabled: true,
     askOnStartup: true,
     showPreviewText: true,
-  },
-  xmpp: {
-    websocketUrl: 'wss://ejabberd.voicehost.io:443/websocket',
-    domain: 'ejabberd.voicehost.io',
-    username: '',
-    password: '',
-    autoConnect: false,
-    rememberPassword: true,
-  },
-  chat: {
-    enableMarkdown: true,
-    showDeliveryStatus: true,
-    enableEmojis: true,
-    enableGifs: true,
-    showDateSeparators: true,
   },
   version: '1.0.0',
 };
@@ -281,20 +244,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }));
   };
 
-  const updateXmppSettings = (updates: Partial<XmppSettings>) => {
-    setSettings(prev => ({
-      ...prev,
-      xmpp: { ...prev.xmpp, ...updates },
-    }));
-  };
-
-  const updateChatSettings = (updates: Partial<ChatSettings>) => {
-    setSettings(prev => ({
-      ...prev,
-      chat: { ...prev.chat, ...updates },
-    }));
-  };
-
   const resetToDefaults = () => {
     setSettings(defaultSettings);
   };
@@ -328,8 +277,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         updateDictationSettings,
         updateVideoSettings,
         updateNotificationSettings,
-        updateXmppSettings,
-        updateChatSettings,
         resetToDefaults,
         exportSettings,
         importSettings,
