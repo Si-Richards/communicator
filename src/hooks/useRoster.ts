@@ -51,7 +51,7 @@ export const useRoster = (): UseRosterReturn => {
           id: client.generateId(),
         }, xml('query', { xmlns: 'jabber:iq:roster' }));
 
-        const response = await client.client?.iqCaller.request(rosterStanza);
+        const response = await client.iqRequest(rosterStanza);
         const query = response?.getChild('query', 'jabber:iq:roster');
         
         if (!query) return [];
@@ -101,7 +101,7 @@ export const useRoster = (): UseRosterReturn => {
           id: client.generateId(),
         }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#items' }));
 
-        const response = await client.client?.iqCaller.request(discoStanza);
+        const response = await client.iqRequest(discoStanza);
         const query = response?.getChild('query', 'http://jabber.org/protocol/disco#items');
         
         if (!query) return [];
@@ -188,7 +188,7 @@ export const useRoster = (): UseRosterReturn => {
         })
       ));
 
-      await client.client?.iqCaller.request(addStanza);
+      await client.iqRequest(addStanza);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
@@ -207,7 +207,7 @@ export const useRoster = (): UseRosterReturn => {
         xml('item', { jid: contactJid, subscription: 'remove' })
       ));
 
-      await client.client?.iqCaller.request(removeStanza);
+      await client.iqRequest(removeStanza);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
@@ -241,7 +241,7 @@ export const useRoster = (): UseRosterReturn => {
         xml('item', { jid: contactJid })
       ));
 
-      await client.client?.iqCaller.request(blockStanza);
+      await client.iqRequest(blockStanza);
     },
   });
 

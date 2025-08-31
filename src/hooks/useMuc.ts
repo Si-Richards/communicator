@@ -14,29 +14,29 @@ export interface UseMucReturn {
   error: string | null;
   
   // Actions
-  createRoom: (jid: string, name: string, config?: RoomConfig) => Promise<void>;
-  joinRoom: (jid: string, nick: string, password?: string) => Promise<void>;
-  leaveRoom: (jid: string) => Promise<void>;
-  destroyRoom: (jid: string, reason?: string) => Promise<void>;
+    createRoom: (jid: string, name: string, config?: RoomConfig) => Promise<string>;
+    joinRoom: (jid: string, nick: string, password?: string) => Promise<string>;
+    leaveRoom: (jid: string) => Promise<string>;
+    destroyRoom: (jid: string, reason?: string) => Promise<string>;
   
   // Room configuration
-  configureRoom: (jid: string, config: RoomConfig) => Promise<void>;
-  changeSubject: (jid: string, subject: string) => Promise<void>;
+  configureRoom: (jid: string, config: RoomConfig) => Promise<string>;
+  changeSubject: (jid: string, subject: string) => Promise<string>;
   
   // Occupant management
-  inviteUser: (roomJid: string, userJid: string, reason?: string) => Promise<void>;
-  kickUser: (roomJid: string, nick: string, reason?: string) => Promise<void>;
-  banUser: (roomJid: string, jid: string, reason?: string) => Promise<void>;
-  grantModerator: (roomJid: string, nick: string) => Promise<void>;
-  revokeModerator: (roomJid: string, nick: string) => Promise<void>;
+  inviteUser: (roomJid: string, userJid: string, reason?: string) => Promise<string>;
+  kickUser: (roomJid: string, nick: string, reason?: string) => Promise<string>;
+  banUser: (roomJid: string, jid: string, reason?: string) => Promise<string>;
+  grantModerator: (roomJid: string, nick: string) => Promise<string>;
+  revokeModerator: (roomJid: string, nick: string) => Promise<string>;
   
   // Bookmarks
   bookmarks: Array<{ jid: string; name: string; autoJoin: boolean }>;
-  addBookmark: (jid: string, name: string, autoJoin?: boolean) => Promise<void>;
-  removeBookmark: (jid: string) => Promise<void>;
+  addBookmark: (jid: string, name: string, autoJoin?: boolean) => Promise<string>;
+  removeBookmark: (jid: string) => Promise<string>;
   
   // Discovery
-  discoverRooms: (mucService?: string) => Promise<void>;
+  discoverRooms: (mucService?: string) => Promise<any>;
   
   // Room utilities
   getRoom: (jid: string) => MucRoom | undefined;
@@ -97,7 +97,7 @@ export const useMuc = (): UseMucReturn => {
           id: client.generateId(),
         }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#items' }));
 
-        const response = await client.client?.iqCaller.request(discoStanza);
+        const response = await client.iqRequest(discoStanza);
         const query = response?.getChild('query', 'http://jabber.org/protocol/disco#items');
         
         if (!query) return [];
@@ -201,7 +201,7 @@ export const useMuc = (): UseMucReturn => {
         id: client.generateId(),
       }, xml('query', { xmlns: 'http://jabber.org/protocol/muc#owner' }));
 
-      const configResponse = await client.client?.iqCaller.request(getConfigStanza);
+      const configResponse = await client.iqRequest(getConfigStanza);
       const configForm = configResponse?.getChild('query', 'http://jabber.org/protocol/muc#owner')
         ?.getChild('x', 'jabber:x:data');
 
@@ -280,7 +280,7 @@ export const useMuc = (): UseMucReturn => {
         )
       );
 
-      await client.client?.iqCaller.request(setConfigStanza);
+      await client.iqRequest(setConfigStanza);
       return roomJid;
     },
   });
@@ -301,7 +301,7 @@ export const useMuc = (): UseMucReturn => {
         )
       );
 
-      await client.client?.iqCaller.request(destroyStanza);
+      await client.iqRequest(destroyStanza);
       
       // Remove from joined rooms and bookmarks
       setJoinedRooms(prev => prev.filter(r => r.jid !== roomJid));
@@ -330,7 +330,7 @@ export const useMuc = (): UseMucReturn => {
         )
       );
 
-      await client.client?.iqCaller.request(kickStanza);
+      await client.iqRequest(kickStanza);
     },
   });
 
@@ -349,7 +349,7 @@ export const useMuc = (): UseMucReturn => {
         )
       );
 
-      await client.client?.iqCaller.request(banStanza);
+      await client.iqRequest(banStanza);
     },
   });
 
@@ -513,6 +513,7 @@ export const useMuc = (): UseMucReturn => {
       }, xml('subject', {}, subject));
       
       await client.send(subjectStanza);
+      return roomJid;
     },
     inviteUser: async (roomJid: string, userJid: string, reason?: string) => {
       if (!client) throw new Error('Not connected');
@@ -527,9 +528,16 @@ export const useMuc = (): UseMucReturn => {
       );
       
       await client.send(inviteStanza);
+      return roomJid;
     },
-    kickUser: (roomJid, nick, reason) => kickUserMutation.mutateAsync({ roomJid, nick, reason }),
-    banUser: (roomJid, jid, reason) => banUserMutation.mutateAsync({ roomJid, jid, reason }),
+    kickUser: async (roomJid, nick, reason) => {
+      await kickUserMutation.mutateAsync({ roomJid, nick, reason });
+      return roomJid;
+    },
+    banUser: async (roomJid, jid, reason) => {
+      await banUserMutation.mutateAsync({ roomJid, jid, reason });
+      return roomJid;
+    },
     grantModerator: async (roomJid: string, nick: string) => {
       if (!client) throw new Error('Not connected');
       
@@ -542,7 +550,8 @@ export const useMuc = (): UseMucReturn => {
         )
       );
       
-      await client.client?.iqCaller.request(moderatorStanza);
+      await client.iqRequest(moderatorStanza);
+      return roomJid;
     },
     revokeModerator: async (roomJid: string, nick: string) => {
       if (!client) throw new Error('Not connected');
@@ -556,7 +565,8 @@ export const useMuc = (): UseMucReturn => {
         )
       );
       
-      await client.client?.iqCaller.request(revokeStanza);
+      await client.iqRequest(revokeStanza);
+      return roomJid;
     },
     bookmarks,
     addBookmark: (jid, name, autoJoin) => bookmarkMutation.mutateAsync({ jid, name, autoJoin }),

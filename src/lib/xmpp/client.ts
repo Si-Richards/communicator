@@ -220,6 +220,14 @@ export class XmppClient {
     return this.client;
   }
 
+  // Public method to access iqCaller
+  async iqRequest(stanza: any): Promise<any> {
+    if (!this.client || this.status !== 'connected') {
+      throw new Error('Client not connected');
+    }
+    return this.client.iqCaller.request(stanza);
+  }
+
   generateId(): string {
     return Math.random().toString(36).substring(2, 15);
   }

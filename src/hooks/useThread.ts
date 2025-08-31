@@ -261,7 +261,7 @@ export const useThread = (conversationJid: string): UseThreadReturn => {
         })
       );
 
-      const response = await client.client?.iqCaller.request(requestStanza);
+      const response = await client.iqRequest(requestStanza);
       const slot = response?.getChild('slot', 'urn:xmpp:http:upload:0');
       
       if (!slot) throw new Error('No upload slot received');
@@ -297,7 +297,7 @@ export const useThread = (conversationJid: string): UseThreadReturn => {
 
   // Typing indicators
   const sendTyping = useCallback((state: 'composing' | 'paused' | 'active') => {
-    if (!client || !features.enableTyping) return;
+    if (!client) return;
 
     const typingStanza = xml('message', {
       to: conversationJid,
@@ -315,7 +315,7 @@ export const useThread = (conversationJid: string): UseThreadReturn => {
         sendTyping('paused');
       }, 5000);
     }
-  }, [client, conversationJid, features.enableTyping]);
+  }, [client, conversationJid]);
 
   // Listen for incoming messages and typing notifications
   useEffect(() => {
@@ -356,7 +356,7 @@ export const useThread = (conversationJid: string): UseThreadReturn => {
             body,
             timestamp: new Date(),
             type: stanza.attrs.type || 'chat',
-            status: 'received',
+            status: 'received' as const,
           };
 
           // Save to storage
@@ -413,7 +413,7 @@ export const useThread = (conversationJid: string): UseThreadReturn => {
 
     // This is a simplified MAM implementation
     // In a real implementation, you'd collect results from multiple result stanzas
-    const response = await client.client?.iqCaller.request(mamStanza);
+    const response = await client.iqRequest(mamStanza);
     
     return {
       messages: [], // Parse messages from MAM result
@@ -487,14 +487,24 @@ export const useThread = (conversationJid: string): UseThreadReturn => {
     error: error ? String(error) : null,
     isTyping,
     typingUsers,
-    sendMessage: (body, options) => sendMessageMutation.mutateAsync({ body, ...options }),
-    sendFile: (file) => sendFileMutation.mutateAsync(file),
-    editMessage: (messageId, newBody) => editMessageMutation.mutateAsync({ messageId, newBody }),
-    retractMessage: (messageId) => retractMessageMutation.mutateAsync(messageId),
+    sendMessage: async (body, options) => {
+      await sendMessageMutation.mutateAsync({ body, ...options });
+    },
+    sendFile: async (file) => {
+      await sendFileMutation.mutateAsync(file);
+    },
+    editMessage: async (messageId, newBody) => {
+      await editMessageMutation.mutateAsync({ messageId, newBody });
+    },
+    retractMessage: async (messageId) => {
+      await retractMessageMutation.mutateAsync(messageId);
+    },
     hideMessage,
     deleteMessage,
     markAsRead,
-    loadMoreHistory,
+    loadMoreHistory: async () => {
+      await loadMoreHistory();
+    },
     sendTyping,
     resendMessage,
     copyMessage,

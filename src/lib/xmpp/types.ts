@@ -28,7 +28,7 @@ export interface XmppMessage {
   retractedBy?: string;
   retractedAt?: Date;
   // Status tracking
-  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'error';
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'error' | 'received';
   error?: string;
   // Archive markers
   isFromArchive?: boolean;
@@ -140,6 +140,11 @@ export interface FeatureFlags {
   enableMarkers: boolean;
   enableRetraction: boolean;
   enableReactions: boolean;
+}
+
+// Updated ServerFeatures to include enableTyping 
+export interface ServerFeaturesWithTyping extends ServerFeatures {
+  enableTyping: boolean;
 }
 
 export interface MessagingEventHandlers {
