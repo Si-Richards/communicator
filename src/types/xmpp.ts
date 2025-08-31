@@ -47,3 +47,31 @@ export interface MamResult {
   last?: string;
   count?: number;
 }
+
+export type RoomAffiliation = 'owner' | 'admin' | 'member' | 'outcast' | 'none';
+export type RoomRole = 'moderator' | 'participant' | 'visitor' | 'none';
+
+export interface RoomOccupant {
+  nick: string;
+  jid?: string;
+  affiliation: RoomAffiliation;
+  role: RoomRole;
+  presence: 'available' | 'away' | 'dnd' | 'xa' | 'unavailable';
+  status?: string;
+}
+
+export interface MucRoom {
+  jid: string;
+  name: string;
+  nick: string;
+  subject?: string;
+  messages: XmppMessage[];
+  occupants: RoomOccupant[];
+  unreadCount: number;
+  lastActivity: Date;
+  joined: boolean;
+  isOwner: boolean;
+  isMuted: boolean;
+  hasMoreHistory?: boolean;
+  mamQueryId?: string;
+}
