@@ -74,7 +74,7 @@ export const useConversations = (): UseConversationsReturn => {
         // Create new conversation if it doesn't exist
         const newConversation: XmppConversation = {
           jid,
-          name: jid.split('@')[0],
+          name: jid?.split('@')[0] || jid || 'Unknown',
           type: 'chat',
           messages: [],
           unreadCount: 0,

@@ -60,9 +60,12 @@ export const useRoster = (): UseRosterReturn => {
         const rosterContacts: XmppContact[] = [];
 
         for (const item of items) {
+          const itemJid = item.attrs.jid;
+          if (!itemJid) continue;
+          
           const contact: XmppContact = {
-            jid: item.attrs.jid,
-            name: item.attrs.name || jid(item.attrs.jid).local,
+            jid: itemJid,
+            name: item.attrs.name || jid(itemJid).local || itemJid.split('@')[0] || 'Unknown',
             subscription: item.attrs.subscription || 'none',
             presence: 'unavailable',
             ask: item.attrs.ask as 'subscribe' | undefined,
@@ -95,9 +98,15 @@ export const useRoster = (): UseRosterReturn => {
 
       try {
         // Query shared roster group "All Users"
+        const clientJid = client.getJid();
+        if (!clientJid) return [];
+        
+        const domain = clientJid.split('@')[1];
+        if (!domain) return [];
+        
         const discoStanza = xml('iq', {
           type: 'get',
-          to: `groups.${client.getJid()?.split('@')[1]}`, // groups.domain
+          to: `groups.${domain}`,
           id: client.generateId(),
         }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#items' }));
 
@@ -114,7 +123,7 @@ export const useRoster = (): UseRosterReturn => {
           if (userJid && userJid !== myJid) {
             const contact: XmppContact = {
               jid: userJid,
-              name: item.attrs.name || jid(userJid).local,
+              name: item.attrs.name || jid(userJid).local || userJid.split('@')[0] || 'Unknown',
               subscription: 'both', // Shared roster implies mutual subscription
               presence: 'unavailable',
               groups: ['All Users'],
@@ -184,7 +193,7 @@ export const useRoster = (): UseRosterReturn => {
       }, xml('query', { xmlns: 'jabber:iq:roster' },
         xml('item', { 
           jid: contactJid, 
-          name: name || jid(contactJid).local 
+          name: name || jid(contactJid).local || contactJid.split('@')[0] || 'Unknown'
         })
       ));
 

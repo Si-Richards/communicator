@@ -151,8 +151,10 @@ export const XmppMessagingProvider: React.FC<XmppMessagingProviderProps> = ({
       setMyJid(jid);
       
       // Set account for storage
-      const bareJid = jid.split('/')[0];
-      xmppStorage.setAccount(bareJid);
+      const bareJid = jid?.split('/')[0] || jid || '';
+      if (bareJid) {
+        xmppStorage.setAccount(bareJid);
+      }
     });
 
     client.on('featuresDiscovered', (discoveredFeatures: ServerFeatures) => {
