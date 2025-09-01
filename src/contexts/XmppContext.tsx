@@ -458,9 +458,15 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return false;
     }
 
-    if (connectingRef.current) {
-      console.log("Connection already in progress");
+    if (connectingRef.current || connectionState === 'connected') {
+      console.log("Connection already in progress or connected");
       return false;
+    }
+
+    // Clear any existing reconnect timeout
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
 
     connectingRef.current = true;
@@ -477,14 +483,26 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log("Connecting to XMPP server:", { websocketUrl, domain, username });
 
+      // Clean up existing client first
+      if (xmppRef.current) {
+        try {
+          await xmppRef.current.stop();
+        } catch (error) {
+          console.warn("Error stopping existing XMPP client:", error);
+        }
+        xmppRef.current = null;
+      }
+
       const xmpp = client({
         service: websocketUrl,
         domain,
         username,
         password,
+        resource: sessionStorage.getItem('xmpp-resource') || `lovable-webclient-${Date.now()}`,
       });
 
       xmppRef.current = xmpp;
+      sessionStorage.setItem('xmpp-resource', xmpp.jid?.resource || `lovable-webclient-${Date.now()}`);
       myBareJidRef.current = fullJid;
 
       // Set up managers
@@ -502,6 +520,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setConnectionState("connected");
           clearReconnectGrace();
           reconnectBackoffRef.current = 1000;
+          
+          // Clear any reconnect timeout on successful connection
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
           
           // Post-connection setup
           setTimeout(async () => {
@@ -1055,7 +1079,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const joinRoom = useCallback(async (roomJid: string, nick: string, password?: string): Promise<boolean> => {
-    if (!xmppRef.current) return false;
+    if (!xmppRef.current || connectionState !== 'connected') return false;
 
     try {
       ensureRoom(roomJid, { nick });
@@ -1080,7 +1104,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [ensureRoom]);
 
   const leaveRoom = useCallback((roomJid: string) => {
-    if (!xmppRef.current) return;
+    if (!xmppRef.current || connectionState !== 'connected') return;
 
     const room = rooms.find(r => r.jid === roomJid);
     if (!room) return;
@@ -1103,7 +1127,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const sendRoomMessage = useCallback(async (roomJid: string, body: string): Promise<boolean> => {
-    if (!messageHandlerRef.current) return false;
+    if (!messageHandlerRef.current || connectionState !== 'connected') return false;
 
     try {
       // Generate message ID first
