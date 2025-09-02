@@ -41,7 +41,8 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     listRooms,
     searchUsers,
     joinRoom,
-    connect
+    connect,
+    loadRoster
   } = useXmpp();
 
   // Enhanced user search with debouncing
@@ -67,11 +68,12 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     return () => clearTimeout(timeoutId);
   }, [searchTerm, searchUsers, uiConnection]);
 
-  // Load MUC services when dialog opens and load all rooms across services
+  // Load MUC services and roster when dialog opens 
   useEffect(() => {
     if (open && uiConnection === 'connected') {
-      console.log('PhonebookDialog: Loading services on open');
+      console.log('PhonebookDialog: Loading services and roster on open');
       handleLoadServices();
+      loadRoster(); // Load contacts/roster
     } else if (uiConnection !== 'connected') {
       setConnectionError(uiConnection === 'offline' ? 'Not connected to server' : 
                         uiConnection === 'reconnecting' ? 'Reconnecting to server...' : 
@@ -79,15 +81,16 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     } else {
       setConnectionError(null);
     }
-  }, [open, uiConnection]);
+  }, [open, uiConnection, loadRoster]);
 
   // Auto-refresh when connection is restored
   useEffect(() => {
     if (connectionState === 'connected' && open) {
-      console.log('PhonebookDialog: Connection restored, reloading services and rooms');
+      console.log('PhonebookDialog: Connection restored, reloading services, rooms and roster');
       handleLoadServices();
+      loadRoster();
     }
-  }, [connectionState, open]);
+  }, [connectionState, open, loadRoster]);
 
   const handleLoadServices = async () => {
     setLoadingServices(true);
@@ -171,12 +174,20 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   };
 
   const handleRoomJoin = async (roomJid: string) => {
-    if (!nickname.trim()) return;
+    if (!nickname.trim()) {
+      console.warn('No nickname set, cannot join room');
+      return;
+    }
     
     try {
+      console.log('Attempting to join room:', roomJid, 'with nickname:', nickname.trim());
       const success = await joinRoom(roomJid, nickname.trim());
+      console.log('Join room result:', success);
       if (success) {
         onSelect(roomJid, 'room');
+        onOpenChange(false); // Close dialog on successful join
+      } else {
+        console.error('Join room returned false');
       }
     } catch (error) {
       console.error('Failed to join room:', error);
