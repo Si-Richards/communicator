@@ -294,28 +294,50 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     const event = msg.result?.event || msg.sip
     
     if (event === "registered") {
-      console.log("SIP registration successful")
+      // Clear the registering flag on success
+      isRegisteringRef.current = false
+      registrationCooldownRef.current = 0
+      
+      logger.info("SIP registration successful", 'SIP Registration')
       setCallState(prev => ({ 
         ...prev, 
         registered: true, 
         sipStatus: 'Online'
       }))
-      // Registration successful - no toast needed as status is visible in sidebar
+      toast({
+        title: "SIP Registration Successful",
+        description: "You are now registered and can make calls"
+      })
     } else if (event === "registering") {
       setCallState(prev => ({ ...prev, sipStatus: 'Registering...' }))
     } else if (event === "registration_failed") {
       const reason = msg.result?.reason || msg.reason || "Unknown error"
       const code = msg.result?.code || msg.code
-      console.error("SIP registration failed:", { reason, code, msg })
+      
+      // Clear the registering flag so user can retry
+      isRegisteringRef.current = false
+      
+      logger.error(`SIP registration failed: ${reason} (code: ${code})`, 'SIP Registration')
+      
+      // Provide helpful error messages based on error codes
+      let userMessage = reason
+      if (code === 904) {
+        userMessage = "Authentication failed. Please check your username and password format."
+      } else if (code === 403) {
+        userMessage = "Access denied. Please verify your credentials and realm."
+      } else if (code === 408) {
+        userMessage = "Request timeout. Check your server connection."
+      }
+      
       setCallState(prev => ({ 
         ...prev, 
         registered: false, 
         status: 'error',
-        sipStatus: `Registration failed: ${reason}` 
+        sipStatus: `Registration failed: ${userMessage}` 
       }))
       toast({
         title: "Registration Failed",
-        description: code ? `${reason} (${code})` : reason,
+        description: code ? `${userMessage} (Error ${code})` : userMessage,
         variant: "destructive"
       })
     } else if (event === "incomingcall") {
@@ -1111,29 +1133,62 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     isRegisteringRef.current = true
 
-    // Normalize username (extract just the user part if it's a full SIP URI)
-    const normalizeUsername = (username: string) => {
+    // Enhanced username parsing with better format detection
+    const parseUsername = (username: string): { user: string, format: string } => {
+      // Remove any leading/trailing whitespace
+      username = username.trim()
+      
+      // Format 1: Full SIP URI like "sip:10000*213@realm.com"
       if (username.startsWith('sip:')) {
         const match = username.match(/sip:([^@]+)@/)
-        return match ? match[1] : username.replace('sip:', '').split('@')?.[0] || 'Unknown'
+        if (match) {
+          logger.info(`Parsed SIP URI format: ${username} -> ${match[1]}`, 'SIP Registration')
+          return { user: match[1], format: 'sip-uri' }
+        }
+        // Fallback: just remove sip: prefix
+        const cleaned = username.replace('sip:', '').split('@')[0]
+        logger.info(`Parsed SIP URI (fallback): ${username} -> ${cleaned}`, 'SIP Registration')
+        return { user: cleaned, format: 'sip-uri-fallback' }
       }
-      return username
+      
+      // Format 2: Just the extension with asterisk (tenant*extension or extension*tenant)
+      if (username.includes('*')) {
+        logger.info(`Parsed asterisk notation: ${username}`, 'SIP Registration')
+        return { user: username, format: 'asterisk' }
+      }
+      
+      // Format 3: Plain extension number
+      if (/^\d+$/.test(username)) {
+        logger.info(`Parsed plain extension: ${username}`, 'SIP Registration')
+        return { user: username, format: 'extension' }
+      }
+      
+      // Format 4: Username with @ symbol (extract part before @)
+      if (username.includes('@')) {
+        const user = username.split('@')[0]
+        logger.info(`Parsed username with @: ${username} -> ${user}`, 'SIP Registration')
+        return { user, format: 'username-at-domain' }
+      }
+      
+      // Default: use as-is
+      logger.info(`Using username as-is: ${username}`, 'SIP Registration')
+      return { user: username, format: 'raw' }
     }
 
-    const normalizedUsername = normalizeUsername(settings.sip.username)
+    const { user: normalizedUsername, format } = parseUsername(settings.sip.username)
+    
+    // Build the SIP URI for registration
+    const sipUri = `sip:${normalizedUsername}@${settings.sip.realm}`
     
     const register = {
       request: "register",
-      username: `sip:${normalizedUsername}@${settings.sip.realm}`,
+      username: sipUri,
       secret: settings.sip.password,
       realm: settings.sip.realm,
       send_register: true
     }
 
-    console.log("Registering SIP account with:", { 
-      username: register.username, 
-      realm: register.realm
-    })
+    logger.info(`SIP Registration attempt: original=${settings.sip.username}, normalized=${normalizedUsername}, format=${format}, sipUri=${sipUri}, realm=${settings.sip.realm}`, 'SIP Registration')
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
