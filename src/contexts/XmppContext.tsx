@@ -56,6 +56,7 @@ type XmppContextType = {
   
   // Roster management
   fetchRoster: () => Promise<void>;
+  loadRoster: () => Promise<void>;
   addContact: (jid: string, name?: string) => Promise<boolean>;
   removeContact: (jid: string) => Promise<boolean>;
   subscribeToPresence: (jid: string) => Promise<boolean>;
@@ -148,6 +149,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [showReconnecting, setShowReconnecting] = useState(false);
   const [conversations, setConversations] = useState<XmppConversation[]>([]);
   const [contacts, setContacts] = useState<XmppContact[]>([]);
+  const [loadingRoster, setLoadingRoster] = useState(false);
   const [rooms, setRooms] = useState<MucRoom[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
@@ -1304,9 +1306,56 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const loadRoster = useCallback(async (): Promise<void> => {
+    if (!xmppRef.current || connectionState !== 'connected' || loadingRoster) return;
+    
+    setLoadingRoster(true);
+    try {
+      console.log("Loading roster...");
+      const iq = xml('iq', { type: 'get', id: crypto.randomUUID() });
+      
+      const rosterQuery = xml('query', { xmlns: 'jabber:iq:roster' });
+      iq.append(rosterQuery);
+      
+      const result = await xmppRef.current.iqCaller.request(iq);
+      const query = result?.getChild('query', 'jabber:iq:roster');
+      
+      if (query) {
+        const items = query.getChildren('item');
+        const rosterContacts: XmppContact[] = [];
+        
+        for (const item of items) {
+          const jid = item.attrs.jid;
+          const name = item.attrs.name;
+          const subscription = item.attrs.subscription;
+          
+          if (jid) {
+            const contact: XmppContact = {
+              jid,
+              name: name || jid.split('@')[0] || 'Unknown',
+              subscription: subscription as any || 'none',
+              presence: 'unavailable',
+            };
+            rosterContacts.push(contact);
+          }
+        }
+        
+        console.log(`Loaded ${rosterContacts.length} contacts from roster`);
+        setContacts(rosterContacts);
+      }
+      
+    } catch (error) {
+      console.error("Failed to load roster:", error);
+    } finally {
+      setLoadingRoster(false);
+    }
+  }, [connectionState, loadingRoster]);
+
   const searchUsers = useCallback(async (searchTerm: string): Promise<Array<{jid: string; name: string}>> => {
-    // Simple search through current contacts
-    return contacts
+    if (!searchTerm.trim()) return [];
+    
+    // First search through current contacts
+    const contactMatches = contacts
       .filter(contact => 
         contact.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         contact.jid.toLowerCase().includes(searchTerm.toLowerCase())
@@ -1315,6 +1364,17 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         jid: contact.jid,
         name: contact.name
       }));
+    
+    // If searching for what looks like a JID, add it to results
+    const mucJidPattern = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (mucJidPattern.test(searchTerm.trim()) && !contactMatches.find(c => c.jid === searchTerm.trim())) {
+      contactMatches.push({
+        jid: searchTerm.trim(),
+        name: searchTerm.split('@')[0] || searchTerm.trim()
+      });
+    }
+    
+    return contactMatches;
   }, [contacts]);
 
   // Typing indicators
@@ -1365,6 +1425,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     // Roster management
     fetchRoster,
+    loadRoster,
     addContact,
     removeContact,
     subscribeToPresence,
