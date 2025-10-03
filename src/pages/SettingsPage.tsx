@@ -745,29 +745,13 @@ const SettingsPage = () => {
                     <Input
                       id="sip-username"
                       type="text"
-                      placeholder="e.g., 10000*213 or 16331*201"
+                      placeholder="e.g., 16331*201"
                       value={tempSipSettings.username}
                       onChange={(e) => setTempSipSettings(prev => ({ ...prev, username: e.target.value }))}
-                      className={!tempSipSettings.username?.trim() ? 'border-orange-500/50' : ''}
                     />
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        Enter your SIP extension
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        <strong>Supported formats:</strong>
-                      </p>
-                      <ul className="text-xs text-muted-foreground space-y-0.5 ml-3">
-                        <li>• Extension with tenant: <code className="bg-muted px-1 py-0.5 rounded">10000*213</code></li>
-                        <li>• Plain extension: <code className="bg-muted px-1 py-0.5 rounded">16331</code></li>
-                        <li>• Full SIP URI: <code className="bg-muted px-1 py-0.5 rounded">sip:10000*213@realm.com</code></li>
-                      </ul>
-                      {tempSipSettings.username && (
-                        <p className="text-xs text-primary font-medium mt-2">
-                          ✓ Will register as: <code className="bg-primary/10 px-1 py-0.5 rounded">{tempSipSettings.username.replace(/^sip:/, '').split('@')[0]}</code>
-                        </p>
-                      )}
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Enter your SIP username
+                    </p>
                   </div>
 
                   <div className="space-y-2">
@@ -779,7 +763,7 @@ const SettingsPage = () => {
                         placeholder="Enter your SIP password"
                         value={tempSipSettings.password}
                         onChange={(e) => setTempSipSettings(prev => ({ ...prev, password: e.target.value }))}
-                        className={`pr-10 ${!tempSipSettings.password?.trim() ? 'border-orange-500/50' : ''}`}
+                        className="pr-10"
                       />
                       <Button
                         type="button"
@@ -849,46 +833,16 @@ const SettingsPage = () => {
 
                 <Separator />
 
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <Label className="text-sm font-medium">Connection Status</Label>
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${
-                      callState.registered ? 'bg-green-500' : 
-                      callState.sipStatus.includes('Registering') ? 'bg-yellow-500 animate-pulse' :
-                      'bg-red-500'
+                      callState.registered ? 'bg-green-500' : 'bg-red-500'
                     }`} />
                     <span className="text-sm text-muted-foreground">
                       {callState.sipStatus}
                     </span>
                   </div>
-                  
-                  {!callState.registered && callState.sipStatus.includes('failed') && (
-                    <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                      <p className="text-xs text-destructive mb-2">
-                        <strong>Registration failed.</strong> Common issues:
-                      </p>
-                      <ul className="text-xs text-destructive/90 space-y-1 ml-3">
-                        <li>• Check that username format matches your server (e.g., 10000*213)</li>
-                        <li>• Verify password is correct</li>
-                        <li>• Ensure realm matches your SIP server domain</li>
-                        <li>• Confirm server URL is accessible</li>
-                      </ul>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-3 w-full"
-                        onClick={() => {
-                          if (isSipConfigValid) {
-                            registerNow();
-                          }
-                        }}
-                        disabled={!isSipConfigValid}
-                      >
-                        <RefreshCw className="h-3 w-3 mr-2" />
-                        Retry Registration
-                      </Button>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
