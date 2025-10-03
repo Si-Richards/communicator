@@ -1177,18 +1177,22 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     const { user: normalizedUsername, format } = parseUsername(settings.sip.username)
     
-    // Build the SIP URI for registration
+    // Build the SIP URI for display/identification purposes
     const sipUri = `sip:${normalizedUsername}@${settings.sip.realm}`
     
+    // IMPORTANT: Janus SIP plugin expects just the username part for authentication,
+    // not the full SIP URI. The realm is sent separately.
     const register = {
       request: "register",
-      username: sipUri,
+      username: normalizedUsername,  // Just the user part: "10000*213"
       secret: settings.sip.password,
       realm: settings.sip.realm,
+      display_name: sipUri,  // Full SIP URI for caller ID
       send_register: true
     }
 
-    logger.info(`SIP Registration attempt: original=${settings.sip.username}, normalized=${normalizedUsername}, format=${format}, sipUri=${sipUri}, realm=${settings.sip.realm}`, 'SIP Registration')
+    logger.info(`SIP Registration payload: ${JSON.stringify(register, null, 2)}`, 'SIP Registration')
+    logger.info(`Parsed username: original="${settings.sip.username}", normalized="${normalizedUsername}", format="${format}"`, 'SIP Registration')
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })

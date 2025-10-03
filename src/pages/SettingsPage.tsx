@@ -762,6 +762,11 @@ const SettingsPage = () => {
                         <li>• Plain extension: <code className="bg-muted px-1 py-0.5 rounded">16331</code></li>
                         <li>• Full SIP URI: <code className="bg-muted px-1 py-0.5 rounded">sip:10000*213@realm.com</code></li>
                       </ul>
+                      {tempSipSettings.username && (
+                        <p className="text-xs text-primary font-medium mt-2">
+                          ✓ Will register as: <code className="bg-primary/10 px-1 py-0.5 rounded">{tempSipSettings.username.replace(/^sip:/, '').split('@')[0]}</code>
+                        </p>
+                      )}
                     </div>
                   </div>
 
