@@ -22,8 +22,8 @@ export class XmppMessageHandler {
     this.xmpp = xmpp;
   }
 
-  // Send a message with full XEP support - non-blocking
-  sendMessage(
+  // Send a message with full XEP support
+  async sendMessage(
     to: string, 
     body: string, 
     type: 'chat' | 'groupchat' = 'chat',
@@ -33,7 +33,9 @@ export class XmppMessageHandler {
       originId?: string;
     } = {}
   ): Promise<string> {
-    if (!this.xmpp) return Promise.reject(new Error('XMPP client not available'));
+    if (!this.xmpp) {
+      throw new Error('XMPP client not available');
+    }
 
     // Generate consistent IDs
     const messageId = options.originId || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -53,7 +55,7 @@ export class XmppMessageHandler {
       }));
     }
 
-    // XEP-0184: Message Delivery Receipts
+    // XEP-0184: Message Delivery Receipts (only for direct chats)
     if (options.requestReceipt !== false && type === 'chat') {
       messageStanza.append(xml('request', { xmlns: 'urn:xmpp:receipts' }));
     }
@@ -63,12 +65,14 @@ export class XmppMessageHandler {
       messageStanza.append(xml('markable', { xmlns: 'urn:xmpp:chat-markers:0' }));
     }
 
-    // Non-blocking send
-    this.xmpp.send(messageStanza).catch((error: any) => {
+    try {
+      await this.xmpp.send(messageStanza);
+      console.log(`Message sent successfully to ${to} (type: ${type})`);
+      return messageId;
+    } catch (error) {
       console.error('Failed to send message:', error);
-    });
-    
-    return Promise.resolve(messageId);
+      throw error;
+    }
   }
 
   // Handle incoming messages
