@@ -833,16 +833,67 @@ const SettingsPage = () => {
 
                 <Separator />
 
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">Connection Status</Label>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${
-                      callState.registered ? 'bg-green-500' : 'bg-red-500'
-                    }`} />
-                    <span className="text-sm text-muted-foreground">
-                      {callState.sipStatus}
-                    </span>
+                <div className="space-y-4">
+                  <Label className="text-sm font-medium">Connection Status & Debugging</Label>
+                  
+                  <div className="p-4 border rounded-lg space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${
+                          callState.registered ? 'bg-green-500 animate-pulse' : 
+                          callState.sipStatus.includes('Registering') ? 'bg-yellow-500 animate-pulse' :
+                          'bg-red-500'
+                        }`} />
+                        <span className="text-sm font-medium">
+                          {callState.registered ? 'Registered' : 
+                           callState.sipStatus.includes('Registering') ? 'Registering' :
+                           'Not Registered'}
+                        </span>
+                      </div>
+                      {callState.registered && (
+                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                          Online
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    <div className="text-xs text-muted-foreground">
+                      Status: {callState.sipStatus}
+                    </div>
+                    
+                    {!callState.registered && isSipConfigValid && (
+                      <div className="pt-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            updateSipSettings(tempSipSettings);
+                            setTimeout(() => registerNow(), 100);
+                          }}
+                          disabled={callState.sipStatus.includes('Registering')}
+                          className="w-full"
+                        >
+                          <RefreshCw className="h-3 w-3 mr-2" />
+                          Clear State & Retry Registration
+                        </Button>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Use this if registration appears stuck
+                        </p>
+                      </div>
+                    )}
                   </div>
+                  
+                  {isSipConfigValid && (
+                    <div className="p-3 bg-muted/50 rounded-lg">
+                      <h4 className="text-xs font-medium mb-2">Configuration Details</h4>
+                      <div className="space-y-1 text-xs text-muted-foreground font-mono">
+                        <div>Username: {tempSipSettings.username}</div>
+                        <div>Realm: {tempSipSettings.realm}</div>
+                        <div>Server: {tempSipSettings.server}</div>
+                        <div className="text-green-600">✓ All fields configured</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

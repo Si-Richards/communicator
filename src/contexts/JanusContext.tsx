@@ -294,7 +294,9 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     const event = msg.result?.event || msg.sip
     
     if (event === "registered") {
-      console.log("SIP registration successful")
+      logger.info("SIP registration successful")
+      isRegisteringRef.current = false // Clear registration flag on success
+      registrationCooldownRef.current = 0 // Clear cooldown
       setCallState(prev => ({ 
         ...prev, 
         registered: true, 
@@ -306,7 +308,12 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     } else if (event === "registration_failed") {
       const reason = msg.result?.reason || msg.reason || "Unknown error"
       const code = msg.result?.code || msg.code
-      console.error("SIP registration failed:", { reason, code, msg })
+      logger.error("SIP registration failed:", { reason, code, msg })
+      
+      // CRITICAL FIX: Clear the registration flag and cooldown on failure
+      isRegisteringRef.current = false
+      registrationCooldownRef.current = 0
+      
       setCallState(prev => ({ 
         ...prev, 
         registered: false, 
@@ -1099,17 +1106,20 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
 
     // Prevent concurrent registrations
     if (isRegisteringRef.current) {
-      console.log("Registration already in progress, skipping")
+      logger.warn("Registration already in progress, skipping")
       return
     }
 
     // Check cooldown
-    if (Date.now() < registrationCooldownRef.current) {
-      console.log("Registration in cooldown, skipping")
+    const now = Date.now()
+    if (now < registrationCooldownRef.current) {
+      const remaining = Math.ceil((registrationCooldownRef.current - now) / 1000)
+      logger.warn(`Registration in cooldown for ${remaining} more seconds`)
       return
     }
 
     isRegisteringRef.current = true
+    registrationCooldownRef.current = now + 10000 // 10 second cooldown
 
     // Normalize username (extract just the user part if it's a full SIP URI)
     const normalizeUsername = (username: string) => {
@@ -1130,13 +1140,22 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       send_register: true
     }
 
-    console.log("Registering SIP account with:", { 
+    logger.info("Registering SIP account with:", { 
       username: register.username, 
-      realm: register.realm
+      realm: register.realm,
+      normalizedUsername
     })
 
     setCallState(prev => ({ ...prev, sipStatus: 'Registering SIP account...' }))
     sipPluginRef.current.send({ message: register })
+    
+    // Safety timeout: auto-clear registration flag after 30 seconds if no response
+    setTimeout(() => {
+      if (isRegisteringRef.current) {
+        logger.warn("Registration timeout - clearing stuck registration flag")
+        isRegisteringRef.current = false
+      }
+    }, 30000)
   }, [settings.sip.username, settings.sip.password, settings.sip.server, settings.sip.realm, toast])
 
   const unregisterSipAccount = useCallback(() => {
@@ -1178,6 +1197,10 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       return
     }
 
+    logger.info("Force registering SIP account (bypassing cooldown and clearing stuck state)")
+    isRegisteringRef.current = false
+    registrationCooldownRef.current = 0
+    setCallState(prev => ({ ...prev, status: 'connecting', sipStatus: 'Initiating registration...' }))
     registerSipAccount()
   }, [settings.sip.username, settings.sip.password, registerSipAccount])
 
