@@ -2,6 +2,7 @@
 import { client as createClient, xml, jid } from '@xmpp/client';
 import debug from '@xmpp/debug';
 import { ConnectionStatus, XmppMessage, ServerFeatures, QueuedMessage } from './types';
+import { parseStreamFeatures, logStreamFeatures, type StreamFeatures as ParsedStreamFeatures } from '../xmppStreamFeatures';
 
 interface XmppConfig {
   serviceUrl: string;
@@ -39,12 +40,14 @@ export class XmppClient {
 
   // Stream Management state
   private smEnabled = false;
+  private smAdvertised = false; // Server advertised SM in stream features
   private smId: string | null = null;
   private inboundCount = 0;
   private outboundCount = 0;
   private unackedStanzas: Array<{ id: string; stanza: any }> = [];
-  private ackThreshold = 5; // Send ack after this many stanzas
+  private ackThreshold = 3; // Send ack after this many stanzas (reduced from 5)
   private ackTimer: NodeJS.Timeout | null = null;
+  private cautionMode = false; // Send ACKs even if SM not formally enabled
 
   constructor(existingClient?: ReturnType<typeof createClient>) {
     if (existingClient) {
@@ -251,6 +254,10 @@ export class XmppClient {
       console.log('XMPP client online:', address.toString());
       this.setStatus('connected');
       
+      // CRITICAL: Check stream features FIRST before disco
+      // Stream Management is advertised in stream features, not disco#info
+      await this.checkStreamFeaturesForSM();
+      
       await this.discoverFeatures();
       await this.enableFeatures();
       await this.flushOutbox();
@@ -291,12 +298,17 @@ export class XmppClient {
       return;
     }
 
-    // Count inbound stanzas for stream management
-    if (this.smEnabled && ['message', 'presence', 'iq'].includes(stanza.name)) {
+    // CRITICAL: ALWAYS count inbound stanzas, even if SM not formally enabled
+    // ejabberd enforces ACK limits even when advertising SM as unsupported in disco
+    if (['message', 'presence', 'iq'].includes(stanza.name)) {
       this.inboundCount++;
       
-      // Send ack proactively after threshold
-      if (this.inboundCount % this.ackThreshold === 0) {
+      // More aggressive ACK strategy to prevent "Too many unacked stanzas" errors
+      const shouldAck = 
+        (this.inboundCount % this.ackThreshold === 0) || // Every 3 stanzas
+        (stanza.name === 'presence'); // Immediately for presence
+      
+      if (shouldAck) {
         this.sendAck();
       }
     }
@@ -313,10 +325,12 @@ export class XmppClient {
     switch (name) {
       case 'enabled':
         this.smEnabled = true;
+        this.smAdvertised = true;
         this.smId = stanza.attrs.id;
         this.inboundCount = 0;
         this.outboundCount = 0;
-        console.log('Stream management enabled:', this.smId);
+        this.cautionMode = false; // SM properly enabled, disable caution mode
+        console.log('✅ Stream management enabled:', this.smId);
         this.startAckTimer();
         return true;
 
@@ -327,8 +341,10 @@ export class XmppClient {
         return true;
 
       case 'failed':
-        console.log('Stream resume failed');
+        console.log('⚠️  Stream resume failed, enabling caution mode');
+        this.cautionMode = true; // Enable caution mode to send ACKs anyway
         this.resetStreamManagement();
+        this.startAckTimer(); // Start ACK timer in caution mode
         return true;
 
       case 'a':
@@ -345,11 +361,45 @@ export class XmppClient {
     }
   }
 
+  /**
+   * Check stream features for Stream Management support
+   * CRITICAL: SM is advertised in <stream:features>, NOT in disco#info
+   */
+  private async checkStreamFeaturesForSM(): Promise<void> {
+    if (!this.client) return;
+
+    try {
+      // Access the stream features from the client
+      // @xmpp/client stores this internally after authentication
+      const streamFeatures = (this.client as any).streamFeatures;
+      
+      if (streamFeatures) {
+        const parsed = parseStreamFeatures(streamFeatures);
+        logStreamFeatures(parsed);
+        
+        if (parsed.streamManagement) {
+          this.smAdvertised = true;
+          this.features.streamManagement = true;
+          console.log('✅ Stream Management advertised in stream features');
+        } else {
+          // Server doesn't advertise SM, but we'll use caution mode anyway
+          this.cautionMode = true;
+          console.log('⚠️  Stream Management NOT advertised, enabling caution mode (send ACKs anyway)');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check stream features:', error);
+      // Enable caution mode as fallback
+      this.cautionMode = true;
+    }
+  }
+
   private async discoverFeatures(): Promise<void> {
     if (!this.client) return;
 
     try {
-      // Discover server features
+      // Discover server features via disco#info
+      // NOTE: Stream Management is NOT reliably advertised here, check stream features instead
       const discoStanza = xml('iq', {
         type: 'get',
         to: this.config?.domain,
@@ -362,7 +412,8 @@ export class XmppClient {
       if (query) {
         const features = query.getChildren('feature');
         this.features = {
-          streamManagement: features.some(f => f.attrs.var === 'urn:xmpp:sm:3'),
+          // Use smAdvertised from stream features, not disco
+          streamManagement: this.smAdvertised,
           messageDeliveryReceipts: features.some(f => f.attrs.var === 'urn:xmpp:receipts'),
           chatMarkers: features.some(f => f.attrs.var === 'urn:xmpp:chat-markers:0'),
           messageArchiveManagement: features.some(f => f.attrs.var === 'urn:xmpp:mam:2'),
@@ -384,17 +435,34 @@ export class XmppClient {
   }
 
   private async enableFeatures(): Promise<void> {
-    // Enable stream management
-    if (this.features.streamManagement) {
+    // Enable stream management if advertised
+    if (this.smAdvertised || this.features.streamManagement) {
       try {
         const enableStanza = xml('enable', {
           xmlns: 'urn:xmpp:sm:3',
           resume: 'true',
         });
         await this.send(enableStanza);
+        
+        // Wait for <enabled> response with timeout
+        // If no response after 5 seconds, enable caution mode
+        setTimeout(() => {
+          if (!this.smEnabled && !this.cautionMode) {
+            console.log('⚠️  No SM <enabled> response, enabling caution mode');
+            this.cautionMode = true;
+            this.startAckTimer();
+          }
+        }, 5000);
       } catch (error) {
         console.error('Failed to enable stream management:', error);
+        this.cautionMode = true;
+        this.startAckTimer();
       }
+    } else {
+      // SM not advertised, but enable caution mode anyway
+      console.log('⚠️  SM not supported, enabling caution mode');
+      this.cautionMode = true;
+      this.startAckTimer();
     }
 
     // Enable message carbons
@@ -421,7 +489,9 @@ export class XmppClient {
   }
 
   private sendAck(): void {
-    if (!this.client || !this.smEnabled) return;
+    // CRITICAL: Send ACKs in caution mode even if SM not formally enabled
+    // This prevents "Too many unacked stanzas" errors from ejabberd
+    if (!this.client || (!this.smEnabled && !this.cautionMode)) return;
 
     const ackStanza = xml('a', {
       xmlns: 'urn:xmpp:sm:3',
@@ -430,7 +500,7 @@ export class XmppClient {
 
     // Use send directly without tracking to avoid recursion
     this.client.send(ackStanza).catch(err => {
-      console.error('Failed to send ack:', err);
+      console.debug('ACK send failed (expected if SM not enabled):', err.message);
     });
   }
 
@@ -439,12 +509,13 @@ export class XmppClient {
       clearInterval(this.ackTimer);
     }
 
-    // Send periodic acks every 3 seconds
+    // Aggressive ACK timer: every 2 seconds (reduced from 3)
+    // Send ACKs in both normal mode and caution mode
     this.ackTimer = setInterval(() => {
-      if (this.smEnabled && this.inboundCount > 0) {
+      if ((this.smEnabled || this.cautionMode) && this.inboundCount > 0) {
         this.sendAck();
       }
-    }, 3000);
+    }, 2000);
   }
 
   private stopAckTimer(): void {
@@ -460,7 +531,7 @@ export class XmppClient {
     this.inboundCount = 0;
     this.outboundCount = 0;
     this.unackedStanzas = [];
-    this.stopAckTimer();
+    // Don't stop ACK timer - keep it running in caution mode
   }
 
   private scheduleReconnect(): void {
