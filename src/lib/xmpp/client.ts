@@ -43,6 +43,8 @@ export class XmppClient {
   private inboundCount = 0;
   private outboundCount = 0;
   private unackedStanzas: Array<{ id: string; stanza: any }> = [];
+  private ackThreshold = 5; // Send ack after this many stanzas
+  private ackTimer: NodeJS.Timeout | null = null;
 
   constructor(existingClient?: ReturnType<typeof createClient>) {
     if (existingClient) {
@@ -125,6 +127,8 @@ export class XmppClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+
+    this.stopAckTimer();
 
     if (this.client) {
       try {
@@ -290,6 +294,11 @@ export class XmppClient {
     // Count inbound stanzas for stream management
     if (this.smEnabled && ['message', 'presence', 'iq'].includes(stanza.name)) {
       this.inboundCount++;
+      
+      // Send ack proactively after threshold
+      if (this.inboundCount % this.ackThreshold === 0) {
+        this.sendAck();
+      }
     }
 
     this.emit('stanza', stanza);
@@ -305,7 +314,10 @@ export class XmppClient {
       case 'enabled':
         this.smEnabled = true;
         this.smId = stanza.attrs.id;
+        this.inboundCount = 0;
+        this.outboundCount = 0;
         console.log('Stream management enabled:', this.smId);
+        this.startAckTimer();
         return true;
 
       case 'resumed':
@@ -416,7 +428,30 @@ export class XmppClient {
       h: this.inboundCount.toString(),
     });
 
-    this.client.send(ackStanza).catch(console.error);
+    // Use send directly without tracking to avoid recursion
+    this.client.send(ackStanza).catch(err => {
+      console.error('Failed to send ack:', err);
+    });
+  }
+
+  private startAckTimer(): void {
+    if (this.ackTimer) {
+      clearInterval(this.ackTimer);
+    }
+
+    // Send periodic acks every 3 seconds
+    this.ackTimer = setInterval(() => {
+      if (this.smEnabled && this.inboundCount > 0) {
+        this.sendAck();
+      }
+    }, 3000);
+  }
+
+  private stopAckTimer(): void {
+    if (this.ackTimer) {
+      clearInterval(this.ackTimer);
+      this.ackTimer = null;
+    }
   }
 
   private resetStreamManagement(): void {
@@ -425,6 +460,7 @@ export class XmppClient {
     this.inboundCount = 0;
     this.outboundCount = 0;
     this.unackedStanzas = [];
+    this.stopAckTimer();
   }
 
   private scheduleReconnect(): void {
