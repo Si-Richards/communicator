@@ -33,7 +33,9 @@ export class XmppMessageHandler {
       originId?: string;
     } = {}
   ): Promise<string> {
-    if (!this.xmpp) return Promise.reject(new Error('XMPP client not available'));
+    // Store client reference to avoid race condition
+    const client = this.xmpp;
+    if (!client) return Promise.reject(new Error('XMPP client not available'));
 
     // Generate consistent IDs
     const messageId = options.originId || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -64,7 +66,7 @@ export class XmppMessageHandler {
     }
 
     // Non-blocking send
-    this.xmpp.send(messageStanza).catch((error: any) => {
+    client.send(messageStanza).catch((error: any) => {
       console.error('Failed to send message:', error);
     });
     
@@ -254,7 +256,11 @@ export class XmppMessageHandler {
 
   // MAM query (XEP-0313)
   async queryMessageArchive(query: MamQuery): Promise<MamResult> {
-    if (!this.xmpp) throw new Error('XMPP client not available');
+    // Store client reference to avoid race condition
+    const client = this.xmpp;
+    if (!client || !client.iqCaller) {
+      throw new Error('XMPP client not available');
+    }
 
     const queryId = query.queryId || crypto.randomUUID();
     const mamQuery = xml('query', { xmlns: 'urn:xmpp:mam:2', queryid: queryId });
@@ -313,7 +319,22 @@ export class XmppMessageHandler {
     }, mamQuery);
 
     try {
-      const response = await this.xmpp.iqCaller.request(iq);
+      // Check connection again before sending
+      if (!client.iqCaller) {
+        throw new Error('XMPP client disconnected during MAM query');
+      }
+
+      // Create timeout promise (30s timeout)
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('TimeoutError')), 30000);
+      });
+
+      // Race between IQ request and timeout
+      const response = await Promise.race([
+        client.iqCaller.request(iq),
+        timeoutPromise
+      ]);
+
       const fin = response.getChild('fin', 'urn:xmpp:mam:2');
       const rsm = fin?.getChild('set', 'http://jabber.org/protocol/rsm');
 

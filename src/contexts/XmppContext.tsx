@@ -138,6 +138,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectBackoffRef = useRef(1000);
   const reconnectGraceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const keepAliveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Managers
   const streamManagerRef = useRef<XmppStreamManager>();
@@ -270,6 +271,22 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Load offline queue
     streamManagerRef.current.loadOfflineQueue();
+    
+    // Cleanup on unmount
+    return () => {
+      if (keepAliveTimerRef.current) {
+        clearInterval(keepAliveTimerRef.current);
+        keepAliveTimerRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (reconnectGraceTimerRef.current) {
+        clearTimeout(reconnectGraceTimerRef.current);
+        reconnectGraceTimerRef.current = null;
+      }
+    };
   }, []);
 
   // Connection info
@@ -529,28 +546,27 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
             reconnectTimeoutRef.current = null;
           }
           
-          // Post-connection setup
+          // Post-connection setup with optimized ordering
           setTimeout(async () => {
             if (gen !== genRef.current) return;
             
-            // Discover server features
             try {
+              // Phase 1: Critical - Discover server features
               const features = await featureDetectorRef.current?.discoverServerFeatures();
               if (features) {
                 setServerFeatures(features);
               }
               
-              // Enable stream management
+              // Phase 2: Critical - Enable features and load roster
               if (features?.streamManagement) {
                 await streamManagerRef.current?.enableStreamManagement();
               }
               
-              // Enable message carbons
               if (features?.messageCarbons) {
                 await featureDetectorRef.current?.enableMessageCarbons();
               }
               
-              // Fetch roster
+              // Load roster
               await fetchRoster();
               
               // Send initial presence
@@ -559,8 +575,23 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Send queued messages
               await streamManagerRef.current?.sendQueuedMessages();
               
+              // Start keep-alive ping
+              startKeepAlivePing();
+              
+              // Phase 3: Non-critical - Defer optional operations
+              setTimeout(() => {
+                if (gen !== genRef.current) return;
+                
+                // Background: Load conversation history (debounced, non-blocking)
+                // Background: Discover MUC services (non-blocking, failures are OK)
+                featureDetectorRef.current?.discoverMucServices().catch(err => {
+                  console.debug('MUC discovery failed (non-critical):', err.message);
+                });
+              }, 2000); // Wait 2 seconds for stability
+              
             } catch (error) {
               console.error("Post-connection setup failed:", error);
+              // Don't crash, continue with degraded functionality
             }
           }, 100);
           
@@ -625,6 +656,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const disconnect = useCallback(async () => {
     manualDisconnectRef.current = true;
     clearReconnectGrace();
+    stopKeepAlivePing();
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -643,10 +675,40 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setConnectionState("disconnected");
   }, [clearReconnectGrace]);
 
+  // Keep-alive ping to prevent disconnections
+  const startKeepAlivePing = useCallback(() => {
+    stopKeepAlivePing(); // Clear any existing timer
+    
+    keepAliveTimerRef.current = setInterval(async () => {
+      if (connectionState !== 'connected' || !featureDetectorRef.current) {
+        return;
+      }
+      
+      try {
+        const latency = await featureDetectorRef.current.ping();
+        if (latency !== null) {
+          console.debug(`Keep-alive ping: ${latency}ms`);
+        } else {
+          console.warn('Keep-alive ping failed, connection may be unstable');
+        }
+      } catch (error) {
+        console.error('Keep-alive ping error:', error);
+      }
+    }, 30000); // Ping every 30 seconds
+  }, [connectionState]);
+
+  const stopKeepAlivePing = useCallback(() => {
+    if (keepAliveTimerRef.current) {
+      clearInterval(keepAliveTimerRef.current);
+      keepAliveTimerRef.current = null;
+    }
+  }, []);
+
   const scheduleReconnect = useCallback(() => {
     if (manualDisconnectRef.current) return;
 
     startReconnectGrace();
+    stopKeepAlivePing(); // Stop keep-alive when disconnected
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -663,7 +725,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       connect().catch(console.error);
     }, delay);
-  }, [startReconnectGrace, connect]);
+  }, [startReconnectGrace, stopKeepAlivePing, connect]);
 
   // Presence handling
   const handlePresence = useCallback((stanza: any) => {
@@ -734,14 +796,34 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Roster management
   const fetchRoster = useCallback(async () => {
-    if (!xmppRef.current) return;
+    // Store client reference to avoid race condition
+    const client = xmppRef.current;
+    if (!client || !client.iqCaller) return;
 
+    setLoadingRoster(true);
+    
     try {
       const rosterIq = xml("iq", { type: "get", id: crypto.randomUUID() }, 
         xml("query", "jabber:iq:roster")
       );
       
-      const res: any = await xmppRef.current.iqCaller.request(rosterIq);
+      // Check connection again before sending
+      if (!client.iqCaller) {
+        console.warn('XMPP client disconnected before roster fetch');
+        return;
+      }
+
+      // Create timeout promise (30s timeout)
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('TimeoutError')), 30000);
+      });
+
+      // Race between IQ request and timeout
+      const res: any = await Promise.race([
+        client.iqCaller.request(rosterIq),
+        timeoutPromise
+      ]);
+
       const items = res.getChild("query", "jabber:iq:roster")?.getChildren("item") ?? [];
       
       const contactList: XmppContact[] = items.map((item: any) => ({
@@ -755,20 +837,31 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       setContacts(contactList);
       
-      // Query last activity for each contact if supported
+      // Query last activity for each contact if supported (non-blocking)
       if (serverFeatures.lastActivity) {
-        for (const contact of contactList) {
-          const lastSeen = await featureDetectorRef.current?.queryLastActivity(contact.jid);
-          if (lastSeen) {
-            setContacts(prev => prev.map(c => 
-              c.jid === contact.jid ? { ...c, lastSeen } : c
-            ));
-          }
-        }
+        // Run in background, don't block
+        setTimeout(() => {
+          contactList.forEach(async (contact) => {
+            try {
+              const lastSeen = await featureDetectorRef.current?.queryLastActivity(contact.jid);
+              if (lastSeen) {
+                setContacts(prev => prev.map(c => 
+                  c.jid === contact.jid ? { ...c, lastSeen } : c
+                ));
+              }
+            } catch (err) {
+              // Ignore individual failures
+              console.debug(`Failed to get last activity for ${contact.jid}`);
+            }
+          });
+        }, 500);
       }
       
     } catch (error) {
-      console.warn("Roster fetch failed:", error);
+      console.error("Failed to load roster:", error);
+      // Don't crash, continue with empty roster
+    } finally {
+      setLoadingRoster(false);
     }
   }, [serverFeatures.lastActivity]);
 
@@ -1307,7 +1400,9 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loadRoster = useCallback(async (): Promise<void> => {
-    if (!xmppRef.current || connectionState !== 'connected' || loadingRoster) return;
+    // Store client reference to avoid race condition
+    const client = xmppRef.current;
+    if (!client || !client.iqCaller || connectionState !== 'connected' || loadingRoster) return;
     
     setLoadingRoster(true);
     try {
@@ -1317,7 +1412,23 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const rosterQuery = xml('query', { xmlns: 'jabber:iq:roster' });
       iq.append(rosterQuery);
       
-      const result = await xmppRef.current.iqCaller.request(iq);
+      // Check connection again before sending
+      if (!client.iqCaller) {
+        console.warn('XMPP client disconnected before roster load');
+        return;
+      }
+
+      // Create timeout promise (30s timeout)
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('TimeoutError')), 30000);
+      });
+
+      // Race between IQ request and timeout
+      const result = await Promise.race([
+        client.iqCaller.request(iq),
+        timeoutPromise
+      ]);
+
       const query = result?.getChild('query', 'jabber:iq:roster');
       
       if (query) {
@@ -1346,6 +1457,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
     } catch (error) {
       console.error("Failed to load roster:", error);
+      // Don't crash, continue with degraded functionality
     } finally {
       setLoadingRoster(false);
     }
