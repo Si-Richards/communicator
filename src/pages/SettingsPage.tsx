@@ -883,17 +883,6 @@ const SettingsPage = () => {
                     )}
                   </div>
                   
-                  {isSipConfigValid && (
-                    <div className="p-3 bg-muted/50 rounded-lg">
-                      <h4 className="text-xs font-medium mb-2">Configuration Details</h4>
-                      <div className="space-y-1 text-xs text-muted-foreground font-mono">
-                        <div>Username: {tempSipSettings.username}</div>
-                        <div>Realm: {tempSipSettings.realm}</div>
-                        <div>Server: {tempSipSettings.server}</div>
-                        <div className="text-green-600">✓ All fields configured</div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>

@@ -14,7 +14,7 @@ import {
   SwitchCamera,
   Monitor,
   MonitorOff,
-  Hash,
+  Grid3x3,
   ArrowRightLeft
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -111,6 +111,18 @@ export const CallInterface = () => {
   };
   return (
       <Card className="w-full max-w-md p-8 space-y-6 text-center mx-auto">
+        {/* Call Timer Header - shown during active call */}
+        {callState.status === 'incall' && (
+          <div className="absolute top-0 left-0 right-0 bg-primary/10 border-b border-primary/20 py-2 rounded-t-lg">
+            <div className="text-sm font-medium text-muted-foreground">
+              {callState.isOnHold ? 'On Hold' : 'In Call'} • {phoneNumber || callState.incomingCallerId}
+            </div>
+            <div className="text-lg font-mono text-primary font-semibold">
+              {callTimer}
+            </div>
+          </div>
+        )}
+
         {/* Call Waiting Banner */}
         {callState.waitingCall && (
           <div className="bg-amber-100 dark:bg-amber-900 border border-amber-300 dark:border-amber-700 rounded-lg p-4 space-y-3">
@@ -277,13 +289,13 @@ export const CallInterface = () => {
 
                      <Dialog open={keypadOpen} onOpenChange={setKeypadOpen}>
                        <DialogTrigger asChild>
-                         <Button
-                           variant="outline"
-                           size="sm"
-                           className="h-12 p-0"
-                         >
-                           <Hash className="h-4 w-4" />
-                         </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-12 p-0"
+                          >
+                            <Grid3x3 className="h-4 w-4" />
+                          </Button>
                        </DialogTrigger>
                        <DialogContent className="sm:max-w-[350px] bg-background border shadow-lg z-[100]">
                          <DialogHeader>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, ArrowUpDown, Hash } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, PhoneIncoming, X, Pause, Play, ArrowUpDown, Grid3x3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CallButton } from '@/components/ui/call-button';
 import { Input } from '@/components/ui/input';
@@ -206,11 +206,11 @@ export const MultiCallInterface = () => {
                               
                               <Dialog open={keypadOpen} onOpenChange={setKeypadOpen}>
                                 <DialogTrigger asChild>
-                                  <CallButton 
+                                   <CallButton 
                                     variant="secondary" 
                                     size="lg"
                                   >
-                                    <Hash className="h-6 w-6" />
+                                    <Grid3x3 className="h-6 w-6" />
                                   </CallButton>
                                 </DialogTrigger>
                                 <DialogContent className="sm:max-w-[350px] bg-background border shadow-lg z-[100]">
