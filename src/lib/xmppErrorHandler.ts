@@ -68,15 +68,28 @@ export async function safeIqRequest(
     throw new Error(`Circuit breaker open for: ${operation}`);
   }
 
-  // Check if client is available
+  // Check if client is available and connected
   if (!xmpp || !xmpp.iqCaller) {
-    throw new Error('XMPP client not available');
+    const error = new Error('XMPP client not available');
+    error.name = 'ClientDisconnected';
+    throw error;
   }
+
+  // Store reference to avoid race conditions
+  const clientRef = xmpp;
+  const iqCallerRef = xmpp.iqCaller;
 
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      // Verify client is still connected before each attempt
+      if (!clientRef || !iqCallerRef || clientRef.status !== 'online') {
+        const error = new Error('Client disconnected');
+        error.name = 'ClientDisconnected';
+        throw error;
+      }
+
       // Create timeout promise
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('TimeoutError')), timeout);
@@ -84,7 +97,7 @@ export async function safeIqRequest(
 
       // Race between IQ request and timeout
       const response = await Promise.race([
-        xmpp.iqCaller.request(stanza),
+        iqCallerRef.request(stanza),
         timeoutPromise
       ]);
 
@@ -95,10 +108,15 @@ export async function safeIqRequest(
     } catch (error: any) {
       lastError = error;
       
-      // Check if it's a connection error
-      if (error.message?.includes('not available') || error.message?.includes('null')) {
+      // Check if it's a connection error - don't retry
+      if (
+        error.name === 'ClientDisconnected' ||
+        error.message?.includes('not available') || 
+        error.message?.includes('null') ||
+        error.message?.toLowerCase().includes('write')
+      ) {
         console.error(`${operation}: Client disconnected`);
-        throw error; // Don't retry on disconnection
+        throw error;
       }
 
       // Log attempt

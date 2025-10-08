@@ -5,9 +5,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { useSettings } from '@/contexts/SettingsContext';
+import { mucCache } from '@/lib/xmppMucCache';
 
 interface PhonebookDialogProps {
   open: boolean;
@@ -30,6 +31,8 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [allRooms, setAllRooms] = useState<Array<{jid: string; name: string; service: string}>>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const loadingInProgress = useRef(false);
+  const loadTimeoutRef = useRef<NodeJS.Timeout>();
 
   const { settings } = useSettings();
   const { 
@@ -68,74 +71,154 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     return () => clearTimeout(timeoutId);
   }, [searchTerm, searchUsers, uiConnection]);
 
-  // Load MUC services and roster when dialog opens 
+  // Load MUC services and roster when dialog opens with debouncing
   useEffect(() => {
-    if (open && uiConnection === 'connected') {
-      console.log('PhonebookDialog: Loading services and roster on open');
-      handleLoadServices();
-      loadRoster(); // Load contacts/roster
-    } else if (uiConnection !== 'connected') {
+    // Clear any pending timeout
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+    }
+
+    if (!open) {
+      setConnectionError(null);
+      loadingInProgress.current = false;
+      return;
+    }
+
+    if (uiConnection !== 'connected') {
       setConnectionError(uiConnection === 'offline' ? 'Not connected to server' : 
                         uiConnection === 'reconnecting' ? 'Reconnecting to server...' : 
                         'Connection error');
-    } else {
-      setConnectionError(null);
+      return;
     }
-  }, [open, uiConnection, loadRoster]);
 
-  // Auto-refresh when connection is restored
-  useEffect(() => {
-    if (connectionState === 'connected' && open) {
-      console.log('PhonebookDialog: Connection restored, reloading services, rooms and roster');
-      handleLoadServices();
-      loadRoster();
-    }
-  }, [connectionState, open, loadRoster]);
+    // Debounce the load by 500ms
+    loadTimeoutRef.current = setTimeout(() => {
+      if (!loadingInProgress.current) {
+        console.log('PhonebookDialog: Loading services and roster');
+        handleLoadServices();
+        loadRoster();
+      }
+    }, 500);
+
+    return () => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+      }
+    };
+  }, [open, uiConnection, connectionState, loadRoster]);
 
   const handleLoadServices = async () => {
+    // Prevent duplicate calls
+    if (loadingInProgress.current) {
+      console.log('PhonebookDialog: Load already in progress, skipping');
+      return;
+    }
+
+    // Verify connection
+    if (uiConnection !== 'connected') {
+      setConnectionError('Not connected to server');
+      return;
+    }
+
+    loadingInProgress.current = true;
     setLoadingServices(true);
     setConnectionError(null);
+
     try {
-      console.log('PhonebookDialog: Loading MUC services');
-      const services = await listMucServices();
+      // Use deduplication wrapper
+      const services = await mucCache.deduplicateRequest('muc-services', async () => {
+        // Try cache first
+        const cached = mucCache.getCachedServices();
+        if (cached && cached.length > 0) {
+          console.log('PhonebookDialog: Using cached services:', cached);
+          return cached;
+        }
+
+        // Fresh fetch
+        console.log('PhonebookDialog: Fetching MUC services');
+        const freshServices = await listMucServices();
+        
+        if (freshServices.length > 0) {
+          mucCache.setCachedServices(freshServices);
+        }
+        
+        return freshServices;
+      });
+
       console.log('PhonebookDialog: Found services:', services);
       setAvailableServices(services);
+      
       if (services.length > 0) {
         setSelectedService("all");
-        // Load rooms from all services, not just the first one
         await loadAllRooms(services);
       } else {
         setConnectionError('No conference services found on this server');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load MUC services:', error);
-      setConnectionError('Failed to load conference services');
+      
+      // Provide specific error messages
+      if (error.name === 'ClientDisconnected' || error.message?.includes('disconnected')) {
+        setConnectionError('Connection lost while discovering services');
+      } else if (error.message?.includes('Circuit breaker')) {
+        setConnectionError('Service discovery temporarily unavailable');
+      } else {
+        setConnectionError('Failed to load conference services');
+      }
     } finally {
       setLoadingServices(false);
+      loadingInProgress.current = false;
     }
   };
 
   const loadAllRooms = async (services: string[]) => {
+    // Verify connection before loading rooms
+    if (uiConnection !== 'connected') {
+      return;
+    }
+
     setLoadingRooms(true);
     try {
       console.log('PhonebookDialog: Loading rooms from services:', services);
       const allRoomsData: Array<{jid: string; name: string; service: string}> = [];
       
-      // Load rooms from all services in parallel
-      const roomPromises = services.map(async (service) => {
+      // Sequential loading with small delays to avoid overwhelming connection
+      for (const service of services) {
         try {
-          console.log(`PhonebookDialog: Loading rooms from ${service}`);
-          const rooms = await listRooms(service);
+          // Use cache with deduplication
+          const rooms = await mucCache.deduplicateRequest(`rooms-${service}`, async () => {
+            const cached = mucCache.getCachedRooms(service);
+            if (cached) {
+              console.log(`PhonebookDialog: Using cached rooms for ${service}`);
+              return cached;
+            }
+
+            console.log(`PhonebookDialog: Fetching rooms from ${service}`);
+            const freshRooms = await listRooms(service);
+            
+            if (freshRooms.length > 0) {
+              mucCache.setCachedRooms(service, freshRooms);
+            }
+            
+            return freshRooms;
+          });
+
           console.log(`PhonebookDialog: Loaded ${rooms.length} rooms from ${service}`);
-          return rooms.map(room => ({...room, service}));
-        } catch (error) {
+          allRoomsData.push(...rooms.map(room => ({...room, service})));
+
+          // Small delay between services
+          if (services.indexOf(service) < services.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        } catch (error: any) {
+          // Stop if client disconnected
+          if (error.name === 'ClientDisconnected') {
+            console.debug('Client disconnected during room loading');
+            break;
+          }
           console.error(`Failed to load rooms for ${service}:`, error);
-          return [];
         }
-      });
-      
-      const roomResults = await Promise.all(roomPromises);
-      roomResults.forEach(rooms => allRoomsData.push(...rooms));
+      }
       
       console.log(`PhonebookDialog: Total rooms loaded: ${allRoomsData.length}`);
       setAllRooms(allRoomsData);
@@ -144,9 +227,12 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       if (allRoomsData.length === 0) {
         setConnectionError('No public rooms found. This server may not have public rooms or they may be hidden.');
       }
-    } catch (error) {
-      console.error('Failed to load rooms:', error);
-      setConnectionError('Failed to load chat rooms');
+    } catch (error: any) {
+      if (error.name === 'ClientDisconnected' || error.message?.includes('disconnected')) {
+        setConnectionError('Connection lost while loading rooms');
+      } else {
+        setConnectionError('Failed to load chat rooms');
+      }
     } finally {
       setLoadingRooms(false);
     }
@@ -164,7 +250,10 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   };
 
   const handleRetry = () => {
-    if (uiConnection === 'connected') {
+    if (uiConnection === 'connected' && !loadingInProgress.current) {
+      // Clear cache to force fresh fetch
+      mucCache.clearCache();
+      loadingInProgress.current = false;
       handleLoadServices();
     }
   };

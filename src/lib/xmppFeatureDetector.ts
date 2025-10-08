@@ -280,35 +280,64 @@ export class XmppFeatureDetector {
 
       if (!query) return [];
 
-      const services = [];
+      const services: string[] = [];
       const items = query.getChildren('item');
+      let consecutiveFailures = 0;
 
+      // Sequential discovery with circuit breaker
       for (const item of items) {
         const itemJid = item.attrs.jid;
         if (itemJid && (itemJid.includes('conference') || itemJid.includes('muc'))) {
-          // Verify it's actually a MUC service
+          // Circuit breaker: stop if too many consecutive failures
+          if (consecutiveFailures >= 2) {
+            console.warn('Too many consecutive service failures, stopping discovery');
+            break;
+          }
+
           try {
+            // Small delay between queries to avoid overwhelming server
+            if (services.length > 0) {
+              await new Promise(resolve => setTimeout(resolve, 300));
+            }
+
             const serviceInfo = await this.discoverServiceInfo(itemJid);
             if (serviceInfo.includes('http://jabber.org/protocol/muc')) {
               services.push(itemJid);
+              consecutiveFailures = 0; // Reset on success
             }
-          } catch (error) {
-            // Skip services that don't respond
+          } catch (error: any) {
+            consecutiveFailures++;
+            
+            // If client disconnected, stop immediately
+            if (error.name === 'ClientDisconnected') {
+              console.debug('Client disconnected during MUC discovery');
+              break;
+            }
+            
             console.debug(`Skipping unresponsive MUC service: ${itemJid}`);
           }
         }
       }
 
       return services;
-    } catch (error) {
+    } catch (error: any) {
+      // Silently handle disconnection errors
+      if (error.name === 'ClientDisconnected') {
+        return [];
+      }
       console.error('Failed to discover MUC services:', error);
-      return []; // Return empty array, don't crash
+      return [];
     }
   }
 
   // Discover service info for a specific JID
   async discoverServiceInfo(serviceJid: string): Promise<string[]> {
-    if (!this.xmpp) return [];
+    // Immediate connection check
+    if (!this.xmpp || this.xmpp.status !== 'online') {
+      const error = new Error('Client disconnected');
+      error.name = 'ClientDisconnected';
+      throw error;
+    }
 
     try {
       const discoInfoIq = xml('iq', {
@@ -320,7 +349,7 @@ export class XmppFeatureDetector {
       const response = await safeIqRequest(this.xmpp, discoInfoIq, {
         operation: 'discoverServiceInfo',
         timeout: 15000,
-        retries: 1,
+        retries: 0, // Don't retry service info queries
         critical: false
       });
 
@@ -330,7 +359,11 @@ export class XmppFeatureDetector {
 
       const features = query.getChildren('feature');
       return features.map(f => f.attrs.var).filter(Boolean);
-    } catch (error) {
+    } catch (error: any) {
+      // Silently handle client disconnection
+      if (error.name === 'ClientDisconnected') {
+        throw error;
+      }
       console.error('Failed to discover service info for', serviceJid, error);
       return [];
     }
