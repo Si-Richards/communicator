@@ -258,18 +258,37 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     const decline = { request: "decline" }
     sipPluginRef.current.send({ message: decline })
     
-    setCallState(prev => ({ 
-      ...prev, 
-      status: 'connected', 
-      sipStatus: prev.registered ? 'Online' : 'Offline',
-      incomingCallerId: undefined,
-      incomingCallId: undefined,
-      remoteJsep: undefined
-    }))
+    // Log rejected call BEFORE clearing state
+    setCallState(prev => {
+      // Log the call record using current state
+      if (prev.direction === 'incoming' && prev.callerId && callStartTimeRef.current) {
+        const contact = getContactByPhoneNumber(prev.callerId)
+        
+        addCallRecord({
+          phoneNumber: prev.callerId,
+          contactName: contact?.name,
+          duration: 0,
+          timestamp: callStartTimeRef.current,
+          type: 'missed',
+          answered: false
+        })
+      }
+      
+      callStartTimeRef.current = null
+      
+      return { 
+        ...prev, 
+        status: 'connected', 
+        sipStatus: prev.registered ? 'Online' : 'Offline',
+        incomingCallerId: undefined,
+        incomingCallId: undefined,
+        remoteJsep: undefined
+      }
+    })
     
     // Stop ringtones
     ringtoneManager.stopRinging()
-  }, [])
+  }, [getContactByPhoneNumber, addCallRecord])
 
   // Toast action handlers that use direct functions
   const handleToastAcceptCall = useCallback(() => {
@@ -336,6 +355,17 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         const decline = { request: "decline" }
         sipPluginRef.current.send({ message: decline })
         
+        // Log the missed call due to DND
+        const contact = getContactByPhoneNumber(phoneNumber)
+        addCallRecord({
+          phoneNumber: phoneNumber,
+          contactName: contact?.name,
+          duration: 0,
+          timestamp: new Date(),
+          type: 'missed',
+          answered: false
+        })
+        
         toast({
           title: "Call Blocked",
           description: `Incoming call from ${phoneNumber} blocked (Do Not Disturb)`,
@@ -362,9 +392,27 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
                   altText="Decline waiting call"
                   onClick={() => {
                     console.info("Declining waiting call")
-                    const decline = { request: "decline" }
-                    sipPluginRef.current?.send({ message: decline })
-                    setCallState(current => ({ ...current, waitingCall: undefined }))
+                    
+                    // Get current waiting call data and log it
+                    setCallState(current => {
+                      if (current.waitingCall) {
+                        // Log the declined call
+                        const contact = getContactByPhoneNumber(current.waitingCall.phoneNumber)
+                        addCallRecord({
+                          phoneNumber: current.waitingCall.phoneNumber,
+                          contactName: contact?.name,
+                          duration: 0,
+                          timestamp: new Date(),
+                          type: 'missed',
+                          answered: false
+                        })
+                      }
+                      
+                      const decline = { request: "decline" }
+                      sipPluginRef.current?.send({ message: decline })
+                      
+                      return { ...current, waitingCall: undefined }
+                    })
                   }}
                   className="bg-red-600 hover:bg-red-700 text-white"
                 >
@@ -834,7 +882,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     if (jsep) {
       sipPluginRef.current.handleRemoteJsep({ jsep })
     }
-  }, [callState.registered, callState.doNotDisturb, extractPhoneNumber, handleToastAcceptCall, handleToastRejectCall, settings])
+  }, [callState.registered, callState.doNotDisturb, extractPhoneNumber, handleToastAcceptCall, handleToastRejectCall, settings, getContactByPhoneNumber, addCallRecord])
 
   // Initialize Janus
   const initJanus = useCallback(async () => {
@@ -1604,6 +1652,17 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
     
     console.log("Declining waiting call:", callState.waitingCall.phoneNumber)
     
+    // Log the declined waiting call BEFORE clearing
+    const contact = getContactByPhoneNumber(callState.waitingCall.phoneNumber)
+    addCallRecord({
+      phoneNumber: callState.waitingCall.phoneNumber,
+      contactName: contact?.name,
+      duration: 0,
+      timestamp: new Date(),
+      type: 'missed',
+      answered: false
+    })
+    
     // Send decline for the waiting call if we have the call ID
     if (sipPluginRef.current && callState.waitingCall.id) {
       const decline = { request: "decline", call_id: callState.waitingCall.id }
@@ -1619,7 +1678,7 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       title: "Call Declined",
       description: `Declined call from ${callState.waitingCall.phoneNumber}`,
     })
-  }, [callState.waitingCall])
+  }, [callState.waitingCall, getContactByPhoneNumber, addCallRecord])
 
   const endCurrentAndAcceptWaiting = useCallback(async () => {
     if (!callState.waitingCall) return
