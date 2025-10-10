@@ -1,7 +1,6 @@
 // XEP feature detection and server capabilities
 import { xml } from '@xmpp/client';
 import { ServerFeatures } from '@/types/xmpp';
-import { safeIqRequest } from './xmppErrorHandler';
 
 export class XmppFeatureDetector {
   private xmpp: any = null;
@@ -51,12 +50,7 @@ export class XmppFeatureDetector {
         id: crypto.randomUUID()
       }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#info' }));
 
-      const response = await safeIqRequest(this.xmpp, discoInfoIq, {
-        operation: 'discoverServerFeatures',
-        timeout: 30000,
-        retries: 2,
-        critical: true // Critical operation
-      });
+      const response = await this.xmpp.iqCaller.request(discoInfoIq);
 
       const query = response.getChild('query', 'http://jabber.org/protocol/disco#info');
 
@@ -183,11 +177,7 @@ export class XmppFeatureDetector {
         id: crypto.randomUUID()
       }, xml('enable', { xmlns: 'urn:xmpp:carbons:2' }));
 
-      await safeIqRequest(this.xmpp, enableIq, {
-        operation: 'enableMessageCarbons',
-        timeout: 15000,
-        retries: 1
-      });
+      await this.xmpp.iqCaller.request(enableIq);
 
       console.log('Message carbons enabled');
       return true;
@@ -208,11 +198,7 @@ export class XmppFeatureDetector {
         id: crypto.randomUUID()
       }, xml('query', { xmlns: 'jabber:iq:last' }));
 
-      const response = await safeIqRequest(this.xmpp, lastActivityIq, {
-        operation: 'queryLastActivity',
-        timeout: 10000,
-        retries: 1
-      });
+      const response = await this.xmpp.iqCaller.request(lastActivityIq);
 
       const query = response.getChild('query', 'jabber:iq:last');
       
@@ -242,11 +228,7 @@ export class XmppFeatureDetector {
         id: crypto.randomUUID()
       }, xml('ping', { xmlns: 'urn:xmpp:ping' }));
 
-      await safeIqRequest(this.xmpp, pingIq, {
-        operation: 'ping',
-        timeout: 10000,
-        retries: 0 // Don't retry pings
-      });
+      await this.xmpp.iqCaller.request(pingIq);
 
       return Date.now() - startTime;
     } catch (error) {
@@ -269,12 +251,7 @@ export class XmppFeatureDetector {
         id: crypto.randomUUID()
       }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#items' }));
 
-      const response = await safeIqRequest(this.xmpp, discoItemsIq, {
-        operation: 'discoverMucServices',
-        timeout: 30000,
-        retries: 1,
-        critical: false // Non-critical
-      });
+      const response = await this.xmpp.iqCaller.request(discoItemsIq);
 
       const query = response.getChild('query', 'http://jabber.org/protocol/disco#items');
 
@@ -346,12 +323,7 @@ export class XmppFeatureDetector {
         id: crypto.randomUUID()
       }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#info' }));
 
-      const response = await safeIqRequest(this.xmpp, discoInfoIq, {
-        operation: 'discoverServiceInfo',
-        timeout: 15000,
-        retries: 0, // Don't retry service info queries
-        critical: false
-      });
+      const response = await this.xmpp.iqCaller.request(discoInfoIq);
 
       const query = response.getChild('query', 'http://jabber.org/protocol/disco#info');
 

@@ -1,135 +1,171 @@
-// Centralized XMPP error handling with circuit breaker pattern
+/**
+ * Centralized XMPP Error Handler
+ * Maps XMPP errors to user-friendly messages
+ */
+
+export interface XmppError {
+  code?: string;
+  condition?: string;
+  text?: string;
+  type?: string;
+}
+
+export interface FormattedError {
+  title: string;
+  message: string;
+  action?: string;
+}
+
 export class XmppErrorHandler {
-  private failureCounts: Map<string, number> = new Map();
-  private circuitBreakers: Map<string, { opened: boolean; resetAt: Date | null }> = new Map();
-  private readonly failureThreshold = 3;
-  private readonly circuitResetDelay = 60000; // 1 minute
-
-  isCircuitOpen(operation: string): boolean {
-    const breaker = this.circuitBreakers.get(operation);
-    if (!breaker || !breaker.opened) return false;
-
-    // Check if circuit should reset
-    if (breaker.resetAt && new Date() > breaker.resetAt) {
-      this.circuitBreakers.delete(operation);
-      this.failureCounts.delete(operation);
-      console.log(`Circuit breaker reset for: ${operation}`);
-      return false;
+  static formatError(error: any): FormattedError {
+    if (typeof error === 'string') {
+      return {
+        title: 'Error',
+        message: error,
+      };
     }
 
-    return true;
-  }
+    const xmppError = error as XmppError;
 
-  recordFailure(operation: string): void {
-    const count = (this.failureCounts.get(operation) || 0) + 1;
-    this.failureCounts.set(operation, count);
+    // Handle XMPP standard error conditions
+    switch (xmppError.condition) {
+      case 'service-unavailable':
+        return {
+          title: 'Service Unavailable',
+          message: 'The requested service is currently unavailable. Please try again later.',
+          action: 'Check your connection and try again',
+        };
 
-    if (count >= this.failureThreshold) {
-      console.warn(`Circuit breaker opened for: ${operation} (${count} failures)`);
-      this.circuitBreakers.set(operation, {
-        opened: true,
-        resetAt: new Date(Date.now() + this.circuitResetDelay)
-      });
+      case 'item-not-found':
+        return {
+          title: 'Not Found',
+          message: 'The requested item could not be found.',
+          action: 'Verify the JID or room name and try again',
+        };
+
+      case 'forbidden':
+        return {
+          title: 'Access Denied',
+          message: 'You do not have permission to perform this action.',
+          action: 'Contact the room administrator for access',
+        };
+
+      case 'not-authorized':
+        return {
+          title: 'Not Authorized',
+          message: 'Authentication failed or insufficient permissions.',
+          action: 'Check your credentials and permissions',
+        };
+
+      case 'not-acceptable':
+        return {
+          title: 'Invalid Request',
+          message: 'The server rejected your request.',
+          action: 'Check your input and try again',
+        };
+
+      case 'conflict':
+        return {
+          title: 'Conflict',
+          message: 'A resource with this name already exists.',
+          action: 'Try a different name or nickname',
+        };
+
+      case 'registration-required':
+        return {
+          title: 'Registration Required',
+          message: 'You must be registered to perform this action.',
+          action: 'Register an account first',
+        };
+
+      case 'remote-server-not-found':
+        return {
+          title: 'Server Not Found',
+          message: 'Could not connect to the remote server.',
+          action: 'Verify the server address',
+        };
+
+      case 'remote-server-timeout':
+        return {
+          title: 'Server Timeout',
+          message: 'The remote server did not respond in time.',
+          action: 'Try again later',
+        };
+
+      case 'resource-constraint':
+        return {
+          title: 'Resource Limit',
+          message: 'A resource limit has been reached.',
+          action: 'Wait a moment and try again',
+        };
+
+      case 'feature-not-implemented':
+        return {
+          title: 'Feature Not Supported',
+          message: 'This feature is not supported by the server.',
+          action: 'Contact your server administrator',
+        };
+
+      default:
+        // Use error text if available
+        if (xmppError.text) {
+          return {
+            title: 'Error',
+            message: xmppError.text,
+          };
+        }
+
+        // Fallback to generic error
+        return {
+          title: 'An Error Occurred',
+          message: error.message || 'An unexpected error occurred. Please try again.',
+        };
     }
   }
 
-  recordSuccess(operation: string): void {
-    this.failureCounts.delete(operation);
-    this.circuitBreakers.delete(operation);
+  static formatRoomJoinError(error: any, roomJid: string): FormattedError {
+    const baseError = this.formatError(error);
+
+    // Add room-specific context
+    if (baseError.title === 'Access Denied') {
+      return {
+        ...baseError,
+        message: `You cannot join the room "${roomJid}". The room may be members-only or you may be banned.`,
+      };
+    }
+
+    if (baseError.title === 'Not Found') {
+      return {
+        ...baseError,
+        message: `The room "${roomJid}" does not exist.`,
+        action: 'Create this room or check the room JID',
+      };
+    }
+
+    if (baseError.title === 'Conflict') {
+      return {
+        ...baseError,
+        message: 'Your nickname is already in use in this room.',
+        action: 'Choose a different nickname',
+      };
+    }
+
+    return baseError;
   }
 
-  getFailureCount(operation: string): number {
-    return this.failureCounts.get(operation) || 0;
-  }
+  static formatUserSearchError(error: any): FormattedError {
+    const baseError = this.formatError(error);
 
-  reset(): void {
-    this.failureCounts.clear();
-    this.circuitBreakers.clear();
+    if (baseError.title === 'Service Unavailable') {
+      return {
+        title: 'Search Unavailable',
+        message: 'User search is not available on this server.',
+        action: 'Try browsing your contact list instead',
+      };
+    }
+
+    return baseError;
   }
 }
 
 export const xmppErrorHandler = new XmppErrorHandler();
-
-// Safe IQ request wrapper with timeout and retry
-export async function safeIqRequest(
-  xmpp: any,
-  stanza: any,
-  options: {
-    operation: string;
-    timeout?: number;
-    retries?: number;
-    critical?: boolean;
-  }
-): Promise<any> {
-  const { operation, timeout = 30000, retries = 2, critical = false } = options;
-
-  // Check circuit breaker (skip for critical operations)
-  if (!critical && xmppErrorHandler.isCircuitOpen(operation)) {
-    throw new Error(`Circuit breaker open for: ${operation}`);
-  }
-
-  // Check if client is available and connected
-  if (!xmpp || !xmpp.iqCaller) {
-    const error = new Error('XMPP client not available');
-    error.name = 'ClientDisconnected';
-    throw error;
-  }
-
-  // Store reference to avoid race conditions
-  const clientRef = xmpp;
-  const iqCallerRef = xmpp.iqCaller;
-
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      // Verify client is still connected before each attempt
-      if (!clientRef || !iqCallerRef || clientRef.status !== 'online') {
-        const error = new Error('Client disconnected');
-        error.name = 'ClientDisconnected';
-        throw error;
-      }
-
-      // Create timeout promise
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('TimeoutError')), timeout);
-      });
-
-      // Race between IQ request and timeout
-      const response = await Promise.race([
-        iqCallerRef.request(stanza),
-        timeoutPromise
-      ]);
-
-      // Success - record it
-      xmppErrorHandler.recordSuccess(operation);
-      return response;
-
-    } catch (error: any) {
-      lastError = error;
-      
-      // Check if it's a connection error - don't retry
-      if (
-        error.name === 'ClientDisconnected' ||
-        error.message?.includes('not available') || 
-        error.message?.includes('null') ||
-        error.message?.toLowerCase().includes('write')
-      ) {
-        console.error(`${operation}: Client disconnected`);
-        throw error;
-      }
-
-      // Log attempt
-      if (attempt < retries) {
-        console.warn(`${operation}: Attempt ${attempt + 1} failed, retrying...`, error);
-        // Wait before retry with exponential backoff
-        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-      }
-    }
-  }
-
-  // All retries failed
-  xmppErrorHandler.recordFailure(operation);
-  console.error(`${operation}: All ${retries + 1} attempts failed`);
-  throw lastError || new Error(`${operation} failed`);
-}

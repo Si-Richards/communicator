@@ -211,13 +211,26 @@ export class ChatCore extends EventEmitter {
     this.queueUpdate(jid);
   }
 
-  deleteItem(jid: string) {
+  deleteItem(jid: string): void {
+    const item = this.state.items.get(jid);
+    if (!item) return;
+
     this.state.items.delete(jid);
+    
+    // Emit specific deletion events for persistence
+    if (item.type === 'conversation') {
+      this.emit('conversationDeleted', { jid });
+    } else if (item.type === 'room') {
+      this.emit('roomDeleted', { jid });
+    }
+    
+    this.emit('itemDeleted', { jid });
+    
+    // If deleting selected item, clear selection
     if (this.state.selectedItemId === jid) {
       this.state.selectedItemId = null;
-      this.emit('selectedItemChanged', null);
+      this.emit('selectedItemChanged', { jid: null });
     }
-    this.emit('itemDeleted', jid);
   }
 
   updateContact(contact: XmppContact) {

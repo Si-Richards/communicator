@@ -357,6 +357,21 @@ export class XmppStorage {
     });
   }
 
+  // Deletion methods
+  async deleteConversation(jid: string): Promise<void> {
+    if (!this.db || !this.currentAccount) return;
+
+    const transaction = this.db.transaction(['conversations'], 'readwrite');
+    await transaction.objectStore('conversations').delete([this.currentAccount, jid]);
+  }
+
+  async deleteRoom(jid: string): Promise<void> {
+    if (!this.db || !this.currentAccount) return;
+
+    const transaction = this.db.transaction(['conversations'], 'readwrite');
+    await transaction.objectStore('conversations').delete([this.currentAccount, jid]);
+  }
+
   // Clear data
   async clearAccount(): Promise<void> {
     if (!this.db || !this.currentAccount) return;

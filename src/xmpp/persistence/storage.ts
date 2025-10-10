@@ -19,6 +19,8 @@ interface AccountData {
   bookmarks: any[];
   settings: any;
   lastSync: string;
+  deletedConversations?: string[];
+  deletedRooms?: string[];
 }
 
 export class StorageManager {
@@ -214,6 +216,70 @@ export class StorageManager {
     }
   }
 
+  deleteConversation(jid: string): void {
+    if (!this.currentAccount) return;
+    
+    const data = this.getStorageData();
+    const accountData = data.accounts[this.currentAccount];
+    
+    if (accountData) {
+      // Remove from conversations
+      accountData.conversations = accountData.conversations.filter(
+        (c: any) => c.jid !== jid
+      );
+      
+      // Add to deleted list
+      if (!accountData.deletedConversations) {
+        accountData.deletedConversations = [];
+      }
+      if (!accountData.deletedConversations.includes(jid)) {
+        accountData.deletedConversations.push(jid);
+      }
+      
+      this.setStorageData(data);
+    }
+  }
+  
+  deleteRoom(jid: string): void {
+    if (!this.currentAccount) return;
+    
+    const data = this.getStorageData();
+    const accountData = data.accounts[this.currentAccount];
+    
+    if (accountData) {
+      // Remove from rooms
+      accountData.rooms = accountData.rooms.filter(
+        (r: any) => r.jid !== jid
+      );
+      
+      // Add to deleted list
+      if (!accountData.deletedRooms) {
+        accountData.deletedRooms = [];
+      }
+      if (!accountData.deletedRooms.includes(jid)) {
+        accountData.deletedRooms.push(jid);
+      }
+      
+      this.setStorageData(data);
+    }
+  }
+  
+  getDeletedConversations(): string[] {
+    if (!this.currentAccount) return [];
+    
+    const data = this.getStorageData();
+    const accountData = data.accounts[this.currentAccount];
+    return accountData?.deletedConversations || [];
+  }
+  
+  getDeletedRooms(): string[] {
+    if (!this.currentAccount) return [];
+    
+    const data = this.getStorageData();
+    const accountData = data.accounts[this.currentAccount];
+    return accountData?.deletedRooms || [];
+  }
+
   private setupEventHandlers(): void {
     // Listen for data changes and save automatically
     this.eventBus.on('roster:updated', ({ contacts }) => {
@@ -226,6 +292,15 @@ export class StorageManager {
     
     this.eventBus.on('rooms:updated', ({ rooms }) => {
       this.saveRooms(rooms);
+    });
+    
+    // Handle deletions
+    this.eventBus.on('conversationDeleted', ({ jid }) => {
+      this.deleteConversation(jid);
+    });
+    
+    this.eventBus.on('roomDeleted', ({ jid }) => {
+      this.deleteRoom(jid);
     });
     
     this.eventBus.on('room:bookmarked', ({ room }) => {
