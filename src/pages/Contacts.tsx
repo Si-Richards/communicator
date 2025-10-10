@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useContacts, Contact } from '@/contexts/ContactsContext';
 import { useJanusContext } from '@/contexts/JanusContext';
-import { Search, Plus, Phone, Edit, Trash2, Download, Upload } from 'lucide-react';
+import { Search, Plus, Phone, Edit, Trash2, Download, Upload, MessageSquare } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ImportXmppContactsDialog } from '@/components/ImportXmppContactsDialog';
 
 const Contacts = () => {
   const { contacts, addContact, updateContact, deleteContact, searchContacts, exportContacts, importContacts, clearContacts, addPhoneNumber, removePhoneNumber } = useContacts();
@@ -19,17 +20,19 @@ const Contacts = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
+  const [showImportXmppDialog, setShowImportXmppDialog] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     phoneNumbers: [''],
     email: '',
+    xmppJid: '',
     notes: ''
   });
 
   const filteredContacts = searchQuery ? searchContacts(searchQuery) : contacts;
 
   const resetForm = () => {
-    setFormData({ name: '', phoneNumbers: [''], email: '', notes: '' });
+    setFormData({ name: '', phoneNumbers: [''], email: '', xmppJid: '', notes: '' });
     setEditingContact(null);
   };
 
@@ -51,6 +54,7 @@ const Contacts = () => {
         name: formData.name,
         phoneNumbers: validPhoneNumbers,
         email: formData.email || undefined,
+        xmppJid: formData.xmppJid || undefined,
         notes: formData.notes || undefined,
       });
       toast({
@@ -62,6 +66,7 @@ const Contacts = () => {
         name: formData.name,
         phoneNumbers: validPhoneNumbers,
         email: formData.email || undefined,
+        xmppJid: formData.xmppJid || undefined,
         notes: formData.notes || undefined,
       });
       toast({
@@ -80,6 +85,7 @@ const Contacts = () => {
       name: contact.name,
       phoneNumbers: contact.phoneNumbers.length > 0 ? contact.phoneNumbers : [''],
       email: contact.email || '',
+      xmppJid: contact.xmppJid || '',
       notes: contact.notes || ''
     });
     setIsAddDialogOpen(true);
@@ -95,6 +101,10 @@ const Contacts = () => {
 
   const handleCall = (phoneNumber: string) => {
     makeCall(phoneNumber);
+  };
+
+  const handleStartChat = (xmppJid: string) => {
+    window.location.href = `/chat?jid=${encodeURIComponent(xmppJid)}`;
   };
 
   const handleExport = () => {
@@ -170,6 +180,14 @@ const Contacts = () => {
               </span>
             </Button>
           </label>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => setShowImportXmppDialog(true)}
+          >
+            <MessageSquare className="w-4 h-4 mr-2" />
+            Import from Chat
+          </Button>
           <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
             setIsAddDialogOpen(open);
             if (!open) resetForm();
@@ -245,6 +263,19 @@ const Contacts = () => {
                     onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                     placeholder="Enter email address"
                   />
+                </div>
+                <div>
+                  <Label htmlFor="xmppJid">XMPP/Jabber ID (for chat)</Label>
+                  <Input
+                    id="xmppJid"
+                    type="text"
+                    value={formData.xmppJid}
+                    onChange={(e) => setFormData(prev => ({ ...prev, xmppJid: e.target.value }))}
+                    placeholder="e.g., user@ejabberd.voicehost.io"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Optional: Add XMPP address to enable chat with this contact
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="notes">Notes</Label>
@@ -339,8 +370,25 @@ const Contacts = () => {
                     {contact.email && (
                       <p className="text-sm text-muted-foreground">{contact.email}</p>
                     )}
+                    {contact.xmppJid && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <MessageSquare className="w-3 h-3" />
+                        {contact.xmppJid}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
+                    {contact.xmppJid && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleStartChat(contact.xmppJid!)}
+                        title="Start chat"
+                        className="shrink-0"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
@@ -377,6 +425,10 @@ const Contacts = () => {
           )}
         </CardContent>
       </Card>
+      <ImportXmppContactsDialog 
+        open={showImportXmppDialog}
+        onOpenChange={setShowImportXmppDialog}
+      />
     </div>
   );
 };

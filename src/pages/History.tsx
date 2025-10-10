@@ -6,7 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useCallHistory, CallRecord } from '@/contexts/CallHistoryContext';
 import { useJanusContext } from '@/contexts/JanusContext';
-import { Search, Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Download, Trash2, BarChart3 } from 'lucide-react';
+import { useContacts } from '@/contexts/ContactsContext';
+import { Search, Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Download, Trash2, BarChart3, MessageSquare } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format, isToday, isYesterday, subDays, startOfDay, endOfDay } from 'date-fns';
 
@@ -22,6 +23,7 @@ const History = () => {
     getCallStats 
   } = useCallHistory();
   const { makeCall } = useJanusContext();
+  const { getContactByPhoneNumber } = useContacts();
   const { toast } = useToast();
   
   const [searchQuery, setSearchQuery] = useState('');
@@ -101,8 +103,20 @@ const History = () => {
     }
   };
 
+  const getContactChatJid = (phoneNumber: string): string | undefined => {
+    const contact = getContactByPhoneNumber(phoneNumber);
+    return contact?.xmppJid;
+  };
+
   const handleCall = (phoneNumber: string) => {
     makeCall(phoneNumber);
+  };
+
+  const handleChat = (phoneNumber: string) => {
+    const chatJid = getContactChatJid(phoneNumber);
+    if (chatJid) {
+      window.location.href = `/chat?jid=${encodeURIComponent(chatJid)}`;
+    }
   };
 
   const handleExport = () => {
@@ -263,8 +277,11 @@ const History = () => {
                     {getCallIcon(call)}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold truncate">
+                        <h3 className="font-semibold truncate flex items-center gap-1">
                           {call.contactName || call.phoneNumber}
+                          {getContactChatJid(call.phoneNumber) && (
+                            <MessageSquare className="w-3 h-3 text-muted-foreground" />
+                          )}
                         </h3>
                         {call.contactName && (
                           <span className="text-sm text-muted-foreground">
@@ -285,14 +302,27 @@ const History = () => {
                       </div>
                     </div>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleCall(call.phoneNumber)}
-                    className="shrink-0"
-                  >
-                    <Phone className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {getContactChatJid(call.phoneNumber) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleChat(call.phoneNumber)}
+                        className="shrink-0"
+                        title="Start chat"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleCall(call.phoneNumber)}
+                      className="shrink-0"
+                    >
+                      <Phone className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>

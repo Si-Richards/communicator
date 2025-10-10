@@ -5,6 +5,7 @@ export interface Contact {
   name: string;
   phoneNumbers: string[];
   email?: string;
+  xmppJid?: string;
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -16,6 +17,7 @@ interface ContactsContextType {
   updateContact: (id: string, contact: Partial<Omit<Contact, 'id' | 'createdAt'>>) => void;
   deleteContact: (id: string) => void;
   getContactByPhoneNumber: (phoneNumber: string) => Contact | undefined;
+  getContactByXmppJid: (xmppJid: string) => Contact | undefined;
   addPhoneNumber: (contactId: string, phoneNumber: string) => void;
   removePhoneNumber: (contactId: string, phoneNumber: string) => void;
   searchContacts: (query: string) => Contact[];
@@ -42,6 +44,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
           ...contact,
           // Migrate from old phoneNumber format to new phoneNumbers array format
           phoneNumbers: contact.phoneNumbers || (contact.phoneNumber ? [contact.phoneNumber] : []),
+          xmppJid: contact.xmppJid || undefined,
           createdAt: new Date(contact.createdAt),
           updatedAt: new Date(contact.updatedAt),
         }));
@@ -94,6 +97,19 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
     });
   };
 
+  const getContactByXmppJid = (xmppJid: string): Contact | undefined => {
+    if (!xmppJid) return undefined;
+    
+    // Normalize JID to bare JID (remove resource)
+    const bareJid = xmppJid.split('/')[0].toLowerCase();
+    
+    return contacts.find(contact => {
+      if (!contact.xmppJid) return false;
+      const contactBareJid = contact.xmppJid.split('/')[0].toLowerCase();
+      return contactBareJid === bareJid;
+    });
+  };
+
   const addPhoneNumber = (contactId: string, phoneNumber: string) => {
     setContacts(prev => prev.map(contact => 
       contact.id === contactId 
@@ -118,6 +134,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
       contact.name.toLowerCase().includes(lowercaseQuery) ||
       contact.phoneNumbers.some(phone => phone.includes(query)) ||
       contact.email?.toLowerCase().includes(lowercaseQuery) ||
+      contact.xmppJid?.toLowerCase().includes(lowercaseQuery) ||
       contact.notes?.toLowerCase().includes(lowercaseQuery)
     );
   };
@@ -139,6 +156,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
         name: contact.name || '',
         phoneNumbers: contact.phoneNumbers || (contact.phoneNumber ? [contact.phoneNumber] : []),
         email: contact.email || undefined,
+        xmppJid: contact.xmppJid || undefined,
         notes: contact.notes || undefined,
         createdAt: contact.createdAt ? new Date(contact.createdAt) : new Date(),
         updatedAt: contact.updatedAt ? new Date(contact.updatedAt) : new Date(),
@@ -162,6 +180,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
     updateContact,
     deleteContact,
     getContactByPhoneNumber,
+    getContactByXmppJid,
     searchContacts,
     exportContacts,
     importContacts,
