@@ -368,7 +368,7 @@ export const DirectChatView = () => {
             </div>
 
             {/* Messages - Scrollable Area */}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <ScrollArea className="h-full">
                 <div className="p-4 pb-6">
                   {selectedConv.messages.length === 0 ? (

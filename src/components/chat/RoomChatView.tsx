@@ -509,10 +509,10 @@ export const RoomChatView = () => {
                 </div>
               </div>
 
-              {/* Messages */}
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <ScrollArea className="h-full">
-                  <div className="p-4 pb-6">
+            {/* Messages - Scrollable */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              <ScrollArea className="h-full">
+                <div className="p-4 pb-6">
                     {selectedRoomData.messages.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-muted-foreground min-h-[400px]">
                         <div className="text-center">

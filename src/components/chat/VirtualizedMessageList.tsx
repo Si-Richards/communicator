@@ -7,7 +7,9 @@ import React, { memo, useMemo, useCallback, useRef, useEffect } from 'react';
 import { FixedSizeList as List } from 'react-window';
 import { XmppMessage } from '@/types/xmpp';
 import { MessageBodyRenderer } from './MessageBodyRenderer';
+import { MessageStatus } from './MessageStatus';
 import { DateSeparator } from './DateSeparator';
+import { MessageContextMenu } from './MessageContextMenu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -18,6 +20,9 @@ interface VirtualizedMessageListProps {
   currentUserJid: string;
   onLoadMore?: () => void;
   isLoading?: boolean;
+  onDeleteMessage?: (messageId: string) => void;
+  onRetractMessage?: (messageId: string) => void;
+  onCopyMessage?: (messageBody: string) => void;
 }
 
 interface MessageItem {
@@ -33,6 +38,9 @@ const VirtualizedMessageList = memo(({
   currentUserJid,
   onLoadMore,
   isLoading = false,
+  onDeleteMessage,
+  onRetractMessage,
+  onCopyMessage,
 }: VirtualizedMessageListProps) => {
   const listRef = useRef<List>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -103,6 +111,9 @@ const VirtualizedMessageList = memo(({
           <MessageRow
             message={item.data as XmppMessage}
             currentUserJid={currentUserJid}
+            onDeleteMessage={onDeleteMessage}
+            onRetractMessage={onRetractMessage}
+            onCopyMessage={onCopyMessage}
           />
         )}
       </div>
@@ -158,9 +169,15 @@ const VirtualizedMessageList = memo(({
 const MessageRow = memo(({
   message,
   currentUserJid,
+  onDeleteMessage,
+  onRetractMessage,
+  onCopyMessage,
 }: {
   message: XmppMessage;
   currentUserJid: string;
+  onDeleteMessage?: (messageId: string) => void;
+  onRetractMessage?: (messageId: string) => void;
+  onCopyMessage?: (messageBody: string) => void;
 }) => {
   const isFromSelf = message.from === currentUserJid || message.from?.includes(currentUserJid);
   
@@ -176,7 +193,7 @@ const MessageRow = memo(({
   return (
     <div
       className={cn(
-        "flex gap-3 p-4 hover:bg-muted/50 transition-colors",
+        "flex gap-3 p-4 hover:bg-muted/50 transition-colors group",
         isFromSelf && "flex-row-reverse"
       )}
     >
@@ -199,16 +216,37 @@ const MessageRow = memo(({
           </span>
         </div>
 
-        <div className={cn(
-          "inline-block max-w-[80%] rounded-lg px-3 py-2",
-          isFromSelf
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-foreground"
-        )}>
-          <MessageBodyRenderer
-            body={message.body || ''}
-            className="text-sm"
-          />
+        <div className="relative">
+          <div className={cn(
+            "inline-block max-w-[80%] rounded-lg px-3 py-2",
+            isFromSelf
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-foreground"
+          )}>
+            <MessageBodyRenderer
+              body={message.body || ''}
+              className="text-sm"
+            />
+          </div>
+
+          {/* Message Actions */}
+          {(onDeleteMessage || onRetractMessage || onCopyMessage) && (
+            <div className={cn(
+              "absolute top-0 -mt-2",
+              isFromSelf ? "left-0 -ml-8" : "right-0 -mr-8"
+            )}>
+              <MessageContextMenu
+                messageId={message.id}
+                messageBody={message.body}
+                isOwnMessage={isFromSelf}
+                canRetract={isFromSelf}
+                messageStatus={message.status}
+                onDelete={() => onDeleteMessage?.(message.id)}
+                onRetract={() => onRetractMessage?.(message.id)}
+                onCopy={() => onCopyMessage?.(message.body)}
+              />
+            </div>
+          )}
         </div>
 
         {message.status && message.status !== 'sent' && (

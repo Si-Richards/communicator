@@ -314,8 +314,8 @@ export const UnifiedChatView = () => {
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        {/* Messages - Scrollable */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <ScrollArea className="h-full">
             <div className="p-4 pb-6">
               {data.messages.length === 0 ? (
@@ -411,8 +411,8 @@ export const UnifiedChatView = () => {
           </ScrollArea>
         </div>
 
-        {/* Message Composer */}
-        <div className="flex-shrink-0 p-4 border-t border-border">
+        {/* Message Composer - Sticky */}
+        <div className="flex-shrink-0">
           <MessageComposer
             value={newMessage}
             onChange={setNewMessage}
