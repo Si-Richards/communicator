@@ -265,7 +265,7 @@ export const OptimizedChatView = () => {
                         <DropdownMenuSeparator />
                       </>
                     )}
-                    {item.archived ? (
+                    {item.isArchived ? (
                       <DropdownMenuItem onClick={() => unarchiveItem(item.jid)}>
                         <Archive className="h-4 w-4 mr-2" />
                         Unarchive
@@ -447,9 +447,33 @@ export const OptimizedChatView = () => {
           open={showRoomSettingsDialog}
           onOpenChange={setShowRoomSettingsDialog}
           room={selectedRoomForSettings}
-          onDestroy={() => handleDestroyRoom(selectedRoomForSettings?.jid)}
-          isOwner={selectedRoomForSettings?.isOwner}
-          isModerator={selectedRoomForSettings?.isModerator}
+          onUpdateRoom={async (config) => {
+            try {
+              await configureRoom(selectedRoomForSettings?.jid, config);
+              toast({ title: 'Room Updated', description: 'Settings saved successfully' });
+            } catch (error: any) {
+              toast({ title: 'Update Failed', description: error.message, variant: 'destructive' });
+            }
+          }}
+          onDestroyRoom={async (reason) => {
+            await handleDestroyRoom(selectedRoomForSettings?.jid);
+          }}
+          onKickUser={async (nick, reason) => {
+            console.log('Kick user:', nick, reason);
+          }}
+          onBanUser={async (jid, reason) => {
+            console.log('Ban user:', jid, reason);
+          }}
+          onChangeSubject={async (subject) => {
+            try {
+              await changeSubject(selectedRoomForSettings?.jid, subject);
+              toast({ title: 'Subject Changed', description: 'Room subject updated' });
+            } catch (error: any) {
+              toast({ title: 'Failed', description: error.message, variant: 'destructive' });
+            }
+          }}
+          isOwner={selectedRoomForSettings?.isOwner || false}
+          isModerator={selectedRoomForSettings?.isModerator || false}
         />
       )}
 
