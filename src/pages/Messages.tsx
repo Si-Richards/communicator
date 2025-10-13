@@ -1,6 +1,5 @@
 // Messages Page - XMPP Chat Interface
 import React, { useEffect } from 'react';
-import Layout from '@/components/Layout';
 import { OptimizedChatView } from '@/components/chat/OptimizedChatView';
 import { useChatCore } from '@/hooks/useChatCore';
 
@@ -20,10 +19,8 @@ export default function Messages() {
   }, [selectItem]);
 
   return (
-    <Layout>
-      <div className="flex-1 flex flex-col h-full">
-        <OptimizedChatView />
-      </div>
-    </Layout>
+    <div className="flex-1 flex flex-col h-full">
+      <OptimizedChatView />
+    </div>
   );
 }
