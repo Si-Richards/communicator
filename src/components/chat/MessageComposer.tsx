@@ -71,7 +71,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const displayValue = value + (interimTranscript ? ` ${interimTranscript}` : '');
 
   return (
-    <div className="bg-background border-t border-border">
+    <div className="border-t border-border bg-background">
       <div className="p-4">
         <div className="flex items-end gap-2">
           {/* Message Input */}
