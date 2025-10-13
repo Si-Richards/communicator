@@ -14,7 +14,7 @@ import Dial from "./pages/Dial";
 import Contacts from "./pages/Contacts";
 import History from "./pages/History";
 import Voicemail from "./pages/Voicemail";
-import Chat from "./pages/Messages";
+import Chat from "./pages/Chat";
 import SMS from "./pages/SMS";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
@@ -39,9 +39,8 @@ const App = () => (
                         <Route path="/contacts" element={<Contacts />} />
                         <Route path="/history" element={<History />} />
                         <Route path="/voicemail" element={<Voicemail />} />
-                        <Route path="/chat" element={<Chat />} />
-                        <Route path="/messages" element={<Navigate to="/chat" replace />} />
-                        <Route path="/rooms" element={<Navigate to="/chat?tab=rooms" replace />} />
+                        <Route path="/messages" element={<Chat />} />
+                        <Route path="/rooms" element={<Navigate to="/messages?tab=rooms" replace />} />
                         <Route path="/sms" element={<SMS />} />
                         <Route path="/settings" element={<SettingsPage />} />
                         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
