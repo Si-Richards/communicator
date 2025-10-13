@@ -40,6 +40,7 @@ const App = () => (
                         <Route path="/history" element={<History />} />
                         <Route path="/voicemail" element={<Voicemail />} />
                         <Route path="/messages" element={<Chat />} />
+                        <Route path="/chat" element={<Navigate to="/messages" replace />} />
                         <Route path="/rooms" element={<Navigate to="/messages?tab=rooms" replace />} />
                         <Route path="/sms" element={<SMS />} />
                         <Route path="/settings" element={<SettingsPage />} />
