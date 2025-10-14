@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { format, isToday, isYesterday, subDays, startOfDay, endOfDay } from 'date-fns';
 
 const History = () => {
+  const navigate = useNavigate();
   const { 
     callHistory, 
     getCallHistory, 
@@ -115,7 +117,7 @@ const History = () => {
   const handleChat = (phoneNumber: string) => {
     const chatJid = getContactChatJid(phoneNumber);
     if (chatJid) {
-      window.location.href = `/chat?jid=${encodeURIComponent(chatJid)}`;
+      navigate(`/messages?jid=${encodeURIComponent(chatJid)}`);
     }
   };
 

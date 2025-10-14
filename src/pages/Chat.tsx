@@ -1,11 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { UnifiedChatView } from '@/components/chat/UnifiedChatView';
 import { useXmpp } from '@/contexts/XmppContext';
 import { useSettings } from '@/contexts/SettingsContext';
 
 const Chat = () => {
-  const { connectionState, connect } = useXmpp();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { connectionState, connect, startConversation } = useXmpp();
   const { settings } = useSettings();
+  const processedJidRef = useRef<string | null>(null);
 
   // Safety net: auto-connect when visiting chat page
   useEffect(() => {
@@ -16,6 +19,17 @@ const Chat = () => {
       }
     }
   }, [connectionState, settings?.xmpp, connect]);
+
+  // Handle JID parameter from URL
+  useEffect(() => {
+    const jid = searchParams.get('jid');
+    if (jid && connectionState === 'connected' && processedJidRef.current !== jid) {
+      processedJidRef.current = jid;
+      startConversation(jid);
+      // Clean up URL after initiating conversation
+      setSearchParams({});
+    }
+  }, [searchParams, connectionState, startConversation, setSearchParams]);
 
   return (
     <div className="h-full min-h-screen flex flex-col overflow-hidden">
