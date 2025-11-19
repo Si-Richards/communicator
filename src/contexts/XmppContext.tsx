@@ -30,6 +30,7 @@ import {
   QueuedMessage
 } from "@/types/xmpp";
 import { xmppStorage } from '@/lib/xmppStorage';
+import { RoomConfig } from '@/components/chat/CreateRoomDialog';
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "authenticating" | "resuming" | "error";
 type UiConnectionState = "connected" | "reconnecting" | "offline";
@@ -85,7 +86,7 @@ type XmppContextType = {
   pinConversation: (bareJid: string, pinned?: boolean) => void;
   
   // Room/MUC functionality
-  createRoom: (roomName: string, nick: string, password?: string) => Promise<boolean>;
+  createRoom: (roomJid: string, nick: string, config?: RoomConfig) => Promise<boolean>;
   joinRoom: (roomJid: string, nick: string, password?: string) => Promise<boolean>;
   leaveRoom: (roomJid: string) => void;
   destroyRoom: (roomJid: string, reason?: string) => Promise<boolean>;
@@ -1176,13 +1177,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ));
   }, []);
 
-  // Room functionality
-  const createRoom = useCallback(async (roomName: string, nick: string, password?: string): Promise<boolean> => {
-    // Implementation for creating rooms
-    // This would depend on the specific server configuration
-    return false;
-  }, []);
-
   const handleRoomNotFound = useCallback((roomJid: string) => {
     console.warn('Room no longer exists on server, removing:', roomJid);
     
@@ -1242,6 +1236,57 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return false;
     }
   }, [ensureRoom, handleRoomNotFound, rooms, connectionState]);
+
+  const createRoom = useCallback(async (roomJid: string, nick: string, config?: RoomConfig): Promise<boolean> => {
+    if (!xmppRef.current || connectionState !== 'connected') return false;
+
+    try {
+      // First join the room to create it
+      const joined = await joinRoom(roomJid, nick, config?.password);
+      if (!joined) return false;
+
+      // If config is provided, configure the room
+      if (config) {
+        // Wait a bit for room creation to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Build configuration form
+        const configFields: any = {};
+        
+        if (config.name) configFields['muc#roomconfig_roomname'] = config.name;
+        if (config.description) configFields['muc#roomconfig_roomdesc'] = config.description;
+        if (config.persistent !== undefined) configFields['muc#roomconfig_persistentroom'] = config.persistent ? '1' : '0';
+        if (config.public !== undefined) configFields['muc#roomconfig_publicroom'] = config.public ? '1' : '0';
+        if (config.membersOnly !== undefined) configFields['muc#roomconfig_membersonly'] = config.membersOnly ? '1' : '0';
+        if (config.moderated !== undefined) configFields['muc#roomconfig_moderatedroom'] = config.moderated ? '1' : '0';
+        if (config.passwordProtected && config.password) {
+          configFields['muc#roomconfig_passwordprotectedroom'] = '1';
+          configFields['muc#roomconfig_roomsecret'] = config.password;
+        }
+        if (config.maxUsers) configFields['muc#roomconfig_maxusers'] = String(config.maxUsers);
+
+        // Send configuration
+        const configIq = xml("iq", { type: "set", to: roomJid, id: `config-${Date.now()}` },
+          xml("query", "http://jabber.org/protocol/muc#owner",
+            xml("x", { xmlns: "jabber:x:data", type: "submit" },
+              Object.entries(configFields).map(([varName, value]) =>
+                xml("field", { var: varName },
+                  xml("value", {}, String(value))
+                )
+              )
+            )
+          )
+        );
+
+        await xmppRef.current.send(configIq);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error creating room:', error);
+      return false;
+    }
+  }, [joinRoom, connectionState]);
 
   const leaveRoom = useCallback((roomJid: string) => {
     if (!xmppRef.current || connectionState !== 'connected') return;

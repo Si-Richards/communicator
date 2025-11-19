@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Loader2 } from 'lucide-react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { toast } from 'sonner';
@@ -30,8 +31,13 @@ export interface RoomConfig {
 export const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({ open, onOpenChange }) => {
   const [roomName, setRoomName] = useState('');
   const [password, setPassword] = useState('');
+  const [persistent, setPersistent] = useState(true);
+  const [membersOnly, setMembersOnly] = useState(false);
+  const [moderated, setModerated] = useState(false);
+  const [publicRoom, setPublicRoom] = useState(true);
+  const [maxUsers, setMaxUsers] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const { joinRoom, nickname, effectiveJid } = useXmpp();
+  const { createRoom, nickname, effectiveJid } = useXmpp();
 
   const handleCreate = async () => {
     if (!roomName.trim()) {
@@ -46,8 +52,19 @@ export const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({ open, onOpen
 
     setIsCreating(true);
     try {
-      // Joining a room creates it if it doesn't exist
-      const success = await joinRoom(roomJid, nickname || 'User', password || undefined);
+      const config: RoomConfig = {
+        roomJid,
+        name: roomName,
+        persistent,
+        membersOnly,
+        moderated,
+        public: publicRoom,
+        passwordProtected: !!password,
+        password: password || undefined,
+        maxUsers: maxUsers ? parseInt(maxUsers) : undefined,
+      };
+
+      const success = await createRoom(roomJid, nickname || 'User', config);
 
       if (success) {
         toast.success('Room created successfully');
@@ -55,6 +72,11 @@ export const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({ open, onOpen
         // Reset form
         setRoomName('');
         setPassword('');
+        setPersistent(true);
+        setMembersOnly(false);
+        setModerated(false);
+        setPublicRoom(true);
+        setMaxUsers('');
       } else {
         toast.error('Failed to create room');
       }
@@ -86,9 +108,6 @@ export const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({ open, onOpen
               placeholder="My Awesome Room"
               disabled={isCreating}
             />
-            <p className="text-xs text-muted-foreground">
-              Room will be created automatically when you join
-            </p>
           </div>
 
           <div className="grid gap-2">
@@ -101,6 +120,73 @@ export const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({ open, onOpen
               placeholder="Leave empty for no password"
               disabled={isCreating}
             />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="max-users">Max Users (Optional)</Label>
+            <Input
+              id="max-users"
+              type="number"
+              min="2"
+              value={maxUsers}
+              onChange={(e) => setMaxUsers(e.target.value)}
+              placeholder="No limit"
+              disabled={isCreating}
+            />
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="persistent">Persistent Room</Label>
+                <p className="text-xs text-muted-foreground">Room persists when empty</p>
+              </div>
+              <Switch
+                id="persistent"
+                checked={persistent}
+                onCheckedChange={setPersistent}
+                disabled={isCreating}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="public">Public Room</Label>
+                <p className="text-xs text-muted-foreground">Room is visible in directory</p>
+              </div>
+              <Switch
+                id="public"
+                checked={publicRoom}
+                onCheckedChange={setPublicRoom}
+                disabled={isCreating}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="members-only">Members Only</Label>
+                <p className="text-xs text-muted-foreground">Only invited users can join</p>
+              </div>
+              <Switch
+                id="members-only"
+                checked={membersOnly}
+                onCheckedChange={setMembersOnly}
+                disabled={isCreating}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="moderated">Moderated</Label>
+                <p className="text-xs text-muted-foreground">Only moderators can send messages</p>
+              </div>
+              <Switch
+                id="moderated"
+                checked={moderated}
+                onCheckedChange={setModerated}
+                disabled={isCreating}
+              />
+            </div>
           </div>
         </div>
 
