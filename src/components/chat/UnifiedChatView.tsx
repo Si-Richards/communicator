@@ -1,4 +1,4 @@
-import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw } from 'lucide-react';
+import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -14,6 +14,7 @@ import { MessageBodyRenderer } from './MessageBodyRenderer';
 import { MessageStatus } from './MessageStatus';
 import { DateSeparator } from './DateSeparator';
 import { PhonebookDialog } from './PhonebookDialog';
+import { CreateRoomDialog } from './CreateRoomDialog';
 import { insertDateSeparators } from '@/lib/dateUtils';
 import { jid as xmppJid } from '@xmpp/client';
 
@@ -36,6 +37,7 @@ export const UnifiedChatView = () => {
   const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<'newest' | 'a-z' | 'z-a'>('newest');
   const [isPhonebookOpen, setIsPhonebookOpen] = useState(false);
+  const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showMucDialog, setShowMucDialog] = useState(false);
   const [pendingMucJid, setPendingMucJid] = useState('');
@@ -446,15 +448,26 @@ export const UnifiedChatView = () => {
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setIsPhonebookOpen(true)}
-              disabled={uiConnection !== 'connected'}
-            >
-              <BookUser className="h-4 w-4 mr-1" />
-              Phonebook
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setIsPhonebookOpen(true)}
+                disabled={uiConnection !== 'connected'}
+              >
+                <BookUser className="h-4 w-4 mr-1" />
+                Phonebook
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setIsCreateRoomOpen(true)}
+                disabled={uiConnection !== 'connected'}
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Create Room
+              </Button>
+            </div>
             
             <div className="flex items-center gap-2">
               <Button
@@ -622,6 +635,11 @@ export const UnifiedChatView = () => {
         open={isPhonebookOpen}
         onOpenChange={setIsPhonebookOpen}
         onSelect={handleSelectFromPhonebook}
+      />
+
+      <CreateRoomDialog
+        open={isCreateRoomOpen}
+        onOpenChange={setIsCreateRoomOpen}
       />
 
       <AlertDialog open={showMucDialog} onOpenChange={setShowMucDialog}>
