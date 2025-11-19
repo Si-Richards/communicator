@@ -29,6 +29,7 @@ import {
   MamResult,
   QueuedMessage
 } from "@/types/xmpp";
+import { xmppStorage } from '@/lib/xmppStorage';
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "authenticating" | "resuming" | "error";
 type UiConnectionState = "connected" | "reconnecting" | "offline";
@@ -1186,8 +1187,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRooms(prev => prev.filter(r => r.jid !== roomJid));
     
     // Remove from storage
-    const storage = require('@/lib/xmppStorage').xmppStorage;
-    storage.deleteRoom(roomJid);
+    xmppStorage.deleteRoom(roomJid);
   }, []);
 
   const joinRoom = useCallback(async (roomJid: string, nick: string, password?: string): Promise<boolean> => {
