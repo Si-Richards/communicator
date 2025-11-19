@@ -5,11 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { MucRoom } from '@/types/xmpp';
 import { RoomConfig } from './CreateRoomDialog';
 import { RoomMemberList } from './RoomMemberList';
+import { InviteUserDialog } from './InviteUserDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +30,7 @@ interface RoomSettingsDialogProps {
   onDestroyRoom: (reason?: string) => Promise<void>;
   onKickUser: (nick: string, reason?: string) => Promise<void>;
   onBanUser: (jid: string, reason?: string) => Promise<void>;
+  onInviteUser: (userJid: string, reason?: string) => Promise<void>;
   onChangeSubject: (subject: string) => Promise<void>;
   isOwner: boolean;
   isModerator: boolean;
@@ -42,6 +44,7 @@ export const RoomSettingsDialog = ({
   onDestroyRoom,
   onKickUser,
   onBanUser,
+  onInviteUser,
   onChangeSubject,
   isOwner,
   isModerator,
@@ -49,6 +52,7 @@ export const RoomSettingsDialog = ({
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [showDestroyDialog, setShowDestroyDialog] = useState(false);
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [subject, setSubject] = useState('');
 
   useEffect(() => {
@@ -98,6 +102,24 @@ export const RoomSettingsDialog = ({
     } finally {
       setIsLoading(false);
       setShowDestroyDialog(false);
+    }
+  };
+
+  const handleInviteUser = async (userJid: string, reason?: string) => {
+    if (!room) return;
+    
+    try {
+      await onInviteUser(userJid, reason);
+      toast({
+        title: 'Invitation Sent',
+        description: `Invited ${userJid} to the room`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Failed to Send Invitation',
+        description: error.message,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -190,6 +212,12 @@ export const RoomSettingsDialog = ({
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      <InviteUserDialog
+        open={showInviteDialog}
+        onOpenChange={setShowInviteDialog}
+        onInvite={handleInviteUser}
+      />
 
       <AlertDialog open={showDestroyDialog} onOpenChange={setShowDestroyDialog}>
         <AlertDialogContent>
