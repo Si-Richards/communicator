@@ -1,4 +1,4 @@
-import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare } from 'lucide-react';
+import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -39,6 +39,7 @@ export const UnifiedChatView = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [showMucDialog, setShowMucDialog] = useState(false);
   const [pendingMucJid, setPendingMucJid] = useState('');
+  const [isRefreshingRooms, setIsRefreshingRooms] = useState(false);
 
   const { 
     uiConnection,
@@ -57,7 +58,8 @@ export const UnifiedChatView = () => {
     removeConversation,
     removeRoom,
     joinRoom,
-    nickname
+    nickname,
+    refreshRooms
   } = useXmpp();
 
   // Memoized computation for unified items
@@ -236,6 +238,19 @@ export const UnifiedChatView = () => {
       setPendingMucJid('');
     } catch (error) {
       console.error('Failed to join room:', error);
+    }
+  };
+
+  const handleRefreshRooms = async () => {
+    if (isRefreshingRooms || !refreshRooms) return;
+    
+    setIsRefreshingRooms(true);
+    try {
+      await refreshRooms();
+    } catch (error) {
+      console.error('Failed to refresh rooms:', error);
+    } finally {
+      setIsRefreshingRooms(false);
     }
   };
 
@@ -442,6 +457,16 @@ export const UnifiedChatView = () => {
             </Button>
             
             <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRefreshRooms}
+                disabled={uiConnection !== 'connected' || isRefreshingRooms}
+                title="Refresh rooms to remove deleted rooms from server"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshingRooms ? 'animate-spin' : ''}`} />
+              </Button>
+              
               <Button
                 size="sm"
                 variant={showArchived ? "default" : "outline"}

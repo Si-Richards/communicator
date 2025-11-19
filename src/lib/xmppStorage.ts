@@ -188,6 +188,22 @@ export class XmppStorage {
     this.saveStorageData(data);
   }
 
+  deleteRoom(roomJid: string) {
+    if (!this.currentAccount) return;
+    
+    const data = this.getStorageData();
+    const accountData = data.accounts[this.currentAccount];
+    
+    if (!accountData) return;
+    
+    // Remove room from storage
+    accountData.rooms = accountData.rooms.filter(r => r.jid !== roomJid);
+    accountData.lastSync = new Date().toISOString();
+    
+    this.saveStorageData(data);
+    console.log(`Deleted room from storage: ${roomJid}`);
+  }
+
   clearAll() {
     localStorage.removeItem(this.storageKey);
   }

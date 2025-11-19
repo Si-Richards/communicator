@@ -103,6 +103,7 @@ type XmppContextType = {
   listMucServices: () => Promise<string[]>;
   listRooms: (serviceJid: string) => Promise<Array<{jid: string; name: string}>>;
   searchUsers: (searchTerm: string) => Promise<Array<{jid: string; name: string}>>;
+  refreshRooms: () => Promise<void>;
   
   // Typing indicators
   sendTypingNotification: (to: string, state: 'composing' | 'paused' | 'active') => void;
@@ -586,6 +587,11 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // Background: Discover MUC services (non-blocking, failures are OK)
                 featureDetectorRef.current?.discoverMucServices().catch(err => {
                   console.debug('MUC discovery failed (non-critical):', err.message);
+                });
+                
+                // Background: Sync rooms with server to clean up stale rooms
+                syncRoomsWithServer().catch(err => {
+                  console.debug('Room sync failed (non-critical):', err.message);
                 });
               }, 2000); // Wait 2 seconds for stability
               
@@ -1173,6 +1179,17 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   }, []);
 
+  const handleRoomNotFound = useCallback((roomJid: string) => {
+    console.warn('Room no longer exists on server, removing:', roomJid);
+    
+    // Remove from state
+    setRooms(prev => prev.filter(r => r.jid !== roomJid));
+    
+    // Remove from storage
+    const storage = require('@/lib/xmppStorage').xmppStorage;
+    storage.deleteRoom(roomJid);
+  }, []);
+
   const joinRoom = useCallback(async (roomJid: string, nick: string, password?: string): Promise<boolean> => {
     if (!xmppRef.current || connectionState !== 'connected') return false;
 
@@ -1192,11 +1209,20 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ));
       
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to join room:", error);
+      
+      // Check if room doesn't exist (item-not-found or gone error)
+      if (error?.message?.includes('item-not-found') || 
+          error?.message?.includes('gone') ||
+          error?.condition === 'item-not-found' ||
+          error?.condition === 'gone') {
+        handleRoomNotFound(roomJid);
+      }
+      
       return false;
     }
-  }, [ensureRoom]);
+  }, [ensureRoom, handleRoomNotFound]);
 
   const leaveRoom = useCallback((roomJid: string) => {
     if (!xmppRef.current || connectionState !== 'connected') return;
@@ -1282,11 +1308,20 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to send room message:", error);
+      
+      // Check if room doesn't exist
+      if (error?.message?.includes('item-not-found') || 
+          error?.message?.includes('gone') ||
+          error?.condition === 'item-not-found' ||
+          error?.condition === 'gone') {
+        handleRoomNotFound(roomJid);
+      }
+      
       return false;
     }
-  }, [rooms]);
+  }, [rooms, handleRoomNotFound]);
 
   const inviteToRoom = useCallback((roomJid: string, userJid: string, reason?: string) => {
     if (!xmppRef.current) return;
@@ -1398,6 +1433,57 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return [];
     }
   }, []);
+
+  const syncRoomsWithServer = useCallback(async (): Promise<void> => {
+    if (connectionState !== 'connected') return;
+    
+    try {
+      console.log('Syncing rooms with server...');
+      
+      // Get all MUC services
+      const services = await listMucServices();
+      if (services.length === 0) {
+        console.log('No MUC services found');
+        return;
+      }
+      
+      // Get all rooms from all services
+      const allServerRooms: Set<string> = new Set();
+      for (const service of services) {
+        const serviceRooms = await listRooms(service);
+        serviceRooms.forEach(room => allServerRooms.add(room.jid));
+      }
+      
+      // Find rooms that exist locally but not on server
+      const staleRooms = rooms.filter(room => !allServerRooms.has(room.jid));
+      
+      if (staleRooms.length > 0) {
+        console.log(`Found ${staleRooms.length} stale room(s), removing:`, staleRooms.map(r => r.jid));
+        
+        // Remove stale rooms from state
+        setRooms(prev => prev.filter(room => allServerRooms.has(room.jid)));
+        
+        // Remove from storage
+        const storage = require('@/lib/xmppStorage').xmppStorage;
+        staleRooms.forEach(room => storage.deleteRoom(room.jid));
+        
+        // Show toast notification
+        const { toast } = require('@/hooks/use-toast');
+        toast({
+          title: 'Rooms Cleaned Up',
+          description: `Removed ${staleRooms.length} room(s) that no longer exist on the server.`,
+        });
+      } else {
+        console.log('All local rooms are valid');
+      }
+    } catch (error) {
+      console.error('Failed to sync rooms with server:', error);
+    }
+  }, [connectionState, listMucServices, listRooms, rooms]);
+
+  const refreshRooms = useCallback(async (): Promise<void> => {
+    await syncRoomsWithServer();
+  }, [syncRoomsWithServer]);
 
   const loadRoster = useCallback(async (): Promise<void> => {
     // Store client reference to avoid race condition
@@ -1584,6 +1670,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     listMucServices,
     listRooms,
     searchUsers,
+    refreshRooms,
     
     // Typing indicators
     sendTypingNotification,
