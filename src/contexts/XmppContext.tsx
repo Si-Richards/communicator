@@ -775,9 +775,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const self = occupants.find(o => o.nick === room.nick);
         const isOwner = self?.affiliation === "owner";
+        
+        // Mark room as joined when we receive our own presence
+        const isSelfPresence = nick === room.nick && type !== "unavailable";
 
         const copy = prev.slice();
-        copy[idx] = { ...room, occupants, isOwner };
+        copy[idx] = { ...room, occupants, isOwner, joined: isSelfPresence || room.joined };
         return copy;
       });
       return;
@@ -1228,10 +1231,9 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error("Failed to join room:", error);
       
-      // Check if room doesn't exist or join failed
+      // Check if room doesn't exist or join failed (but not timeouts - room may exist but be slow)
       if (error?.message?.includes('item-not-found') || 
           error?.message?.includes('gone') ||
-          error?.message?.includes('timeout') ||
           error?.condition === 'item-not-found' ||
           error?.condition === 'gone') {
         handleRoomNotFound(roomJid);
