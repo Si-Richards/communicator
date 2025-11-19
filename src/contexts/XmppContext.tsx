@@ -1204,6 +1204,22 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       await xmppRef.current.send(presenceStanza);
       
+      // Wait for join confirmation with timeout
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Room join timeout'));
+        }, 5000);
+
+        const checkJoin = setInterval(() => {
+          const room = rooms.find(r => r.jid === roomJid);
+          if (room?.joined) {
+            clearTimeout(timeout);
+            clearInterval(checkJoin);
+            resolve();
+          }
+        }, 100);
+      });
+      
       setRooms(prev => prev.map(room => 
         room.jid === roomJid ? { ...room, joined: true, nick } : room
       ));
@@ -1212,9 +1228,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error("Failed to join room:", error);
       
-      // Check if room doesn't exist (item-not-found or gone error)
+      // Check if room doesn't exist or join failed
       if (error?.message?.includes('item-not-found') || 
           error?.message?.includes('gone') ||
+          error?.message?.includes('timeout') ||
           error?.condition === 'item-not-found' ||
           error?.condition === 'gone') {
         handleRoomNotFound(roomJid);
@@ -1222,7 +1239,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       return false;
     }
-  }, [ensureRoom, handleRoomNotFound]);
+  }, [ensureRoom, handleRoomNotFound, rooms, connectionState]);
 
   const leaveRoom = useCallback((roomJid: string) => {
     if (!xmppRef.current || connectionState !== 'connected') return;

@@ -1,18 +1,18 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { useXmpp } from '@/contexts/XmppContext';
+import { toast } from 'sonner';
 
 interface CreateRoomDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateRoom: (config: RoomConfig) => Promise<void>;
 }
 
+// Export RoomConfig for RoomSettingsDialog
 export interface RoomConfig {
   roomJid: string;
   name: string;
@@ -27,194 +27,96 @@ export interface RoomConfig {
   allowInvites?: boolean;
 }
 
-export const CreateRoomDialog = ({ open, onOpenChange, onCreateRoom }: CreateRoomDialogProps) => {
-  const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState<RoomConfig>({
-    roomJid: '',
-    name: '',
-    description: '',
-    persistent: true,
-    public: true,
-    membersOnly: false,
-    moderated: false,
-    passwordProtected: false,
-    password: '',
-    maxUsers: 100,
-    allowInvites: true,
-  });
+export const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({ open, onOpenChange }) => {
+  const [roomName, setRoomName] = useState('');
+  const [password, setPassword] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const { joinRoom, nickname, effectiveJid } = useXmpp();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formData.roomJid || !formData.name) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please provide room JID and name',
-        variant: 'destructive',
-      });
+  const handleCreate = async () => {
+    if (!roomName.trim()) {
+      toast.error('Please enter a room name');
       return;
     }
 
-    setIsLoading(true);
+    // Get domain from effective JID
+    const domain = effectiveJid?.split('@')[1] || 'ejabberd.voicehost.io';
+    const roomLocalPart = roomName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const roomJid = `${roomLocalPart}@conference.${domain}`;
+
+    setIsCreating(true);
     try {
-      await onCreateRoom(formData);
-      toast({
-        title: 'Room Created',
-        description: `Successfully created room: ${formData.name}`,
-      });
-      onOpenChange(false);
-      setFormData({
-        roomJid: '',
-        name: '',
-        description: '',
-        persistent: true,
-        public: true,
-        membersOnly: false,
-        moderated: false,
-        passwordProtected: false,
-        password: '',
-        maxUsers: 100,
-        allowInvites: true,
-      });
-    } catch (error: any) {
-      toast({
-        title: 'Failed to Create Room',
-        description: error.message || 'An error occurred',
-        variant: 'destructive',
-      });
+      // Joining a room creates it if it doesn't exist
+      const success = await joinRoom(roomJid, nickname || 'User', password || undefined);
+
+      if (success) {
+        toast.success('Room created successfully');
+        onOpenChange(false);
+        // Reset form
+        setRoomName('');
+        setPassword('');
+      } else {
+        toast.error('Failed to create room');
+      }
+    } catch (error) {
+      console.error('Error creating room:', error);
+      toast.error('Failed to create room');
     } finally {
-      setIsLoading(false);
+      setIsCreating(false);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>Create New Room</DialogTitle>
           <DialogDescription>
-            Configure your new chat room settings
+            Create a new chat room
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="roomJid">Room JID *</Label>
-              <Input
-                id="roomJid"
-                placeholder="myroom@conference.server.com"
-                value={formData.roomJid}
-                onChange={(e) => setFormData({ ...formData, roomJid: e.target.value })}
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="name">Room Name *</Label>
-              <Input
-                id="name"
-                placeholder="My Chat Room"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="description">Description</Label>
-              <Input
-                id="description"
-                placeholder="Room description..."
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="persistent">Persistent Room</Label>
-                <Switch
-                  id="persistent"
-                  checked={formData.persistent}
-                  onCheckedChange={(checked) => setFormData({ ...formData, persistent: checked })}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label htmlFor="public">Public Room</Label>
-                <Switch
-                  id="public"
-                  checked={formData.public}
-                  onCheckedChange={(checked) => setFormData({ ...formData, public: checked })}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label htmlFor="membersOnly">Members Only</Label>
-                <Switch
-                  id="membersOnly"
-                  checked={formData.membersOnly}
-                  onCheckedChange={(checked) => setFormData({ ...formData, membersOnly: checked })}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label htmlFor="moderated">Moderated</Label>
-                <Switch
-                  id="moderated"
-                  checked={formData.moderated}
-                  onCheckedChange={(checked) => setFormData({ ...formData, moderated: checked })}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label htmlFor="passwordProtected">Password Protected</Label>
-                <Switch
-                  id="passwordProtected"
-                  checked={formData.passwordProtected}
-                  onCheckedChange={(checked) => setFormData({ ...formData, passwordProtected: checked })}
-                />
-              </div>
-
-              {formData.passwordProtected && (
-                <div>
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Room password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  />
-                </div>
-              )}
-
-              <div>
-                <Label htmlFor="maxUsers">Max Users</Label>
-                <Input
-                  id="maxUsers"
-                  type="number"
-                  min="2"
-                  max="1000"
-                  value={formData.maxUsers}
-                  onChange={(e) => setFormData({ ...formData, maxUsers: parseInt(e.target.value) || 100 })}
-                />
-              </div>
-            </div>
+        <div className="grid gap-4 py-4">
+          <div className="grid gap-2">
+            <Label htmlFor="room-name">Room Name *</Label>
+            <Input
+              id="room-name"
+              value={roomName}
+              onChange={(e) => setRoomName(e.target.value)}
+              placeholder="My Awesome Room"
+              disabled={isCreating}
+            />
+            <p className="text-xs text-muted-foreground">
+              Room will be created automatically when you join
+            </p>
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create Room
-            </Button>
+          <div className="grid gap-2">
+            <Label htmlFor="room-password">Password (Optional)</Label>
+            <Input
+              id="room-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Leave empty for no password"
+              disabled={isCreating}
+            />
           </div>
-        </form>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isCreating}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleCreate} disabled={isCreating}>
+            {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Create & Join Room
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

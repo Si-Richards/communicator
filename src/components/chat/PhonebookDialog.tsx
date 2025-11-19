@@ -105,7 +105,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
         clearTimeout(loadTimeoutRef.current);
       }
     };
-  }, [open, uiConnection, connectionState, loadRoster]);
+  }, [open, uiConnection, loadRoster]);
 
   const handleLoadServices = async () => {
     // Prevent duplicate calls
