@@ -1322,15 +1322,43 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     xmppRef.current.send(presenceStanza).catch(console.error);
     
-    setRooms(prev => prev.map(room => 
-      room.jid === roomJid ? { ...room, joined: false, occupants: [] } : room
-    ));
-  }, [rooms]);
+    // Remove from state completely
+    setRooms(prev => prev.filter(r => r.jid !== roomJid));
+    
+    // Remove from storage
+    xmppStorage.deleteRoom(roomJid);
+    
+    console.info('Left room:', roomJid);
+  }, [rooms, connectionState]);
 
   const destroyRoom = useCallback(async (roomJid: string, reason?: string): Promise<boolean> => {
-    // Implementation for destroying rooms (requires owner privileges)
-    return false;
-  }, []);
+    if (!xmppRef.current || connectionState !== 'connected') return false;
+
+    try {
+      // Create the destroy IQ stanza (MUC#owner)
+      const destroyIq = xml("iq", { type: "set", to: roomJid, id: `destroy-${Date.now()}` },
+        xml("query", { xmlns: "http://jabber.org/protocol/muc#owner" },
+          xml("destroy", {},
+            reason ? xml("reason", {}, reason) : null
+          )
+        )
+      );
+
+      await xmppRef.current.send(destroyIq);
+      
+      // Remove from state
+      setRooms(prev => prev.filter(r => r.jid !== roomJid));
+      
+      // Remove from storage
+      xmppStorage.deleteRoom(roomJid);
+      
+      console.info('Room destroyed:', roomJid);
+      return true;
+    } catch (error) {
+      console.error('Failed to destroy room:', error);
+      return false;
+    }
+  }, [connectionState]);
 
   const sendRoomMessage = useCallback(async (roomJid: string, body: string): Promise<boolean> => {
     if (!messageHandlerRef.current || connectionState !== 'connected') return false;
