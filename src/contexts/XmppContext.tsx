@@ -339,15 +339,18 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const bumpGen = () => { genRef.current += 1; return genRef.current; };
 
   const startReconnectGrace = useCallback(() => {
-    setShowReconnecting(true);
-    if (reconnectGraceTimerRef.current) {
-      clearTimeout(reconnectGraceTimerRef.current);
+    // Only show reconnecting if we're actually disconnected
+    if (connectionState !== 'connected') {
+      setShowReconnecting(true);
+      if (reconnectGraceTimerRef.current) {
+        clearTimeout(reconnectGraceTimerRef.current);
+      }
+      reconnectGraceTimerRef.current = setTimeout(() => {
+        setShowReconnecting(false);
+        reconnectGraceTimerRef.current = null;
+      }, 10000);
     }
-    reconnectGraceTimerRef.current = setTimeout(() => {
-      setShowReconnecting(false);
-      reconnectGraceTimerRef.current = null;
-    }, 10000);
-  }, []);
+  }, [connectionState]);
 
   const clearReconnectGrace = useCallback(() => {
     if (reconnectGraceTimerRef.current) {
@@ -688,7 +691,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     stopKeepAlivePing(); // Clear any existing timer
     
     keepAliveTimerRef.current = setInterval(async () => {
-      if (connectionState !== 'connected' || !featureDetectorRef.current) {
+      if (connectionState !== 'connected' || !featureDetectorRef.current || !xmppRef.current) {
         return;
       }
       
@@ -697,10 +700,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (latency !== null) {
           console.debug(`Keep-alive ping: ${latency}ms`);
         } else {
-          console.warn('Keep-alive ping failed, connection may be unstable');
+          // Only log warning, don't trigger reconnect on single ping failure
+          console.debug('Keep-alive ping response delayed or timed out');
         }
       } catch (error) {
-        console.error('Keep-alive ping error:', error);
+        // Ping failures are normal and shouldn't trigger reconnection
+        console.debug('Keep-alive ping error (non-critical):', error);
       }
     }, 30000); // Ping every 30 seconds
   }, [connectionState]);
@@ -1180,12 +1185,28 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const handleRoomNotFound = useCallback((roomJid: string) => {
     console.warn('Room no longer exists on server, removing:', roomJid);
     
+    // Send unavailable presence to properly leave on server
+    if (xmppRef.current) {
+      try {
+        const room = rooms.find(r => r.jid === roomJid);
+        if (room?.nick) {
+          const presenceStanza = xml("presence", {
+            to: `${roomJid}/${room.nick}`,
+            type: "unavailable"
+          });
+          xmppRef.current.send(presenceStanza).catch(console.error);
+        }
+      } catch (error) {
+        console.error('Failed to send leave presence:', error);
+      }
+    }
+    
     // Remove from state
     setRooms(prev => prev.filter(r => r.jid !== roomJid));
     
     // Remove from storage
     xmppStorage.deleteRoom(roomJid);
-  }, []);
+  }, [rooms]);
 
   const joinRoom = useCallback(async (roomJid: string, nick: string, password?: string): Promise<boolean> => {
     if (!xmppRef.current || connectionState !== 'connected') return false;
