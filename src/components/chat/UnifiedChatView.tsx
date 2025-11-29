@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { MessageComposer } from './MessageComposer';
@@ -455,59 +456,77 @@ export const UnifiedChatView = () => {
       <div className="w-1/3 border-r border-border flex flex-col min-h-0">
         <div className="p-4 border-b border-border flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIsPhonebookOpen(true)}
-                disabled={uiConnection !== 'connected'}
-              >
-                <BookUser className="h-4 w-4 mr-1" />
-                Phonebook
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIsCreateRoomOpen(true)}
-                disabled={uiConnection !== 'connected'}
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Create Room
-              </Button>
-            </div>
+            <TooltipProvider>
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setIsPhonebookOpen(true)}
+                      disabled={uiConnection !== 'connected'}
+                    >
+                      <BookUser className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Phonebook</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setIsCreateRoomOpen(true)}
+                      disabled={uiConnection !== 'connected'}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Create Room</TooltipContent>
+                </Tooltip>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleRefreshRooms}
+                      disabled={uiConnection !== 'connected' || isRefreshingRooms}
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isRefreshingRooms ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Refresh Rooms</TooltipContent>
+                </Tooltip>
+                
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant={showArchived ? "default" : "outline"}
+                      onClick={() => setShowArchived(!showArchived)}
+                    >
+                      <Archive className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{showArchived ? 'Hide' : 'Show'} Archived</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
             
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleRefreshRooms}
-                disabled={uiConnection !== 'connected' || isRefreshingRooms}
-                title="Refresh rooms to remove deleted rooms from server"
-              >
-                <RefreshCw className={`h-4 w-4 ${isRefreshingRooms ? 'animate-spin' : ''}`} />
-              </Button>
-              
-              <Button
-                size="sm"
-                variant={showArchived ? "default" : "outline"}
-                onClick={() => setShowArchived(!showArchived)}
-              >
-                <Archive className="h-4 w-4 mr-1" />
-                {showArchived ? 'Hide' : 'Show'} Archived
-              </Button>
-              
-              <Select value={sortMode} onValueChange={(value: 'newest' | 'a-z' | 'z-a') => setSortMode(value)}>
-                <SelectTrigger className="w-28">
-                  <ArrowUpDown className="h-4 w-4 mr-1" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="newest">Newest</SelectItem>
-                  <SelectItem value="a-z">A–Z</SelectItem>
-                  <SelectItem value="z-a">Z–A</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+             <Select value={sortMode} onValueChange={(value: 'newest' | 'a-z' | 'z-a') => setSortMode(value)}>
+              <SelectTrigger className="w-28">
+                <ArrowUpDown className="h-4 w-4 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest</SelectItem>
+                <SelectItem value="a-z">A–Z</SelectItem>
+                <SelectItem value="z-a">Z–A</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           
           <div className="relative">
