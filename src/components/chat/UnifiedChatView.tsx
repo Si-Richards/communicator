@@ -61,7 +61,9 @@ export const UnifiedChatView = () => {
     removeRoom,
     joinRoom,
     nickname,
-    refreshRooms
+    refreshRooms,
+    destroyRoom,
+    leaveRoom
   } = useXmpp();
 
   // Memoized computation for unified items
@@ -205,11 +207,16 @@ export const UnifiedChatView = () => {
     }
   };
 
-  const handleDeleteItem = (item: UnifiedItem) => {
+  const handleDeleteItem = async (item: UnifiedItem) => {
     if (item.kind === 'direct') {
       removeConversation(item.jid);
     } else {
-      removeRoom(item.jid);
+      // For rooms: destroy if owner, otherwise leave
+      if (item.isOwner) {
+        await destroyRoom(item.jid, 'Room deleted by owner');
+      } else {
+        leaveRoom(item.jid);
+      }
     }
     // If the deleted item was selected, clear selection
     if (selectedItem?.jid === item.jid) {
