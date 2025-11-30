@@ -17,6 +17,7 @@ import Voicemail from "./pages/Voicemail";
 import Chat from "./pages/Chat";
 import SMS from "./pages/SMS";
 import SettingsPage from "./pages/SettingsPage";
+import CallQualityReport from "./pages/CallQualityReport";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ const App = () => (
                         <Route path="/" element={<Dial />} />
                         <Route path="/contacts" element={<Contacts />} />
                         <Route path="/history" element={<History />} />
+                        <Route path="/call-quality" element={<CallQualityReport />} />
                         <Route path="/voicemail" element={<Voicemail />} />
                         <Route path="/messages" element={<Chat />} />
                         <Route path="/chat" element={<Navigate to="/messages" replace />} />
