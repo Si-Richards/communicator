@@ -120,6 +120,22 @@ export const CallInterface = () => {
             <div className="text-lg font-mono text-primary font-semibold">
               {callTimer}
             </div>
+            {callState.audioQuality && (
+              <div className="text-xs mt-1">
+                <Badge 
+                  variant={
+                    callState.audioQuality === 'excellent' ? 'default' :
+                    callState.audioQuality === 'good' ? 'secondary' :
+                    callState.audioQuality === 'fair' ? 'outline' : 'destructive'
+                  }
+                  className="text-[10px] px-1 py-0"
+                >
+                  {callState.audioQuality === 'excellent' ? '● Excellent' :
+                   callState.audioQuality === 'good' ? '● Good' :
+                   callState.audioQuality === 'fair' ? '● Fair' : '● Poor'}
+                </Badge>
+              </div>
+            )}
           </div>
         )}
 
