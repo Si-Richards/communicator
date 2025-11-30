@@ -3,7 +3,7 @@ import { toast, useToast } from '@/hooks/use-toast'
 import { ToastAction } from '@/components/ui/toast'
 import { Phone, PhoneOff } from 'lucide-react'
 import { loadJanus, getJanus } from '@/lib/janusLoader'
-import { AudioQualityOptimizer, getOptimalAudioConstraints } from '@/lib/audioQualityOptimizer'
+import { AudioQualityOptimizer, getOptimalAudioConstraints, getJitterBufferTargetMs } from '@/lib/audioQualityOptimizer'
 import { ringtoneManager } from '@/lib/ringtoneManager'
 import { notificationManager } from '@/lib/notificationManager'
 import { useSettings } from './SettingsContext'
@@ -72,6 +72,8 @@ interface CallState {
     toTag?: string
     remoteUri?: string
   }
+  // Audio quality metrics
+  audioQuality?: 'excellent' | 'good' | 'fair' | 'poor'
 }
 
 interface JanusContextType {
@@ -1063,36 +1065,46 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         console.log("Remote track:", track.kind, mindex, on)
         if (track.kind === 'audio' && on) {
           const stream = new MediaStream([track])
-          setCallState(prev => ({ ...prev, remoteStream: stream }))
           
-          // Enhanced audio playback with optimized settings
-          const audioElement = document.createElement('audio')
-          audioElement.srcObject = stream
-          audioElement.autoplay = true
-          audioElement.controls = false
-          audioElement.muted = false
-          
-          // Optimize for low latency and quality
-          audioElement.setAttribute('playsinline', 'true')
-          audioElement.setAttribute('webkit-playsinline', 'true')
-          
-          // Set audio context for better processing
+          // Apply jitter buffer settings to the receiver
           try {
-            if ('audioTracks' in stream) {
-              const audioTracks = stream.getAudioTracks()
-              if (audioTracks.length > 0) {
-                const audioTrack = audioTracks[0]
-                const settings = audioTrack.getSettings()
-                console.log("Remote audio track settings:", settings)
+            const pc = sipPluginRef.current?.webrtcStuff?.pc
+            if (pc) {
+              const receivers = pc.getReceivers()
+              const audioReceiver = receivers.find((r: RTCRtpReceiver) => r.track?.kind === 'audio')
+              
+              if (audioReceiver && 'jitterBufferTarget' in audioReceiver) {
+                const targetMs = getJitterBufferTargetMs(settings.audioQuality.jitterBufferSize)
+                ;(audioReceiver as any).jitterBufferTarget = targetMs
+                console.log(`Jitter buffer target set to ${targetMs}ms`)
               }
             }
           } catch (error) {
-            console.warn("Could not access audio track settings:", error)
+            console.warn("Could not configure jitter buffer:", error)
           }
           
-          audioElement.play().catch(error => {
-            console.error("Failed to play remote audio:", error)
-          })
+          // Process remote audio with enhanced optimization
+          const optimizedResult = audioOptimizerRef.current?.optimizeRemoteAudio(stream)
+          
+          if (optimizedResult) {
+            setCallState(prev => ({ ...prev, remoteStream: stream }))
+            console.log("Remote audio optimized with Web Audio API processing")
+          } else {
+            // Fallback to standard audio element if optimization fails
+            setCallState(prev => ({ ...prev, remoteStream: stream }))
+            
+            const audioElement = document.createElement('audio')
+            audioElement.srcObject = stream
+            audioElement.autoplay = true
+            audioElement.controls = false
+            audioElement.muted = false
+            audioElement.setAttribute('playsinline', 'true')
+            audioElement.setAttribute('webkit-playsinline', 'true')
+            
+            audioElement.play().catch(error => {
+              console.error("Failed to play remote audio:", error)
+            })
+          }
         } else if (track.kind === 'video' && on) {
           const stream = new MediaStream([track])
           setCallState(prev => ({ ...prev, remoteVideoStream: stream }))
@@ -1617,6 +1629,44 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
       disconnect()
     }
   }, [initJanus, disconnect])
+
+  // Monitor audio quality during calls
+  useEffect(() => {
+    if (callState.status !== 'incall' || !sipPluginRef.current?.webrtcStuff?.pc) {
+      return
+    }
+
+    const monitorQuality = async () => {
+      if (!audioOptimizerRef.current || !sipPluginRef.current?.webrtcStuff?.pc) {
+        return
+      }
+
+      try {
+        const metrics = await audioOptimizerRef.current.monitorCallQuality(
+          sipPluginRef.current.webrtcStuff.pc
+        )
+        const quality = audioOptimizerRef.current.getQualityAssessment()
+        
+        setCallState(prev => ({ ...prev, audioQuality: quality }))
+        
+        // Log quality issues
+        if (quality === 'poor' || quality === 'fair') {
+          const recommendations = audioOptimizerRef.current.getQualityRecommendations()
+          console.warn('Audio quality issues detected:', quality, recommendations)
+        }
+      } catch (error) {
+        console.warn('Failed to monitor call quality:', error)
+      }
+    }
+
+    // Monitor every 2 seconds during call
+    const intervalId = setInterval(monitorQuality, 2000)
+    
+    // Initial check
+    monitorQuality()
+
+    return () => clearInterval(intervalId)
+  }, [callState.status])
 
   // Reconnect function that resets retry state
   const reconnect = useCallback(async () => {

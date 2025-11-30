@@ -157,8 +157,24 @@ export const MultiCallInterface = () => {
                     {call.phoneNumber}
                   </div>
                   {call.status === 'incall' && !call.isOnHold && call.id === callsState.activeCallId && (
-                    <div className="text-xl font-mono text-primary mt-1">
-                      {callTimer}
+                    <div className="space-y-1">
+                      <div className="text-xl font-mono text-primary mt-1">
+                        {callTimer}
+                      </div>
+                      {callsState.audioQuality && (
+                        <Badge 
+                          variant={
+                            callsState.audioQuality === 'excellent' ? 'default' :
+                            callsState.audioQuality === 'good' ? 'secondary' :
+                            callsState.audioQuality === 'fair' ? 'outline' : 'destructive'
+                          }
+                          className="text-[10px] px-1 py-0"
+                        >
+                          {callsState.audioQuality === 'excellent' ? '● Excellent' :
+                           callsState.audioQuality === 'good' ? '● Good' :
+                           callsState.audioQuality === 'fair' ? '● Fair' : '● Poor'}
+                        </Badge>
+                      )}
                     </div>
                   )}
                 </div>
