@@ -1,5 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
+export interface CallQualityMetrics {
+  packetsLost: number;
+  packetsReceived: number;
+  jitter: number;
+  roundTripTime: number;
+  audioLevel: number;
+  quality: 'excellent' | 'good' | 'fair' | 'poor';
+}
+
 export interface CallRecord {
   id: string;
   phoneNumber: string;
@@ -8,6 +17,7 @@ export interface CallRecord {
   timestamp: Date;
   type: 'incoming' | 'outgoing' | 'missed';
   answered: boolean;
+  qualityMetrics?: CallQualityMetrics;
 }
 
 interface CallHistoryContextType {
@@ -26,6 +36,13 @@ interface CallHistoryContextType {
     missedCalls: number;
     answeredCalls: number;
     averageDuration: number;
+  };
+  getQualityStats: () => {
+    averageQuality: number;
+    qualityDistribution: Record<string, number>;
+    averagePacketLoss: number;
+    averageJitter: number;
+    callsWithMetrics: number;
   };
 }
 
@@ -152,6 +169,44 @@ export const CallHistoryProvider: React.FC<{ children: ReactNode }> = ({ childre
     };
   };
 
+  const getQualityStats = () => {
+    const callsWithMetrics = callHistory.filter(record => record.qualityMetrics);
+    const qualityMap: Record<string, number> = { excellent: 4, good: 3, fair: 2, poor: 1 };
+    
+    let totalQuality = 0;
+    let totalPacketLoss = 0;
+    let totalJitter = 0;
+    const qualityDistribution: Record<string, number> = {
+      excellent: 0,
+      good: 0,
+      fair: 0,
+      poor: 0
+    };
+
+    callsWithMetrics.forEach(record => {
+      if (record.qualityMetrics) {
+        const quality = record.qualityMetrics.quality;
+        totalQuality += qualityMap[quality] || 0;
+        qualityDistribution[quality]++;
+        
+        const { packetsLost, packetsReceived, jitter } = record.qualityMetrics;
+        if (packetsReceived > 0) {
+          totalPacketLoss += (packetsLost / (packetsLost + packetsReceived)) * 100;
+        }
+        totalJitter += jitter;
+      }
+    });
+
+    const count = callsWithMetrics.length;
+    return {
+      averageQuality: count > 0 ? totalQuality / count : 0,
+      qualityDistribution,
+      averagePacketLoss: count > 0 ? totalPacketLoss / count : 0,
+      averageJitter: count > 0 ? totalJitter / count : 0,
+      callsWithMetrics: count
+    };
+  };
+
   const value: CallHistoryContextType = {
     callHistory,
     addCallRecord,
@@ -163,6 +218,7 @@ export const CallHistoryProvider: React.FC<{ children: ReactNode }> = ({ childre
     exportHistory,
     importHistory,
     getCallStats,
+    getQualityStats,
   };
 
   return <CallHistoryContext.Provider value={value}>{children}</CallHistoryContext.Provider>;

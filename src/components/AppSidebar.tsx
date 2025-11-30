@@ -1,4 +1,4 @@
-import { Phone, Users, History, Settings, User, RefreshCw, Moon, Voicemail, MessageSquare, MessageCircle, UsersRound, Edit3, Check, X } from "lucide-react"
+import { Phone, Users, History, Settings, User, RefreshCw, Moon, Voicemail, MessageSquare, MessageCircle, UsersRound, Edit3, Check, X, BarChart3 } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useJanusContext } from "@/contexts/JanusContext"
 import { useXmpp } from "@/contexts/XmppContext"
@@ -30,6 +30,7 @@ const items = [
   { title: "Dialpad", url: "/", icon: Phone },
   { title: "Contacts", url: "/contacts", icon: Users },
   { title: "Call History", url: "/history", icon: History },
+  { title: "Call Quality", url: "/call-quality", icon: BarChart3 },
   { title: "Voicemail", url: "/voicemail", icon: Voicemail },
   { title: "Chat", url: "/messages", icon: MessageSquare },
   { title: "SMS", url: "/sms", icon: MessageCircle },
