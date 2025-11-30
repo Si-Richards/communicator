@@ -624,30 +624,13 @@ export const JanusProvider = ({ children }: JanusProviderProps) => {
         const duration = Math.floor((endTime.getTime() - callStartTimeRef.current.getTime()) / 1000)
         const contact = getContactByPhoneNumber(callState.callerId)
         
-        // Prepare quality metrics if available
-        let qualityMetrics = undefined
-        if (callState.audioQuality && audioOptimizerRef.current) {
-          const metrics = audioOptimizerRef.current['qualityMetrics']
-          if (metrics) {
-            qualityMetrics = {
-              packetsLost: metrics.packetsLost,
-              packetsReceived: metrics.packetsReceived,
-              jitter: metrics.jitter,
-              roundTripTime: metrics.roundTripTime,
-              audioLevel: metrics.audioLevel,
-              quality: callState.audioQuality
-            }
-          }
-        }
-        
         addCallRecord({
           phoneNumber: callState.callerId,
           contactName: contact?.name,
           duration: duration,
           timestamp: callStartTimeRef.current,
           type: callState.direction === 'outgoing' ? 'outgoing' : 'incoming',
-          answered: callState.status === 'incall',
-          qualityMetrics
+          answered: callState.status === 'incall'
         })
       }
       
