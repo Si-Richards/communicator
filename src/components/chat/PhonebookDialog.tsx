@@ -33,6 +33,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const loadingInProgress = useRef(false);
   const loadTimeoutRef = useRef<NodeJS.Timeout>();
+  const hasLoadedRef = useRef(false);
 
   const { settings } = useSettings();
   const { 
@@ -81,6 +82,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     if (!open) {
       setConnectionError(null);
       loadingInProgress.current = false;
+      hasLoadedRef.current = false;
       return;
     }
 
@@ -93,7 +95,8 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
 
     // Debounce the load by 500ms
     loadTimeoutRef.current = setTimeout(() => {
-      if (!loadingInProgress.current) {
+      if (!loadingInProgress.current && !hasLoadedRef.current) {
+        hasLoadedRef.current = true;
         console.log('PhonebookDialog: Loading services and roster');
         handleLoadServices();
         loadRoster();
@@ -224,9 +227,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       setAllRooms(allRoomsData);
       setAvailableRooms(allRoomsData);
       
-      if (allRoomsData.length === 0) {
-        setConnectionError('No public rooms found. This server may not have public rooms or they may be hidden.');
-      }
+      // Note: No rooms is a valid state, not an error - handled in UI
     } catch (error: any) {
       if (error.name === 'ClientDisconnected' || error.message?.includes('disconnected')) {
         setConnectionError('Connection lost while loading rooms');
@@ -505,8 +506,11 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                   <div className="p-4 text-center text-muted-foreground">
                     <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">
-                      {searchTerm ? 'No rooms match your search' : 'No rooms found'}
+                      {searchTerm ? 'No rooms match your search' : 'No public rooms found'}
                     </p>
+                    {!searchTerm && (
+                      <p className="text-xs mt-1">Rooms may be hidden or require invitation</p>
+                    )}
                   </div>
                 ) : (
                   <div className="p-2">
