@@ -740,10 +740,37 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, delay);
   }, [startReconnectGrace, stopKeepAlivePing, connect]);
 
+  // Ref to track rooms for error presence handling
+  const roomsRef = useRef(rooms);
+  useEffect(() => {
+    roomsRef.current = rooms;
+  }, [rooms]);
+
   // Presence handling
   const handlePresence = useCallback((stanza: any) => {
     const from = stanza.attrs.from || "";
     const fromBare = xmppJid(from).bare().toString();
+    const presenceType = stanza.attrs.type;
+
+    // Handle error presences first (especially for MUC rooms that don't exist)
+    if (presenceType === "error") {
+      const error = stanza.getChild("error");
+      const errorCondition = error?.getChild("item-not-found") || error?.getChild("gone");
+      
+      // Check if this is a MUC room error (from a conference/muc JID)
+      if (errorCondition && from.includes("/")) {
+        const roomJid = fromBare;
+        // Check if we have this room in our state
+        const room = roomsRef.current.find(r => r.jid === roomJid);
+        if (room) {
+          console.warn('Room error presence received, removing:', roomJid, errorCondition.name);
+          // Inline room removal to avoid circular dependency
+          setRooms(prev => prev.filter(r => r.jid !== roomJid));
+          xmppStorage.deleteRoom(roomJid);
+        }
+      }
+      return; // Don't process error presences further
+    }
 
     // MUC presence
     const mucUser = stanza.getChild("x", "http://jabber.org/protocol/muc#user");
@@ -754,7 +781,6 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const role: RoomRole = (item?.attrs?.role as RoomRole) || 'none';
       const affiliation: RoomAffiliation = (item?.attrs?.affiliation as RoomAffiliation) || 'none';
       const jid = item?.attrs?.jid as string | undefined;
-      const type = stanza.attrs.type;
 
       setRooms(prev => {
         const idx = prev.findIndex(r => r.jid === roomJid);
@@ -764,12 +790,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         let occupants = [...room.occupants];
         const oi = occupants.findIndex(o => o.nick === nick);
 
-        if (type === "unavailable") {
+        if (presenceType === "unavailable") {
           if (oi !== -1) occupants.splice(oi, 1);
         } else {
           const show = stanza.getChildText("show");
           const presence: PresenceShow = 
-            type === "unavailable" ? "unavailable" :
+            presenceType === "unavailable" ? "unavailable" :
             show === "dnd" ? "dnd" :
             show === "away" || show === "xa" ? "away" :
             "available";
@@ -783,7 +809,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const isOwner = self?.affiliation === "owner";
         
         // Mark room as joined when we receive our own presence
-        const isSelfPresence = nick === room.nick && type !== "unavailable";
+        const isSelfPresence = nick === room.nick && presenceType !== "unavailable";
 
         const copy = prev.slice();
         copy[idx] = { ...room, occupants, isOwner, joined: isSelfPresence || room.joined };
@@ -794,12 +820,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Regular presence
     ensureContact(fromBare);
-    const type = stanza.attrs.type || "available";
+    const regularType = presenceType || "available";
     const show = stanza.getChildText("show");
     const status = stanza.getChildText("status");
     
     const presence: PresenceShow =
-      type === "unavailable" ? "unavailable" :
+      regularType === "unavailable" ? "unavailable" :
       show === "dnd" ? "dnd" :
       show === "away" ? "away" :
       show === "xa" ? "xa" :
@@ -1246,11 +1272,12 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error("Failed to join room:", error);
       
-      // Check if room doesn't exist or join failed (but not timeouts - room may exist but be slow)
+      // Check if room doesn't exist or join failed - also treat timeout as potential room-not-found
       if (error?.message?.includes('item-not-found') || 
           error?.message?.includes('gone') ||
           error?.condition === 'item-not-found' ||
-          error?.condition === 'gone') {
+          error?.condition === 'gone' ||
+          error?.message === 'Room join timeout') {
         handleRoomNotFound(roomJid);
       }
       
