@@ -9,7 +9,6 @@ export interface AudioQualityMetrics {
 
 export class AudioQualityOptimizer {
   private audioContext: AudioContext | null = null
-  private remoteAudioContext: AudioContext | null = null
   private qualityMetrics: AudioQualityMetrics = {
     packetsLost: 0,
     packetsReceived: 0,
@@ -33,7 +32,7 @@ export class AudioQualityOptimizer {
     }
   }
 
-  // Optimize outgoing audio stream with real-time processing
+  // Optimize audio stream with real-time processing
   optimizeAudioStream(stream: MediaStream): MediaStream {
     if (!this.audioContext || !stream.getAudioTracks().length) {
       return stream
@@ -69,45 +68,6 @@ export class AudioQualityOptimizer {
     } catch (error) {
       console.warn('Audio processing failed, using original stream:', error)
       return stream
-    }
-  }
-
-  // Optimize incoming remote audio with enhanced playback processing
-  optimizeRemoteAudio(stream: MediaStream): { stream: MediaStream; context: AudioContext } | null {
-    if (!stream.getAudioTracks().length) {
-      return null
-    }
-
-    try {
-      // Create dedicated context for remote audio with playback optimization
-      this.remoteAudioContext = new AudioContext({ 
-        latencyHint: 'playback',
-        sampleRate: 48000
-      })
-      
-      const source = this.remoteAudioContext.createMediaStreamSource(stream)
-      
-      // Add compressor for consistent volume and smoother playback
-      const compressor = this.remoteAudioContext.createDynamicsCompressor()
-      compressor.threshold.setValueAtTime(-20, this.remoteAudioContext.currentTime)
-      compressor.knee.setValueAtTime(20, this.remoteAudioContext.currentTime)
-      compressor.ratio.setValueAtTime(4, this.remoteAudioContext.currentTime)
-      compressor.attack.setValueAtTime(0.003, this.remoteAudioContext.currentTime)
-      compressor.release.setValueAtTime(0.25, this.remoteAudioContext.currentTime)
-      
-      // Add gain for output level control
-      const gainNode = this.remoteAudioContext.createGain()
-      gainNode.gain.setValueAtTime(1.0, this.remoteAudioContext.currentTime)
-      
-      // Connect processing chain to destination
-      source.connect(compressor)
-      compressor.connect(gainNode)
-      gainNode.connect(this.remoteAudioContext.destination)
-      
-      return { stream, context: this.remoteAudioContext }
-    } catch (error) {
-      console.warn('Remote audio processing failed:', error)
-      return null
     }
   }
 
@@ -183,20 +143,6 @@ export class AudioQualityOptimizer {
       this.audioContext.close()
     }
     this.audioContext = null
-    
-    if (this.remoteAudioContext && this.remoteAudioContext.state !== 'closed') {
-      this.remoteAudioContext.close()
-    }
-    this.remoteAudioContext = null
-  }
-}
-
-// Helper function to map jitter buffer size to milliseconds
-export const getJitterBufferTargetMs = (size: 'small' | 'medium' | 'large'): number => {
-  switch (size) {
-    case 'small': return 50   // Low latency
-    case 'medium': return 150 // Balanced
-    case 'large': return 300  // Smooth audio
   }
 }
 

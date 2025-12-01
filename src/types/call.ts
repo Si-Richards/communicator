@@ -28,7 +28,6 @@ export interface CallsState {
   doNotDisturb: boolean;
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   multiCallSupported: boolean;
-  audioQuality?: 'excellent' | 'good' | 'fair' | 'poor';
 }
 
 export interface DialogInfo {
