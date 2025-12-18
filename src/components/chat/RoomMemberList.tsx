@@ -24,6 +24,7 @@ export const RoomMemberList = ({ room, onKickUser, onBanUser, canManage }: RoomM
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredOccupants = room.occupants.filter((occupant) =>
+    occupant.nick !== room.nick && // Filter out self
     occupant.nick.toLowerCase().includes(searchTerm.toLowerCase())
   );
 

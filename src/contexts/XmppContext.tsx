@@ -12,6 +12,7 @@ import { useSettings } from "./SettingsContext";
 import { useXmppPersistence } from "@/hooks/useXmppPersistence";
 import { XmppStreamManager } from "@/lib/xmppStreamManagement";
 import { XmppFeatureDetector } from "@/lib/xmppFeatureDetector";
+import { JidUtils } from "@/xmpp/core/jid";
 import { XmppMessageHandler } from "@/lib/xmppMessageHandler";
 import { 
   XmppMessage, 
@@ -834,7 +835,10 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    // Regular presence
+    // Regular presence - skip MUC JIDs (they shouldn't appear as contacts)
+    if (JidUtils.isMucJid(fromBare)) {
+      return;
+    }
     ensureContact(fromBare);
     const regularType = presenceType || "available";
     const show = stanza.getChildText("show");
