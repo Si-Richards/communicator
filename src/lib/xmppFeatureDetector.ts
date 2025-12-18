@@ -43,7 +43,7 @@ export class XmppFeatureDetector {
     if (!targetJid) return this.features;
 
     try {
-      // Service discovery info
+      // Service discovery info for main server
       const discoInfoIq = xml('iq', {
         type: 'get',
         to: targetJid,
@@ -61,11 +61,62 @@ export class XmppFeatureDetector {
       // Also check stream features
       this.parseStreamFeatures();
 
+      // Discover MUC features from conference service (MUC features are typically on conference.domain)
+      await this.discoverMucFeatures(targetJid);
+
       console.log('Discovered server features:', this.features);
       return this.features;
     } catch (error) {
       console.error('Failed to discover server features:', error);
       return this.features;
+    }
+  }
+
+  // Discover MUC features from conference service
+  private async discoverMucFeatures(serverDomain: string): Promise<void> {
+    if (!this.xmpp) return;
+
+    // Common MUC service prefixes
+    const mucPrefixes = ['conference', 'muc', 'rooms', 'chat'];
+    
+    for (const prefix of mucPrefixes) {
+      const mucServiceJid = `${prefix}.${serverDomain}`;
+      
+      try {
+        const discoInfoIq = xml('iq', {
+          type: 'get',
+          to: mucServiceJid,
+          id: crypto.randomUUID()
+        }, xml('query', { xmlns: 'http://jabber.org/protocol/disco#info' }));
+
+        const response = await this.xmpp.iqCaller.request(discoInfoIq);
+        const query = response.getChild('query', 'http://jabber.org/protocol/disco#info');
+
+        if (query) {
+          const features = query.getChildren('feature');
+          for (const feature of features) {
+            const featureVar = feature.attrs.var;
+            if (featureVar === 'http://jabber.org/protocol/muc') {
+              this.features.muc = true;
+              console.debug(`MUC feature discovered on ${mucServiceJid}`);
+            }
+            if (featureVar === 'http://jabber.org/protocol/muc#admin') {
+              this.features.mucAdmin = true;
+            }
+            if (featureVar === 'http://jabber.org/protocol/muc#owner') {
+              this.features.mucOwner = true;
+            }
+          }
+          
+          // If we found MUC, we're done
+          if (this.features.muc) {
+            return;
+          }
+        }
+      } catch (error) {
+        // Service doesn't exist or is not responding, try next prefix
+        console.debug(`No MUC service at ${mucServiceJid}`);
+      }
     }
   }
 
