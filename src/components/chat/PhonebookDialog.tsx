@@ -1,14 +1,16 @@
-import { Search, Users, User as UserIcon, BookUser } from 'lucide-react';
+import { Search, Users, User as UserIcon, BookUser, Plus, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useXmpp } from '@/contexts/XmppContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { mucCache } from '@/lib/xmppMucCache';
+import { CreateRoomDialog } from './CreateRoomDialog';
 
 interface PhonebookDialogProps {
   open: boolean;
@@ -31,6 +33,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [allRooms, setAllRooms] = useState<Array<{jid: string; name: string; service: string}>>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [showCreateRoom, setShowCreateRoom] = useState(false);
   const loadingInProgress = useRef(false);
   const loadTimeoutRef = useRef<NodeJS.Timeout>();
   const hasLoadedRef = useRef(false);
@@ -41,6 +44,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     connectionState,
     contacts,
     nickname,
+    rooms,
     listMucServices,
     listRooms,
     searchUsers,
@@ -48,6 +52,11 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     connect,
     loadRoster
   } = useXmpp();
+
+  // Get set of joined room JIDs for quick lookup
+  const joinedRoomJids = useMemo(() => {
+    return new Set(rooms.map(r => r.jid.toLowerCase()));
+  }, [rooms]);
 
   // Enhanced user search with debouncing
   useEffect(() => {
@@ -467,15 +476,27 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                   <Users className="h-4 w-4" />
                   Rooms ({filteredRooms.length})
                 </h3>
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  onClick={handleLoadServices}
-                  disabled={loadingServices || loadingRooms || uiConnection !== 'connected'}
-                  className="text-xs h-7"
-                >
-                  {loadingServices || loadingRooms ? 'Loading...' : 'Refresh'}
-                </Button>
+                <div className="flex gap-1">
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    onClick={() => setShowCreateRoom(true)}
+                    disabled={uiConnection !== 'connected'}
+                    className="text-xs h-7"
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    Create
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    onClick={handleLoadServices}
+                    disabled={loadingServices || loadingRooms || uiConnection !== 'connected'}
+                    className="text-xs h-7"
+                  >
+                    {loadingServices || loadingRooms ? 'Loading...' : 'Refresh'}
+                  </Button>
+                </div>
               </div>
 
               {/* Service Selector */}
@@ -514,32 +535,63 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                   </div>
                 ) : (
                   <div className="p-2">
-                    {filteredRooms.map(room => (
-                      <div 
-                        key={room.jid}
-                        className="p-2 border-b last:border-b-0 hover:bg-muted/50 flex justify-between items-center"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm truncate">{room.name}</div>
-                          <div className="text-xs text-muted-foreground truncate">{room.jid}</div>
-                        </div>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => handleRoomJoin(room.jid)}
-                          disabled={!nickname.trim()}
-                          className="ml-2 text-xs"
+                    {filteredRooms.map(room => {
+                      const isJoined = joinedRoomJids.has(room.jid.toLowerCase());
+                      return (
+                        <div 
+                          key={room.jid}
+                          className="p-2 border-b last:border-b-0 hover:bg-muted/50 flex justify-between items-center"
                         >
-                          Join
-                        </Button>
-                      </div>
-                    ))}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate flex items-center gap-2">
+                              {room.name}
+                              {isJoined && (
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                                  <Check className="h-2.5 w-2.5 mr-0.5" />
+                                  Joined
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">{room.jid}</div>
+                          </div>
+                          {isJoined ? (
+                            <Button 
+                              size="sm" 
+                              variant="default"
+                              onClick={() => {
+                                onSelect(room.jid, 'room');
+                                onOpenChange(false);
+                              }}
+                              className="ml-2 text-xs"
+                            >
+                              Open
+                            </Button>
+                          ) : (
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => handleRoomJoin(room.jid)}
+                              disabled={!nickname.trim()}
+                              className="ml-2 text-xs"
+                            >
+                              Join
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </ScrollArea>
             </div>
           </div>
         </div>
+
+        {/* Create Room Dialog */}
+        <CreateRoomDialog 
+          open={showCreateRoom} 
+          onOpenChange={setShowCreateRoom} 
+        />
       </DialogContent>
     </Dialog>
   );
