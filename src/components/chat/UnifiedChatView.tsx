@@ -1,4 +1,4 @@
-import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw, Plus, Ban, ShieldOff } from 'lucide-react';
+import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw, Plus, Ban, ShieldOff, Reply } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -19,6 +19,7 @@ import { CreateRoomDialog } from './CreateRoomDialog';
 import { insertDateSeparators } from '@/lib/dateUtils';
 import { jid as xmppJid } from '@xmpp/client';
 import { JidUtils } from '@/xmpp/core/jid';
+import { XmppMessage } from '@/types/xmpp';
 
 interface UnifiedItem {
   kind: 'direct' | 'room';
@@ -44,6 +45,7 @@ export const UnifiedChatView = () => {
   const [showMucDialog, setShowMucDialog] = useState(false);
   const [pendingMucJid, setPendingMucJid] = useState('');
   const [isRefreshingRooms, setIsRefreshingRooms] = useState(false);
+  const [replyTo, setReplyTo] = useState<{ id: string; from: string; body: string } | null>(null);
 
   const { 
     uiConnection,
@@ -158,15 +160,26 @@ export const UnifiedChatView = () => {
     }
 
     const messageText = newMessage.trim();
+    const replyData = replyTo ? { id: replyTo.id, to: replyTo.from } : undefined;
+    
     setNewMessage(''); // Clear input immediately for better UX
+    setReplyTo(null); // Clear reply
 
     const success = selectedItem.kind === 'direct'
-      ? await sendMessage(selectedItem.jid, messageText)
-      : await sendRoomMessage(selectedItem.jid, messageText);
+      ? await sendMessage(selectedItem.jid, messageText, replyData)
+      : await sendRoomMessage(selectedItem.jid, messageText, replyData);
 
     // Note: We don't revert the cleared message on failure for better UX
     // The message will appear in the chat with error status if it fails
-  }, [newMessage, selectedItem, sendMessage, sendRoomMessage]);
+  }, [newMessage, selectedItem, sendMessage, sendRoomMessage, replyTo]);
+
+  const handleReply = useCallback((message: XmppMessage) => {
+    setReplyTo({
+      id: message.id,
+      from: message.from,
+      body: message.body
+    });
+  }, []);
 
   const handleLoadHistory = async (jid: string, kind: 'direct' | 'room') => {
     if (loadingHistory === jid) return;
@@ -421,7 +434,7 @@ export const UnifiedChatView = () => {
                     }
 
                     // TypeScript assertion - we know this is a message after the date separator check
-                    const message = item as any; // Using any to avoid complex type intersection issues
+                    const message = item as XmppMessage;
                     
                     // Null safety for message.from
                     const messageFrom = message?.from || '';
@@ -429,26 +442,79 @@ export const UnifiedChatView = () => {
                       ? messageFrom && xmppJid(messageFrom).bare().toString() !== selectedConversation?.jid 
                       : messageFrom && selectedRoom?.nick && messageFrom.includes(`/${selectedRoom.nick}`);
 
+                    // Find the replied-to message if this is a reply
+                    const repliedMessage = message.replyTo 
+                      ? data.messages.find(m => m.id === message.replyTo?.id || m.originId === message.replyTo?.id)
+                      : null;
+
                     return (
                       <div
                         key={message.id || `msg-${index}`}
-                        className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                        className={`group flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
                         <div className="max-w-[70%]">
-                          <div
-                            className={`rounded-lg px-3 py-2 ${
-                              isOwn
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-foreground'
-                            }`}
-                          >
-                            {!isDirectChat && !isOwn && messageFrom && (
-                              <p className="text-xs font-medium mb-1 opacity-70">
-                                {messageFrom?.includes('/') ? messageFrom.split('/')[1] : 'Unknown'}
+                          {/* Reply Preview */}
+                          {repliedMessage && (
+                            <div className={`text-xs mb-1 px-2 py-1 rounded border-l-2 border-primary/50 bg-muted/30 ${isOwn ? 'ml-auto' : ''}`}>
+                              <span className="font-medium text-primary/70">
+                                {repliedMessage.from.includes('/') 
+                                  ? repliedMessage.from.split('/')[1] 
+                                  : repliedMessage.from.split('@')[0]}
+                              </span>
+                              <p className="text-muted-foreground truncate max-w-[200px]">
+                                {repliedMessage.body.length > 50 
+                                  ? repliedMessage.body.substring(0, 50) + '...' 
+                                  : repliedMessage.body}
                               </p>
+                            </div>
+                          )}
+                          {message.replyTo && !repliedMessage && (
+                            <div className={`text-xs mb-1 px-2 py-1 rounded border-l-2 border-muted bg-muted/20 ${isOwn ? 'ml-auto' : ''}`}>
+                              <span className="text-muted-foreground italic">Reply to message</span>
+                            </div>
+                          )}
+                          
+                          <div className="flex items-start gap-1">
+                            {/* Reply button - shown on hover for incoming messages */}
+                            {!isOwn && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleReply(message)}
+                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1"
+                              >
+                                <Reply className="h-3 w-3" />
+                              </Button>
                             )}
-                            <MessageBodyRenderer body={message.body || ''} />
+                            
+                            <div
+                              className={`rounded-lg px-3 py-2 ${
+                                isOwn
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted text-foreground'
+                              }`}
+                            >
+                              {!isDirectChat && !isOwn && messageFrom && (
+                                <p className="text-xs font-medium mb-1 opacity-70">
+                                  {messageFrom?.includes('/') ? messageFrom.split('/')[1] : 'Unknown'}
+                                </p>
+                              )}
+                              <MessageBodyRenderer body={message.body || ''} />
+                            </div>
+                            
+                            {/* Reply button - shown on hover for own messages */}
+                            {isOwn && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleReply(message)}
+                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1"
+                              >
+                                <Reply className="h-3 w-3" />
+                              </Button>
+                            )}
                           </div>
+                          
                           <div className={`flex items-center gap-1 mt-1 text-xs text-muted-foreground ${
                             isOwn ? 'justify-end' : 'justify-start'
                           }`}>
@@ -499,6 +565,8 @@ export const UnifiedChatView = () => {
               onFileUpload={uploadFile}
               disabled={uiConnection !== 'connected'}
               placeholder={isDirectChat ? `Message ${data.name}...` : `Message ${data.name}...`}
+              replyTo={replyTo}
+              onCancelReply={() => setReplyTo(null)}
             />
           )}
         </div>

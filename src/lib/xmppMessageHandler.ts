@@ -31,6 +31,7 @@ export class XmppMessageHandler {
       requestReceipt?: boolean;
       markable?: boolean;
       originId?: string;
+      replyTo?: { id: string; to?: string };
     } = {}
   ): Promise<string> {
     // Store client reference to avoid race condition
@@ -63,6 +64,18 @@ export class XmppMessageHandler {
     // XEP-0333: Chat Markers
     if (options.markable !== false) {
       messageStanza.append(xml('markable', { xmlns: 'urn:xmpp:chat-markers:0' }));
+    }
+
+    // XEP-0461: Message Replies
+    if (options.replyTo) {
+      const replyAttrs: { xmlns: string; id: string; to?: string } = {
+        xmlns: 'urn:xmpp:reply:0',
+        id: options.replyTo.id
+      };
+      if (options.replyTo.to) {
+        replyAttrs.to = options.replyTo.to;
+      }
+      messageStanza.append(xml('reply', replyAttrs));
     }
 
     // Non-blocking send
@@ -124,6 +137,13 @@ export class XmppMessageHandler {
     // XEP-0359: Stable and Unique Stanza IDs
     const originId = stanza.getChild('origin-id', 'urn:xmpp:sid:0')?.attrs.id;
     
+    // XEP-0461: Message Replies
+    const replyElement = stanza.getChild('reply', 'urn:xmpp:reply:0');
+    const replyTo = replyElement ? {
+      id: replyElement.attrs.id,
+      to: replyElement.attrs.to
+    } : undefined;
+    
     // Build message object
     const message: XmppMessage = {
       id: originId || stanzaId || crypto.randomUUID(),
@@ -138,7 +158,8 @@ export class XmppMessageHandler {
       delayedStamp,
       isFromArchive: !!delay,
       requestReceipt: !!stanza.getChild('request', 'urn:xmpp:receipts'),
-      markable: !!stanza.getChild('markable', 'urn:xmpp:chat-markers:0')
+      markable: !!stanza.getChild('markable', 'urn:xmpp:chat-markers:0'),
+      replyTo
     };
 
     // Send delivery receipt if requested
