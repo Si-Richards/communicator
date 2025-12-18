@@ -21,6 +21,7 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+// Main application component
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <SettingsProvider>
