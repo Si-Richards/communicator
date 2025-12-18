@@ -47,6 +47,7 @@ type XmppContextType = {
   conversations: XmppConversation[];
   contacts: XmppContact[];
   rooms: MucRoom[];
+  blockedContacts: string[];
   
   // User state
   userPresence: { presence: PresenceShow; status?: string };
@@ -112,6 +113,14 @@ type XmppContextType = {
   // Typing indicators
   sendTypingNotification: (to: string, state: 'composing' | 'paused' | 'active') => void;
   
+  // Blocking
+  blockContact: (jid: string) => Promise<boolean>;
+  unblockContact: (jid: string) => Promise<boolean>;
+  isBlocked: (jid: string) => boolean;
+  
+  // File upload
+  uploadFile: (file: File, onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void) => Promise<string>;
+  
   // Diagnostics
   lastError: string | null;
   lastAttemptAt: Date | null;
@@ -161,12 +170,14 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [connectionState]);
   const [conversations, setConversations] = useState<XmppConversation[]>([]);
   const [contacts, setContacts] = useState<XmppContact[]>([]);
+  const [blockedContacts, setBlockedContacts] = useState<string[]>([]);
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [rooms, setRooms] = useState<MucRoom[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
   const [userPresence, setUserPresence] = useState<{ presence: PresenceShow; status?: string }>({ presence: 'available' });
   const [nickname, setNickname] = useState<string>(settings?.xmpp?.username || '');
+  const [uploadServiceJid, setUploadServiceJid] = useState<string | null>(null);
   const [serverFeatures, setServerFeatures] = useState<ServerFeatures>({
     streamManagement: false,
     messageDeliveryReceipts: false,
@@ -1798,6 +1809,161 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return streamManagerRef.current?.getOfflineQueue() || [];
   }, []);
 
+  // Blocking functions
+  const blockContact = useCallback(async (jid: string): Promise<boolean> => {
+    if (!xmppRef.current || connectionState !== 'connected') return false;
+    
+    const bareJid = xmppJid(jid).bare().toString();
+    
+    try {
+      const iq = xml('iq', { type: 'set', id: crypto.randomUUID() },
+        xml('block', { xmlns: 'urn:xmpp:blocking' },
+          xml('item', { jid: bareJid })
+        )
+      );
+      
+      await xmppRef.current.send(iq);
+      setBlockedContacts(prev => [...prev.filter(j => j !== bareJid), bareJid]);
+      console.log('Blocked contact:', bareJid);
+      return true;
+    } catch (error) {
+      console.error('Failed to block contact:', error);
+      return false;
+    }
+  }, [connectionState]);
+
+  const unblockContact = useCallback(async (jid: string): Promise<boolean> => {
+    if (!xmppRef.current || connectionState !== 'connected') return false;
+    
+    const bareJid = xmppJid(jid).bare().toString();
+    
+    try {
+      const iq = xml('iq', { type: 'set', id: crypto.randomUUID() },
+        xml('unblock', { xmlns: 'urn:xmpp:blocking' },
+          xml('item', { jid: bareJid })
+        )
+      );
+      
+      await xmppRef.current.send(iq);
+      setBlockedContacts(prev => prev.filter(j => j !== bareJid));
+      console.log('Unblocked contact:', bareJid);
+      return true;
+    } catch (error) {
+      console.error('Failed to unblock contact:', error);
+      return false;
+    }
+  }, [connectionState]);
+
+  const isBlocked = useCallback((jid: string): boolean => {
+    const bareJid = xmppJid(jid).bare().toString();
+    return blockedContacts.includes(bareJid);
+  }, [blockedContacts]);
+
+  // File upload function
+  const uploadFile = useCallback(async (
+    file: File, 
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+  ): Promise<string> => {
+    if (!xmppRef.current || connectionState !== 'connected') {
+      throw new Error('Not connected');
+    }
+    
+    const domain = settings?.xmpp?.domain;
+    if (!domain) throw new Error('No XMPP domain configured');
+    
+    // Try common upload service domains if not cached
+    let uploadService = uploadServiceJid;
+    if (!uploadService) {
+      const uploadDomains = [
+        `upload.${domain}`,
+        `http-upload.${domain}`,
+        `files.${domain}`
+      ];
+      
+      for (const serviceDomain of uploadDomains) {
+        try {
+          // Query service capabilities
+          const discoIq = xml('iq', { type: 'get', to: serviceDomain, id: crypto.randomUUID() },
+            xml('query', { xmlns: 'http://jabber.org/protocol/disco#info' })
+          );
+          
+          const response = await xmppRef.current.iqCaller?.request(discoIq);
+          const features = response?.getChild('query')?.getChildren('feature') || [];
+          const hasUpload = features.some((f: any) => f.attrs?.var === 'urn:xmpp:http:upload:0');
+          
+          if (hasUpload) {
+            uploadService = serviceDomain;
+            setUploadServiceJid(serviceDomain);
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+    
+    if (!uploadService) {
+      throw new Error('No file upload service available');
+    }
+    
+    // Request upload slot
+    const slotIq = xml('iq', { type: 'get', to: uploadService, id: crypto.randomUUID() },
+      xml('request', { 
+        xmlns: 'urn:xmpp:http:upload:0',
+        filename: file.name,
+        size: file.size.toString(),
+        'content-type': file.type || 'application/octet-stream'
+      })
+    );
+    
+    const slotResponse = await xmppRef.current.iqCaller?.request(slotIq);
+    const slot = slotResponse?.getChild('slot', 'urn:xmpp:http:upload:0');
+    
+    if (!slot) {
+      throw new Error('Invalid upload slot response');
+    }
+    
+    const putUrl = slot.getChild('put')?.attrs?.url;
+    const getUrl = slot.getChild('get')?.attrs?.url;
+    
+    if (!putUrl || !getUrl) {
+      throw new Error('Missing URLs in upload slot');
+    }
+    
+    // Upload file via XHR
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress({
+            loaded: event.loaded,
+            total: event.total,
+            percentage: Math.round((event.loaded / event.total) * 100)
+          });
+        }
+      });
+      
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(getUrl);
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status}`));
+        }
+      });
+      
+      xhr.addEventListener('error', () => reject(new Error('Upload network error')));
+      xhr.addEventListener('timeout', () => reject(new Error('Upload timeout')));
+      
+      xhr.open('PUT', putUrl);
+      if (file.type) {
+        xhr.setRequestHeader('Content-Type', file.type);
+      }
+      xhr.timeout = 60000;
+      xhr.send(file);
+    });
+  }, [connectionState, settings?.xmpp?.domain, uploadServiceJid]);
+
   // UI state
   const uiConnection: UiConnectionState = useMemo(() => {
     if (connectionState === "connected") return "connected";
@@ -1818,6 +1984,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     conversations,
     contacts,
     rooms,
+    blockedContacts,
     
     // User state
     userPresence,
@@ -1882,6 +2049,14 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     // Typing indicators
     sendTypingNotification,
+    
+    // Blocking
+    blockContact,
+    unblockContact,
+    isBlocked,
+    
+    // File upload
+    uploadFile,
     
     // Diagnostics
     lastError,
