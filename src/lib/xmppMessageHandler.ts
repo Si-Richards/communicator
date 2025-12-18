@@ -275,6 +275,30 @@ export class XmppMessageHandler {
     }
   }
 
+  // Send message reaction (XEP-0444)
+  async sendReaction(to: string, messageId: string, emoji: string, type: 'chat' | 'groupchat' = 'chat'): Promise<void> {
+    if (!this.xmpp) return;
+
+    const reactionStanza = xml('message', {
+      to,
+      type,
+      id: crypto.randomUUID()
+    }, 
+      xml('reactions', { 
+        xmlns: 'urn:xmpp:reactions:0',
+        id: messageId 
+      }, 
+        xml('reaction', {}, emoji)
+      )
+    );
+
+    try {
+      await this.xmpp.send(reactionStanza);
+    } catch (error) {
+      console.error('Failed to send reaction:', error);
+    }
+  }
+
   // MAM query (XEP-0313)
   async queryMessageArchive(query: MamQuery): Promise<MamResult> {
     // Store client reference to avoid race condition

@@ -16,6 +16,8 @@ import { MessageStatus } from './MessageStatus';
 import { DateSeparator } from './DateSeparator';
 import { PhonebookDialog } from './PhonebookDialog';
 import { CreateRoomDialog } from './CreateRoomDialog';
+import { ReactionPicker } from './ReactionPicker';
+import { MessageReactions } from './MessageReactions';
 import { insertDateSeparators } from '@/lib/dateUtils';
 import { jid as xmppJid } from '@xmpp/client';
 import { JidUtils } from '@/xmpp/core/jid';
@@ -71,7 +73,9 @@ export const UnifiedChatView = () => {
     blockContact,
     unblockContact,
     isBlocked,
-    uploadFile
+    uploadFile,
+    addReaction,
+    effectiveJid
   } = useXmpp();
 
   // Memoized computation for unified items
@@ -180,6 +184,11 @@ export const UnifiedChatView = () => {
       body: message.body
     });
   }, []);
+
+  const handleReaction = useCallback((message: XmppMessage, emoji: string) => {
+    if (!selectedItem) return;
+    addReaction(selectedItem.jid, message.id, emoji, selectedItem.kind === 'direct' ? 'chat' : 'groupchat');
+  }, [selectedItem, addReaction]);
 
   const handleLoadHistory = async (jid: string, kind: 'direct' | 'room') => {
     if (loadingHistory === jid) return;
@@ -477,14 +486,20 @@ export const UnifiedChatView = () => {
                           <div className="flex items-start gap-1">
                             {/* Reply button - shown on hover for incoming messages */}
                             {!isOwn && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleReply(message)}
-                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1"
-                              >
-                                <Reply className="h-3 w-3" />
-                              </Button>
+                              <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleReply(message)}
+                                  className="h-6 w-6 p-0 flex-shrink-0"
+                                >
+                                  <Reply className="h-3 w-3" />
+                                </Button>
+                                <ReactionPicker 
+                                  onReact={(emoji) => handleReaction(message, emoji)}
+                                  disabled={uiConnection !== 'connected'}
+                                />
+                              </div>
                             )}
                             
                             <div
@@ -504,16 +519,32 @@ export const UnifiedChatView = () => {
                             
                             {/* Reply button - shown on hover for own messages */}
                             {isOwn && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleReply(message)}
-                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1"
-                              >
-                                <Reply className="h-3 w-3" />
-                              </Button>
+                              <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleReply(message)}
+                                  className="h-6 w-6 p-0 flex-shrink-0"
+                                >
+                                  <Reply className="h-3 w-3" />
+                                </Button>
+                                <ReactionPicker 
+                                  onReact={(emoji) => handleReaction(message, emoji)}
+                                  disabled={uiConnection !== 'connected'}
+                                />
+                              </div>
                             )}
                           </div>
+                          
+                          {/* Reactions Display */}
+                          {message.reactions && message.reactions.length > 0 && (
+                            <MessageReactions
+                              reactions={message.reactions}
+                              currentUserJid={effectiveJid}
+                              onReact={(emoji) => handleReaction(message, emoji)}
+                              isOwn={isOwn}
+                            />
+                          )}
                           
                           <div className={`flex items-center gap-1 mt-1 text-xs text-muted-foreground ${
                             isOwn ? 'justify-end' : 'justify-start'

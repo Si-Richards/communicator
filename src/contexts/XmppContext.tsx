@@ -81,6 +81,7 @@ type XmppContextType = {
   retractMessage: (conversationJid: string, messageId: string, reason?: string) => Promise<boolean>;
   hideMessage: (conversationJid: string, messageId: string) => void;
   deleteMessageLocally: (conversationJid: string, messageId: string) => void;
+  addReaction: (conversationJid: string, messageId: string, emoji: string, type: 'chat' | 'groupchat') => Promise<void>;
   
   // Conversation management
   archiveConversation: (bareJid: string, archived?: boolean) => void;
@@ -1230,6 +1231,82 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     hideMessage(conversationJid, messageId);
   }, [hideMessage]);
 
+  const addReaction = useCallback(async (conversationJid: string, messageId: string, emoji: string, type: 'chat' | 'groupchat') => {
+    if (!messageHandlerRef.current || connectionState !== 'connected') return;
+
+    try {
+      await messageHandlerRef.current.sendReaction(conversationJid, messageId, emoji, type);
+      
+      // Add reaction locally (optimistic update)
+      const reaction = {
+        emoji,
+        from: myBareJidRef.current,
+        timestamp: new Date()
+      };
+
+      if (type === 'chat') {
+        setConversations(prev => prev.map(conv => {
+          if (conv.jid !== conversationJid) return conv;
+          
+          const messages = conv.messages.map(msg => {
+            if (msg.id !== messageId && msg.originId !== messageId) return msg;
+            
+            const existingReactions = msg.reactions || [];
+            // Check if user already reacted with this emoji
+            const existingIndex = existingReactions.findIndex(
+              r => r.emoji === emoji && r.from === myBareJidRef.current
+            );
+            
+            if (existingIndex >= 0) {
+              // Remove existing reaction (toggle off)
+              return {
+                ...msg,
+                reactions: existingReactions.filter((_, i) => i !== existingIndex)
+              };
+            } else {
+              // Add new reaction
+              return {
+                ...msg,
+                reactions: [...existingReactions, reaction]
+              };
+            }
+          });
+          
+          return { ...conv, messages };
+        }));
+      } else {
+        setRooms(prev => prev.map(room => {
+          if (room.jid !== conversationJid) return room;
+          
+          const messages = room.messages.map(msg => {
+            if (msg.id !== messageId && msg.originId !== messageId) return msg;
+            
+            const existingReactions = msg.reactions || [];
+            const existingIndex = existingReactions.findIndex(
+              r => r.emoji === emoji && r.from === myBareJidRef.current
+            );
+            
+            if (existingIndex >= 0) {
+              return {
+                ...msg,
+                reactions: existingReactions.filter((_, i) => i !== existingIndex)
+              };
+            } else {
+              return {
+                ...msg,
+                reactions: [...existingReactions, reaction]
+              };
+            }
+          });
+          
+          return { ...room, messages };
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to add reaction:', error);
+    }
+  }, [connectionState]);
+
   const archiveConversation = useCallback((bareJid: string, archived: boolean = true) => {
     setConversations(prev => prev.map(conv => 
       conv.jid === bareJid ? { ...conv, archived } : conv
@@ -2020,6 +2097,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     retractMessage,
     hideMessage,
     deleteMessageLocally,
+    addReaction,
     
     // Conversation management
     archiveConversation,

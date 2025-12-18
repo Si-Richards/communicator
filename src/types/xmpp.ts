@@ -2,6 +2,12 @@ export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'error';
 
 export type PresenceShow = 'available' | 'away' | 'dnd' | 'xa' | 'unavailable';
 
+export interface MessageReaction {
+  emoji: string;
+  from: string;
+  timestamp: Date;
+}
+
 export interface XmppMessage {
   id: string;
   from: string;
@@ -30,6 +36,8 @@ export interface XmppMessage {
     id: string;
     to?: string;
   };
+  // XEP-0444 Message Reactions
+  reactions?: MessageReaction[];
 }
 
 export interface XmppContact {
@@ -235,13 +243,5 @@ export interface ServerFeatures {
 export interface TypingIndicator {
   from: string;
   state: 'composing' | 'paused' | 'active' | 'inactive' | 'gone';
-  timestamp: Date;
-}
-
-// Message reactions (future extensibility)
-export interface MessageReaction {
-  messageId: string;
-  from: string;
-  reaction: string; // emoji or reaction code
   timestamp: Date;
 }
