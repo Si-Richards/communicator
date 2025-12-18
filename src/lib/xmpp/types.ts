@@ -27,6 +27,11 @@ export interface XmppMessage {
   retracted?: boolean;
   retractedBy?: string;
   retractedAt?: Date;
+  // XEP-0461 Message Replies
+  replyTo?: {
+    id: string;
+    to?: string;
+  };
   // Status tracking
   status?: 'sending' | 'sent' | 'delivered' | 'read' | 'error' | 'received';
   error?: string;

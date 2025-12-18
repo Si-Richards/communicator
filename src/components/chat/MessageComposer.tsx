@@ -1,5 +1,5 @@
 /**
- * Enhanced message composer with emoji picker, GIF support, file attachments, and multi-line input
+ * Enhanced message composer with emoji picker, GIF support, file attachments, reply preview, and multi-line input
  */
 
 import { useState, useRef, KeyboardEvent, ChangeEvent } from 'react';
@@ -10,11 +10,18 @@ import { Progress } from '@/components/ui/progress';
 import { Send, Mic, MicOff, Paperclip, X, Loader2 } from 'lucide-react';
 import { EmojiPicker } from './EmojiPicker';
 import { GifPicker } from './GifPicker';
+import { ReplyPreview } from './ReplyPreview';
 
 interface FileUploadProgress {
   loaded: number;
   total: number;
   percentage: number;
+}
+
+interface ReplyToMessage {
+  id: string;
+  from: string;
+  body: string;
 }
 
 interface MessageComposerProps {
@@ -28,6 +35,8 @@ interface MessageComposerProps {
   placeholder?: string;
   disabled?: boolean;
   interimTranscript?: string;
+  replyTo?: ReplyToMessage | null;
+  onCancelReply?: () => void;
 }
 
 export const MessageComposer: React.FC<MessageComposerProps> = ({
@@ -40,7 +49,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   isDictationEnabled = false,
   placeholder = "Type a message...",
   disabled = false,
-  interimTranscript = ''
+  interimTranscript = '',
+  replyTo = null,
+  onCancelReply
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,6 +122,11 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
   return (
     <div className="bg-background">
+      {/* Reply Preview */}
+      {replyTo && onCancelReply && (
+        <ReplyPreview replyToMessage={replyTo} onCancel={onCancelReply} />
+      )}
+
       {/* Upload Progress */}
       {isUploading && (
         <div className="px-4 py-2 border-t border-border">

@@ -37,6 +37,11 @@ export interface XmppMessage {
   markable?: boolean;
   received?: boolean;
   displayed?: boolean;
+  // XEP-0461 Message Replies
+  replyTo?: {
+    id: string;
+    to?: string;
+  };
 }
 
 export interface TypingIndicator {
@@ -82,6 +87,7 @@ export class MessageManager {
       markable?: boolean;
       originId?: string;
       replaceId?: string;
+      replyTo?: { id: string; to?: string };
     } = {}
   ): Promise<string> {
     const messageId = XmppUtils.generateId();
@@ -115,6 +121,15 @@ export class MessageManager {
       });
     }
 
+    // XEP-0461: Message Replies
+    if (options.replyTo) {
+      message.c('reply', { 
+        xmlns: 'urn:xmpp:reply:0',
+        id: options.replyTo.id,
+        ...(options.replyTo.to && { to: options.replyTo.to })
+      });
+    }
+
     try {
       await this.client.send(message);
       this.messageStatusMap.set(originId, 'sent');
@@ -133,7 +148,8 @@ export class MessageManager {
         originId,
         requestReceipt: options.requestReceipt,
         markable: options.markable,
-        replaceId: options.replaceId
+        replaceId: options.replaceId,
+        replyTo: options.replyTo
       };
       
       this.eventBus.emit('message:sent', { message: sentMessage });
@@ -429,6 +445,13 @@ export class MessageManager {
     const markable = XmppUtils.findChild(stanza, 'markable', 'urn:xmpp:chat-markers:0');
     const requestReceipt = XmppUtils.findChild(stanza, 'request', 'urn:xmpp:receipts');
 
+    // XEP-0461: Message Replies
+    const reply = XmppUtils.findChild(stanza, 'reply', 'urn:xmpp:reply:0');
+    const replyTo = reply ? {
+      id: XmppUtils.getAttribute(reply, 'id'),
+      to: XmppUtils.getAttribute(reply, 'to')
+    } : undefined;
+
     const message: XmppMessage = {
       id: originId || stanzaId || id || XmppUtils.generateId(),
       from: JidUtils.toBare(from),
@@ -441,7 +464,8 @@ export class MessageManager {
       isEdited: !!replaceId,
       replaceId,
       markable: !!markable,
-      requestReceipt: !!requestReceipt
+      requestReceipt: !!requestReceipt,
+      replyTo
     };
 
     return message;

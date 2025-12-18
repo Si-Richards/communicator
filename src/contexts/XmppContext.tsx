@@ -71,7 +71,7 @@ type XmppContextType = {
   queryLastActivity: (jid: string) => Promise<Date | null>;
   
   // Direct messaging
-  sendMessage: (toBareJid: string, body: string) => Promise<boolean>;
+  sendMessage: (toBareJid: string, body: string, replyTo?: { id: string; to?: string }) => Promise<boolean>;
   startConversation: (bareJid: string, name?: string) => void;
   markMessageRead: (messageId: string, conversationJid: string) => void;
   markConversationRead: (bareJid: string) => void;
@@ -92,7 +92,7 @@ type XmppContextType = {
   joinRoom: (roomJid: string, nick: string, password?: string) => Promise<boolean>;
   leaveRoom: (roomJid: string) => void;
   destroyRoom: (roomJid: string, reason?: string) => Promise<boolean>;
-  sendRoomMessage: (roomJid: string, body: string) => Promise<boolean>;
+  sendRoomMessage: (roomJid: string, body: string, replyTo?: { id: string; to?: string }) => Promise<boolean>;
   inviteToRoom: (roomJid: string, userJid: string, reason?: string) => void;
   kickFromRoom: (roomJid: string, nick: string, reason?: string) => void;
   banFromRoom: (roomJid: string, jid: string, reason?: string) => void;
@@ -1044,7 +1044,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   // Direct messaging
-  const sendMessage = useCallback(async (toBareJid: string, body: string): Promise<boolean> => {
+  const sendMessage = useCallback(async (toBareJid: string, body: string, replyTo?: { id: string; to?: string }): Promise<boolean> => {
     if (!messageHandlerRef.current) return false;
 
     try {
@@ -1072,7 +1072,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body,
         timestamp: new Date(),
         type: 'chat',
-        status: 'sent' // Optimistic status
+        status: 'sent', // Optimistic status
+        replyTo
       };
       
       setConversations(prev => {
@@ -1097,7 +1098,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       // Send message asynchronously (non-blocking)
-      messageHandlerRef.current.sendMessage(toBareJid, body, 'chat', { originId: messageId })
+      messageHandlerRef.current.sendMessage(toBareJid, body, 'chat', { originId: messageId, replyTo })
         .catch((error) => {
           console.error('Failed to send message:', error);
           // Update status to error on failure
@@ -1424,7 +1425,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [connectionState]);
 
-  const sendRoomMessage = useCallback(async (roomJid: string, body: string): Promise<boolean> => {
+  const sendRoomMessage = useCallback(async (roomJid: string, body: string, replyTo?: { id: string; to?: string }): Promise<boolean> => {
     if (!messageHandlerRef.current || connectionState !== 'connected') return false;
 
     try {
@@ -1440,7 +1441,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body,
         timestamp: new Date(),
         type: 'groupchat',
-        status: 'sent' // Optimistic status
+        status: 'sent', // Optimistic status
+        replyTo
       };
       
       setRooms(prev => {
@@ -1465,7 +1467,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       // Send message asynchronously (non-blocking)
-      messageHandlerRef.current.sendMessage(roomJid, body, 'groupchat', { originId: messageId })
+      messageHandlerRef.current.sendMessage(roomJid, body, 'groupchat', { originId: messageId, replyTo })
         .catch((error) => {
           console.error('Failed to send room message:', error);
           // Update status to error on failure

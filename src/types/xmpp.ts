@@ -25,6 +25,11 @@ export interface XmppMessage {
   markable?: boolean;
   received?: boolean;
   displayed?: boolean;
+  // XEP-0461 Message Replies
+  replyTo?: {
+    id: string;
+    to?: string;
+  };
 }
 
 export interface XmppContact {
