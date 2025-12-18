@@ -143,6 +143,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reconnectBackoffRef = useRef(1000);
   const reconnectGraceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const keepAliveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionStateRef = useRef<ConnectionState>("disconnected");
 
   // Managers
   const streamManagerRef = useRef<XmppStreamManager>();
@@ -152,6 +153,11 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // State
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [showReconnecting, setShowReconnecting] = useState(false);
+
+  // Keep connectionStateRef in sync
+  useEffect(() => {
+    connectionStateRef.current = connectionState;
+  }, [connectionState]);
   const [conversations, setConversations] = useState<XmppConversation[]>([]);
   const [contacts, setContacts] = useState<XmppContact[]>([]);
   const [loadingRoster, setLoadingRoster] = useState(false);
@@ -322,7 +328,15 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     onHydrateConversations: setConversations,
     onHydrateRooms: setRooms,
     onRejoinRooms: async (roomJids) => {
+      // Wait for client to stabilize before rejoining rooms
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       for (const roomJid of roomJids) {
+        // Check client is ready before each join
+        if (!xmppRef.current || connectionStateRef.current !== 'connected') {
+          console.debug('Skipping room rejoin - client not ready');
+          break;
+        }
         const room = rooms.find(r => r.jid === roomJid);
         if (room && room.nick) {
           await joinRoom(roomJid, room.nick);
@@ -663,7 +677,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       connectingRef.current = false;
     }
-  }, [settings?.xmpp, userPresence, clearReconnectGrace]);
+  }, [settings?.xmpp, clearReconnectGrace]);
 
   const disconnect = useCallback(async () => {
     manualDisconnectRef.current = true;
@@ -692,7 +706,8 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     stopKeepAlivePing(); // Clear any existing timer
     
     keepAliveTimerRef.current = setInterval(async () => {
-      if (connectionState !== 'connected' || !featureDetectorRef.current || !xmppRef.current) {
+      // Use ref to get current connection state (avoids stale closure)
+      if (connectionStateRef.current !== 'connected' || !featureDetectorRef.current || !xmppRef.current) {
         return;
       }
       
@@ -709,7 +724,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.debug('Keep-alive ping error (non-critical):', error);
       }
     }, 30000); // Ping every 30 seconds
-  }, [connectionState]);
+  }, []);
 
   const stopKeepAlivePing = useCallback(() => {
     if (keepAliveTimerRef.current) {
@@ -979,9 +994,15 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const setPresence = useCallback((presence: PresenceShow, status?: string) => {
-    setUserPresence({ presence, status });
+    // Only update state if actually changed (prevents unnecessary re-renders)
+    setUserPresence(prev => {
+      if (prev.presence === presence && prev.status === status) {
+        return prev; // No change, no re-render
+      }
+      return { presence, status };
+    });
     
-    if (!xmppRef.current || connectionState !== 'connected') return;
+    if (!xmppRef.current || connectionStateRef.current !== 'connected') return;
 
     let presenceStanza;
     
@@ -1000,7 +1021,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     xmppRef.current.send(presenceStanza).catch(console.error);
-  }, [connectionState]);
+  }, []);
 
   const queryLastActivity = useCallback(async (jid: string): Promise<Date | null> => {
     if (!featureDetectorRef.current) return null;
