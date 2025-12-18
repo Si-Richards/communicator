@@ -1,4 +1,4 @@
-import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw, Plus } from 'lucide-react';
+import { Search, Users, BookUser, ArrowUpDown, Crown, VolumeX, Archive, Trash2, MoreVertical, AlertTriangle, MessageSquare, RefreshCw, Plus, Ban, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -18,6 +18,7 @@ import { PhonebookDialog } from './PhonebookDialog';
 import { CreateRoomDialog } from './CreateRoomDialog';
 import { insertDateSeparators } from '@/lib/dateUtils';
 import { jid as xmppJid } from '@xmpp/client';
+import { JidUtils } from '@/xmpp/core/jid';
 
 interface UnifiedItem {
   kind: 'direct' | 'room';
@@ -64,7 +65,11 @@ export const UnifiedChatView = () => {
     nickname,
     refreshRooms,
     destroyRoom,
-    leaveRoom
+    leaveRoom,
+    blockContact,
+    unblockContact,
+    isBlocked,
+    uploadFile
   } = useXmpp();
 
   // Memoized computation for unified items
@@ -145,19 +150,11 @@ export const UnifiedChatView = () => {
     if (!newMessage.trim() || !selectedItem) return;
 
     // Check if trying to send a direct message to a MUC JID
-    if (selectedItem.kind === 'direct' && selectedItem.jid) {
-      const jidParts = selectedItem.jid.split('@');
-      const domain = jidParts.length > 1 ? jidParts[1] : '';
-      const isMucDomain = domain && (domain.includes('conference.') || 
-                                    domain.includes('muc.') || 
-                                    domain.includes('rooms.'));
-      
-      if (isMucDomain) {
-        // This is actually a MUC room - offer to join it instead
-        setPendingMucJid(selectedItem.jid);
-        setShowMucDialog(true);
-        return;
-      }
+    if (selectedItem.kind === 'direct' && selectedItem.jid && JidUtils.isMucJid(selectedItem.jid)) {
+      // This is actually a MUC room - offer to join it instead
+      setPendingMucJid(selectedItem.jid);
+      setShowMucDialog(true);
+      return;
     }
 
     const messageText = newMessage.trim();
@@ -299,6 +296,7 @@ export const UnifiedChatView = () => {
     }
 
     const contact = isDirectChat ? contacts.find(c => c.jid === data.jid) : null;
+    const contactBlocked = isDirectChat && isBlocked(data.jid);
 
     return (
       <>
@@ -311,6 +309,12 @@ export const UnifiedChatView = () => {
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <h2 className="font-medium">{data.name}</h2>
+                {contactBlocked && (
+                  <Badge variant="destructive" className="text-xs">
+                    <Ban className="h-3 w-3 mr-1" />
+                    Blocked
+                  </Badge>
+                )}
                 {!isDirectChat && (
                   <>
                     <Users className="h-4 w-4 text-muted-foreground" />
@@ -321,7 +325,7 @@ export const UnifiedChatView = () => {
               </div>
               <div className="flex items-center gap-2">
                 <p className="text-sm text-muted-foreground">{data.jid}</p>
-                {isDirectChat && contact && (
+                {isDirectChat && contact && !contactBlocked && (
                   <div className="flex items-center gap-1">
                     <div className={`w-2 h-2 rounded-full ${
                       contact.presence === 'available' ? 'bg-status-connected' :
@@ -336,6 +340,33 @@ export const UnifiedChatView = () => {
                 )}
               </div>
             </div>
+            
+            {/* Actions Menu */}
+            {isDirectChat && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {contactBlocked ? (
+                    <DropdownMenuItem onClick={() => unblockContact(data.jid)}>
+                      <ShieldOff className="h-4 w-4 mr-2" />
+                      Unblock Contact
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem 
+                      onClick={() => blockContact(data.jid)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Ban className="h-4 w-4 mr-2" />
+                      Block Contact
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         </div>
 
@@ -401,17 +432,17 @@ export const UnifiedChatView = () => {
                     return (
                       <div
                         key={message.id || `msg-${index}`}
-                        className={`flex ${isOwn ? 'justify-start' : 'justify-end'}`}
+                        className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
-                        <div className={`max-w-[70%] ${isOwn ? 'order-1' : 'order-2'}`}>
+                        <div className="max-w-[70%]">
                           <div
                             className={`rounded-lg px-3 py-2 ${
                               isOwn
-                                ? 'bg-muted text-foreground'
-                                : 'bg-primary text-primary-foreground'
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-foreground'
                             }`}
                           >
-                            {!isDirectChat && isOwn && messageFrom && (
+                            {!isDirectChat && !isOwn && messageFrom && (
                               <p className="text-xs font-medium mb-1 opacity-70">
                                 {messageFrom?.includes('/') ? messageFrom.split('/')[1] : 'Unknown'}
                               </p>
@@ -419,10 +450,10 @@ export const UnifiedChatView = () => {
                             <MessageBodyRenderer body={message.body || ''} />
                           </div>
                           <div className={`flex items-center gap-1 mt-1 text-xs text-muted-foreground ${
-                            isOwn ? 'justify-start' : 'justify-end'
+                            isOwn ? 'justify-end' : 'justify-start'
                           }`}>
                             <span>{message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            {isDirectChat && !isOwn && (
+                            {isDirectChat && isOwn && (
                               <MessageStatus status={message.status} timestamp={message.timestamp} />
                             )}
                           </div>
@@ -436,15 +467,40 @@ export const UnifiedChatView = () => {
           </ScrollArea>
         </div>
 
+        {/* Typing Indicator */}
+        {isDirectChat && selectedConversation?.isTyping && (
+          <div className="flex-shrink-0 px-4 py-2 border-t border-border bg-muted/30">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span className="flex gap-0.5">
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </span>
+              <span>{data.name} is typing...</span>
+            </div>
+          </div>
+        )}
+
         {/* Message Composer */}
         <div className="flex-shrink-0 p-4 border-t border-border">
-          <MessageComposer
-            value={newMessage}
-            onChange={setNewMessage}
-            onSend={handleSendMessage}
-            disabled={uiConnection !== 'connected'}
-            placeholder={isDirectChat ? `Message ${data.name}...` : `Message ${data.name}...`}
-          />
+          {contactBlocked ? (
+            <div className="text-center py-3 text-muted-foreground">
+              <Ban className="h-5 w-5 mx-auto mb-2" />
+              <p className="text-sm">You have blocked this contact</p>
+              <Button variant="link" size="sm" onClick={() => unblockContact(data.jid)}>
+                Unblock to send messages
+              </Button>
+            </div>
+          ) : (
+            <MessageComposer
+              value={newMessage}
+              onChange={setNewMessage}
+              onSend={handleSendMessage}
+              onFileUpload={uploadFile}
+              disabled={uiConnection !== 'connected'}
+              placeholder={isDirectChat ? `Message ${data.name}...` : `Message ${data.name}...`}
+            />
+          )}
         </div>
       </>
     );

@@ -1,19 +1,27 @@
 /**
- * Enhanced message composer with emoji picker, GIF support, and multi-line input
+ * Enhanced message composer with emoji picker, GIF support, file attachments, and multi-line input
  */
 
-import { useState, useRef, KeyboardEvent } from 'react';
+import { useState, useRef, KeyboardEvent, ChangeEvent } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Send, Mic, MicOff } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Send, Mic, MicOff, Paperclip, X, Loader2 } from 'lucide-react';
 import { EmojiPicker } from './EmojiPicker';
 import { GifPicker } from './GifPicker';
+
+interface FileUploadProgress {
+  loaded: number;
+  total: number;
+  percentage: number;
+}
 
 interface MessageComposerProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  onFileUpload?: (file: File, onProgress?: (progress: FileUploadProgress) => void) => Promise<string>;
   onDictationToggle?: () => void;
   isListening?: boolean;
   isDictationEnabled?: boolean;
@@ -26,6 +34,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   value,
   onChange,
   onSend,
+  onFileUpload,
   onDictationToggle,
   isListening = false,
   isDictationEnabled = false,
@@ -34,6 +43,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   interimTranscript = ''
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -68,12 +80,60 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     setTimeout(() => onSend(), 100);
   };
 
+  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onFileUpload) return;
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const fileUrl = await onFileUpload(file, (progress) => {
+        setUploadProgress(progress.percentage);
+      });
+      
+      // Set the file URL as the message and auto-send
+      onChange(fileUrl);
+      setTimeout(() => onSend(), 100);
+    } catch (error) {
+      console.error('File upload failed:', error);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      // Reset input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   const displayValue = value + (interimTranscript ? ` ${interimTranscript}` : '');
 
   return (
-    <div className="border-t border-border bg-background">
+    <div className="bg-background">
+      {/* Upload Progress */}
+      {isUploading && (
+        <div className="px-4 py-2 border-t border-border">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-sm text-muted-foreground">Uploading file...</span>
+            <Progress value={uploadProgress} className="flex-1 h-2" />
+            <span className="text-xs text-muted-foreground">{uploadProgress}%</span>
+          </div>
+        </div>
+      )}
+
       <div className="p-4">
         <div className="flex items-end gap-2">
+          {/* Hidden File Input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*,.pdf,.doc,.docx,.txt"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+
           {/* Message Input */}
           <div className="flex-1 relative">
             <Textarea
@@ -82,19 +142,37 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
               onChange={(e) => onChange(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              disabled={disabled}
-              className="min-h-[44px] max-h-32 resize-none pr-20"
+              disabled={disabled || isUploading}
+              className="min-h-[44px] max-h-32 resize-none pr-24"
               rows={1}
             />
             
             {/* Control Bar - Positioned over textarea */}
             <div className="absolute right-2 bottom-2 flex items-center gap-1">
               <TooltipProvider>
+                {/* File Attachment */}
+                {onFileUpload && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={disabled || isUploading}
+                        className="h-8 w-8 p-0 hover:bg-muted"
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Attach file</TooltipContent>
+                  </Tooltip>
+                )}
+
                 {/* Emoji Picker */}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span>
-                      <EmojiPicker onEmojiSelect={handleEmojiSelect} disabled={disabled} />
+                      <EmojiPicker onEmojiSelect={handleEmojiSelect} disabled={disabled || isUploading} />
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>Add emoji</TooltipContent>
@@ -104,7 +182,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span>
-                      <GifPicker onGifSelect={handleGifSelect} disabled={disabled} />
+                      <GifPicker onGifSelect={handleGifSelect} disabled={disabled || isUploading} />
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>Send GIF</TooltipContent>
@@ -118,7 +196,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                         variant="ghost"
                         size="sm"
                         onClick={onDictationToggle}
-                        disabled={disabled}
+                        disabled={disabled || isUploading}
                         className={`h-8 w-8 p-0 hover:bg-muted ${
                           isListening ? 'text-primary bg-primary/10' : ''
                         }`}
@@ -142,7 +220,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
           {/* Send Button */}
           <Button
             onClick={onSend}
-            disabled={!value.trim() || disabled}
+            disabled={!value.trim() || disabled || isUploading}
             size="sm"
             className="h-11 px-4"
           >
