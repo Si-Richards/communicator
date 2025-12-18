@@ -104,6 +104,7 @@ type XmppContextType = {
   // Discovery
   listMucServices: () => Promise<string[]>;
   listRooms: (serviceJid: string) => Promise<Array<{jid: string; name: string}>>;
+  getRoomInfo: (roomJid: string) => Promise<{occupants: number; description?: string} | null>;
   searchUsers: (searchTerm: string) => Promise<Array<{jid: string; name: string}>>;
   refreshRooms: () => Promise<void>;
   
@@ -1574,6 +1575,47 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const getRoomInfo = useCallback(async (roomJid: string): Promise<{occupants: number; description?: string} | null> => {
+    if (!xmppRef.current) return null;
+
+    try {
+      const discoInfoIq = xml("iq", {
+        type: "get",
+        to: roomJid,
+        id: crypto.randomUUID()
+      }, xml("query", { xmlns: "http://jabber.org/protocol/disco#info" }));
+
+      const response = await xmppRef.current.iqCaller.request(discoInfoIq);
+      const query = response.getChild("query", "http://jabber.org/protocol/disco#info");
+
+      if (!query) return null;
+
+      // Parse x data form for room info
+      const xForm = query.getChild("x", "jabber:x:data");
+      let occupants = 0;
+      let description: string | undefined;
+
+      if (xForm) {
+        const fields = xForm.getChildren("field");
+        for (const field of fields) {
+          const varName = field.attrs?.var;
+          const value = field.getChild("value")?.text();
+          
+          if (varName === "muc#roominfo_occupants" && value) {
+            occupants = parseInt(value) || 0;
+          } else if (varName === "muc#roominfo_description" && value) {
+            description = value;
+          }
+        }
+      }
+
+      return { occupants, description };
+    } catch (error) {
+      // Room info query failed (room might not exist or be private)
+      return null;
+    }
+  }, []);
+
   const syncRoomsWithServer = useCallback(async (): Promise<void> => {
     if (connectionState !== 'connected') return;
     
@@ -1809,6 +1851,7 @@ export const XmppProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Discovery
     listMucServices,
     listRooms,
+    getRoomInfo,
     searchUsers,
     refreshRooms,
     
