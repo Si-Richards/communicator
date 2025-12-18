@@ -32,6 +32,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [allRooms, setAllRooms] = useState<Array<{jid: string; name: string; service: string}>>([]);
+  const [roomInfoMap, setRoomInfoMap] = useState<Map<string, {occupants: number; description?: string}>>(new Map());
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const loadingInProgress = useRef(false);
@@ -47,6 +48,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
     rooms,
     listMucServices,
     listRooms,
+    getRoomInfo,
     searchUsers,
     joinRoom,
     connect,
@@ -236,6 +238,11 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       setAllRooms(allRoomsData);
       setAvailableRooms(allRoomsData);
       
+      // Fetch room info for each room (in parallel batches)
+      if (allRoomsData.length > 0) {
+        fetchRoomInfoBatch(allRoomsData.map(r => r.jid));
+      }
+      
       // Note: No rooms is a valid state, not an error - handled in UI
     } catch (error: any) {
       if (error.name === 'ClientDisconnected' || error.message?.includes('disconnected')) {
@@ -245,6 +252,33 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
       }
     } finally {
       setLoadingRooms(false);
+    }
+  };
+
+  // Fetch room info in parallel batches for efficiency
+  const fetchRoomInfoBatch = async (roomJids: string[]) => {
+    const BATCH_SIZE = 5;
+    const newInfoMap = new Map(roomInfoMap);
+    
+    for (let i = 0; i < roomJids.length; i += BATCH_SIZE) {
+      const batch = roomJids.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(jid => getRoomInfo(jid))
+      );
+      
+      results.forEach((result, idx) => {
+        if (result.status === 'fulfilled' && result.value) {
+          newInfoMap.set(batch[idx], result.value);
+        }
+      });
+      
+      // Update state incrementally for better UX
+      setRoomInfoMap(new Map(newInfoMap));
+      
+      // Small delay between batches
+      if (i + BATCH_SIZE < roomJids.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
   };
 
@@ -537,6 +571,7 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                   <div className="p-2">
                     {filteredRooms.map(room => {
                       const isJoined = joinedRoomJids.has(room.jid.toLowerCase());
+                      const roomInfo = roomInfoMap.get(room.jid);
                       return (
                         <div 
                           key={room.jid}
@@ -552,7 +587,24 @@ export const PhonebookDialog: React.FC<PhonebookDialogProps> = ({
                                 </Badge>
                               )}
                             </div>
-                            <div className="text-xs text-muted-foreground truncate">{room.jid}</div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="truncate flex-1">{room.jid}</span>
+                              {roomInfo ? (
+                                <span className="flex items-center gap-1 shrink-0">
+                                  {roomInfo.occupants > 0 && (
+                                    <span className="flex items-center gap-0.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                      {roomInfo.occupants}
+                                    </span>
+                                  )}
+                                  {roomInfo.occupants === 0 && (
+                                    <span className="text-muted-foreground/60">Empty</span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="w-8 h-3 bg-muted animate-pulse rounded" />
+                              )}
+                            </div>
                           </div>
                           {isJoined ? (
                             <Button 
