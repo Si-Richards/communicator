@@ -22,6 +22,7 @@ final class WebRTCEngine: NSObject {
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
     private var localAudioTrack: RTCAudioTrack?
+    private var remoteAudioTrack: RTCAudioTrack?
     private var remoteDescriptionSet = false
     private var pendingRemoteCandidates: [RTCIceCandidate] = []
 
@@ -38,10 +39,29 @@ final class WebRTCEngine: NSObject {
     }
 
     func prepareAudioSession() throws {
+        // We manage the underlying AVAudioSession ourselves so that the app can
+        // later hand control cleanly to CallKit. WebRTC must explicitly be told
+        // that its VoIP audio unit is allowed to start.
+        let rtcAudioSession = RTCAudioSession.sharedInstance()
+        rtcAudioSession.useManualAudio = true
+        rtcAudioSession.isAudioEnabled = false
+
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
+        try session.setCategory(
+            .playAndRecord,
+            mode: .voiceChat,
+            options: [.allowBluetoothHFP, .defaultToSpeaker]
+        )
         try session.setPreferredSampleRate(48_000)
+        try session.setPreferredIOBufferDuration(0.01)
         try session.setActive(true)
+
+        rtcAudioSession.isAudioEnabled = true
+
+        print("[WebRTC] audio session active")
+        print("[WebRTC] category=\(session.category.rawValue) mode=\(session.mode.rawValue)")
+        print("[WebRTC] inputAvailable=\(session.isInputAvailable) sampleRate=\(session.sampleRate)")
+        print("[WebRTC] route=\(session.currentRoute)")
     }
 
     func createPeerConnection(iceServers: [RTCIceServer] = []) throws {
@@ -65,13 +85,19 @@ final class WebRTCEngine: NSObject {
             throw EngineError.peerConnectionUnavailable
         }
 
-        let audioSource = factory.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
+        let audioSource = factory.audioSource(
+            with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        )
         let audioTrack = factory.audioTrack(with: audioSource, trackId: "voicehost-audio")
+        audioTrack.isEnabled = true
         _ = connection.add(audioTrack, streamIds: ["voicehost-stream"])
 
         peerConnection = connection
         localAudioTrack = audioTrack
+        remoteAudioTrack = nil
         remoteDescriptionSet = false
+
+        print("[WebRTC] peer connection created; local audio track enabled=\(audioTrack.isEnabled)")
     }
 
     func createOffer() async throws -> String {
@@ -98,6 +124,7 @@ final class WebRTCEngine: NSObject {
         }
 
         try await setLocalDescription(offer)
+        print("[WebRTC] local offer set")
         return offer.sdp
     }
 
@@ -128,11 +155,22 @@ final class WebRTCEngine: NSObject {
         }
 
         try await setLocalDescription(answer)
+        print("[WebRTC] local answer set")
         return answer.sdp
     }
 
     func applyRemoteAnswer(_ sdp: String) async throws {
+        // Janus can expose SDP at progress and again at accepted. Avoid applying
+        // an identical answer twice to an already-stable PeerConnection.
+        if let existing = peerConnection?.remoteDescription,
+           existing.type == .answer,
+           existing.sdp == sdp {
+            print("[WebRTC] duplicate remote answer ignored")
+            return
+        }
+
         try await setRemoteDescription(RTCSessionDescription(type: .answer, sdp: sdp))
+        print("[WebRTC] remote answer set")
     }
 
     func addRemoteCandidate(_ candidate: RTCIceCandidate) async throws {
@@ -145,14 +183,21 @@ final class WebRTCEngine: NSObject {
 
     func setMuted(_ muted: Bool) {
         localAudioTrack?.isEnabled = !muted
+        print("[WebRTC] local audio muted=\(muted)")
     }
 
     func closePeerConnection() {
         peerConnection?.close()
         peerConnection = nil
         localAudioTrack = nil
+        remoteAudioTrack = nil
         remoteDescriptionSet = false
         pendingRemoteCandidates.removeAll()
+
+        let rtcAudioSession = RTCAudioSession.sharedInstance()
+        if rtcAudioSession.useManualAudio {
+            rtcAudioSession.isAudioEnabled = false
+        }
     }
 
     private func setLocalDescription(_ description: RTCSessionDescription) async throws {
@@ -207,21 +252,55 @@ final class WebRTCEngine: NSObject {
 }
 
 extension WebRTCEngine: RTCPeerConnectionDelegate {
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
+        print("[WebRTC] signaling state=\(stateChanged.rawValue)")
+    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
+        if let track = stream.audioTracks.first {
+            track.isEnabled = true
+            remoteAudioTrack = track
+            print("[WebRTC] remote audio stream added track=\(track.trackId) enabled=\(track.isEnabled)")
+        }
+    }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        print("[WebRTC] ICE connection state=\(newState.rawValue)")
+    }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        print("[WebRTC] ICE gathering state=\(newState.rawValue)")
         if newState == .complete { onIceGatheringComplete?() }
     }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        print("[WebRTC] local ICE candidate mid=\(candidate.sdpMid ?? "nil") index=\(candidate.sdpMLineIndex)")
         onLocalCandidate?(candidate)
     }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChangeStandardizedIceConnectionState newState: RTCIceConnectionState) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChangeStandardizedIceConnectionState newState: RTCIceConnectionState) {
+        print("[WebRTC] standardized ICE state=\(newState.rawValue)")
+    }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange connectionState: RTCPeerConnectionState) {
+        print("[WebRTC] peer connection state=\(connectionState.rawValue)")
         onConnectionStateChanged?(connectionState)
+    }
+
+    func peerConnection(
+        _ peerConnection: RTCPeerConnection,
+        didAdd rtpReceiver: RTCRtpReceiver,
+        streams mediaStreams: [RTCMediaStream]
+    ) {
+        guard let track = rtpReceiver.track as? RTCAudioTrack else { return }
+        track.isEnabled = true
+        remoteAudioTrack = track
+        print("[WebRTC] remote RTP audio track added id=\(track.trackId) enabled=\(track.isEnabled)")
     }
 }
