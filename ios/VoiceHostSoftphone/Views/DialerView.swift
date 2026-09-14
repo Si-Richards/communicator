@@ -47,6 +47,17 @@ struct DialerView: View {
             .padding()
             .navigationTitle(model.extensionDisplayName)
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        model.doNotDisturb.toggle()
+                    } label: {
+                        Image(systemName: model.doNotDisturb ? "moon.fill" : "moon")
+                    }
+                    .tint(model.doNotDisturb ? .indigo : .primary)
+                    .accessibilityLabel(model.doNotDisturb ? "Disable Do Not Disturb" : "Enable Do Not Disturb")
+                }
+            }
             .alert("Softphone", isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.clearError() } }
@@ -59,12 +70,22 @@ struct DialerView: View {
     }
 
     private var statusHeader: some View {
-        HStack {
+        HStack(spacing: 8) {
             Circle()
                 .fill(model.isRegistered ? Color.green : Color.secondary)
                 .frame(width: 10, height: 10)
             Text(model.registrationStatus)
                 .foregroundStyle(.secondary)
+
+            if model.doNotDisturb {
+                Label("DND", systemImage: "moon.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.indigo)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.indigo.opacity(0.1), in: Capsule())
+            }
+
             Spacer()
             callStatus
         }
