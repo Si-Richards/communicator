@@ -16,9 +16,18 @@ struct VoiceHostSoftphoneApp: App {
                     .tabItem { Label("Recents", systemImage: "clock.fill") }
                     .tag(1)
 
+                VoicemailView(model: phone, selectedTab: $selectedTab)
+                    .tabItem {
+                        Label(
+                            "Voicemail",
+                            systemImage: phone.voicemailWaiting ? "recordingtape.circle.fill" : "recordingtape"
+                        )
+                    }
+                    .tag(2)
+
                 SettingsView(model: phone)
                     .tabItem { Label("Settings", systemImage: "gear") }
-                    .tag(2)
+                    .tag(3)
             }
         }
     }
