@@ -45,7 +45,8 @@ struct DialerView: View {
                 Spacer()
             }
             .padding()
-            .navigationTitle("VoiceHost")
+            .navigationTitle(model.extensionDisplayName)
+            .navigationBarTitleDisplayMode(.large)
             .alert("Softphone", isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.clearError() } }
