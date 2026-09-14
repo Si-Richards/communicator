@@ -54,7 +54,7 @@ struct DialerView: View {
                     } label: {
                         Image(systemName: model.doNotDisturb ? "moon.fill" : "moon")
                     }
-                    .tint(model.doNotDisturb ? .indigo : .primary)
+                    .tint(model.doNotDisturb ? Color.indigo : Color.accentColor)
                     .accessibilityLabel(model.doNotDisturb ? "Disable Do Not Disturb" : "Enable Do Not Disturb")
                 }
             }
