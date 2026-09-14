@@ -76,19 +76,34 @@ final class WebRTCEngine: NSObject {
 
     func createOffer() async throws -> String {
         guard let peerConnection else { throw EngineError.peerConnectionUnavailable }
+
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
             optionalConstraints: nil
         )
-        let offer = try await createDescription(using: { completion in
-            peerConnection.offer(for: constraints, completionHandler: completion)
-        })
+
+        let offer: RTCSessionDescription = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
+            peerConnection.offer(for: constraints) { description, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let description else {
+                    continuation.resume(throwing: EngineError.missingSDP)
+                    return
+                }
+                continuation.resume(returning: description)
+            }
+        }
+
         try await setLocalDescription(offer)
         return offer.sdp
     }
 
     func createAnswer(for remoteOfferSDP: String) async throws -> String {
         guard let peerConnection else { throw EngineError.peerConnectionUnavailable }
+
         let remote = RTCSessionDescription(type: .offer, sdp: remoteOfferSDP)
         try await setRemoteDescription(remote)
 
@@ -96,9 +111,22 @@ final class WebRTCEngine: NSObject {
             mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
             optionalConstraints: nil
         )
-        let answer = try await createDescription(using: { completion in
-            peerConnection.answer(for: constraints, completionHandler: completion)
-        })
+
+        let answer: RTCSessionDescription = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
+            peerConnection.answer(for: constraints) { description, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let description else {
+                    continuation.resume(throwing: EngineError.missingSDP)
+                    return
+                }
+                continuation.resume(returning: description)
+            }
+        }
+
         try await setLocalDescription(answer)
         return answer.sdp
     }
@@ -127,36 +155,35 @@ final class WebRTCEngine: NSObject {
         pendingRemoteCandidates.removeAll()
     }
 
-    private func createDescription(
-        using operation: (@escaping (RTCSessionDescription?, Error?) -> Void) -> Void
-    ) async throws -> RTCSessionDescription {
-        try await withCheckedThrowingContinuation { continuation in
-            operation { description, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let description else { continuation.resume(throwing: EngineError.missingSDP); return }
-                continuation.resume(returning: description)
-            }
-        }
-    }
-
     private func setLocalDescription(_ description: RTCSessionDescription) async throws {
         guard let peerConnection else { throw EngineError.peerConnectionUnavailable }
-        try await withCheckedThrowingContinuation { continuation in
+
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
             peerConnection.setLocalDescription(description) { error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: ()) }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
             }
         }
     }
 
     private func setRemoteDescription(_ description: RTCSessionDescription) async throws {
         guard let peerConnection else { throw EngineError.peerConnectionUnavailable }
-        try await withCheckedThrowingContinuation { continuation in
+
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
             peerConnection.setRemoteDescription(description) { error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: ()) }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
             }
         }
+
         remoteDescriptionSet = true
         let queued = pendingRemoteCandidates
         pendingRemoteCandidates.removeAll()
@@ -166,10 +193,14 @@ final class WebRTCEngine: NSObject {
     }
 
     private func add(_ candidate: RTCIceCandidate, to peerConnection: RTCPeerConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
             peerConnection.add(candidate) { error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: ()) }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
             }
         }
     }
