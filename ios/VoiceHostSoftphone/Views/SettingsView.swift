@@ -25,6 +25,38 @@ struct SettingsView: View {
                     Text("The nickname is shown at the top of the Phone screen. If it is blank, the SIP extension is shown instead.")
                 }
 
+                Section {
+                    Toggle("Do Not Disturb", isOn: $model.doNotDisturb)
+                } header: {
+                    Text("Calling")
+                } footer: {
+                    Text("When enabled, this softphone automatically declines incoming calls and records them as missed. Server-side DND will be added later for account-wide/background call handling.")
+                }
+
+                Section {
+                    TextField("Voicemail number / feature code", text: $model.voicemailAccessNumber)
+                        .keyboardType(.phonePad)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    HStack {
+                        Text("MWI subscription")
+                        Spacer()
+                        Text(model.voicemailSubscriptionStatus)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if model.isRegistered {
+                        Button("Refresh Voicemail Status") {
+                            Task { await model.refreshVoicemailStatus() }
+                        }
+                    }
+                } header: {
+                    Text("Voicemail")
+                } footer: {
+                    Text("The voicemail tab uses SIP message-summary notifications for the waiting indicator. Set the VoiceHost voicemail access number or feature code used by this extension.")
+                }
+
                 Section("Janus") {
                     TextField("WebSocket URL", text: $model.janusURL)
                         .textInputAutocapitalization(.never)
