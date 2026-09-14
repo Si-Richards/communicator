@@ -1,0 +1,37 @@
+name: VoiceHostSoftphone
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    exactVersion: 151.0.0
+targets:
+  VoiceHostSoftphone:
+    type: application
+    platform: iOS
+    sources:
+      - VoiceHostSoftphone
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.voicehost.softphone
+        PRODUCT_NAME: VoiceHost
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: 5.10
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: VoiceHostSoftphone/Info.plist
+      properties:
+        CFBundleDisplayName: VoiceHost
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSMicrophoneUsageDescription: VoiceHost needs microphone access for telephone calls.
+        UIBackgroundModes:
+          - audio
