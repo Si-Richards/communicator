@@ -6,6 +6,13 @@ final class PhoneViewModel: ObservableObject {
     @Published var extensionNickname: String {
         didSet { UserDefaults.standard.set(extensionNickname, forKey: Self.nicknameKey) }
     }
+    @Published var doNotDisturb: Bool {
+        didSet { UserDefaults.standard.set(doNotDisturb, forKey: Self.dndKey) }
+    }
+    @Published var voicemailAccessNumber: String {
+        didSet { UserDefaults.standard.set(voicemailAccessNumber, forKey: Self.voicemailAccessNumberKey) }
+    }
+
     @Published var sipUsername = ""
     @Published var sipPassword = ""
     @Published var sipRealm = AppConfig.defaultSIPRealm
@@ -18,6 +25,10 @@ final class PhoneViewModel: ObservableObject {
     @Published private(set) var callState: CallState = .idle
     @Published private(set) var errorMessage: String?
     @Published private(set) var callHistory: [CallRecord]
+    @Published private(set) var voicemailWaiting = false
+    @Published private(set) var voicemailNewCount = 0
+    @Published private(set) var voicemailOldCount = 0
+    @Published private(set) var voicemailSubscriptionStatus = "Not subscribed"
     @Published var dialledNumber = ""
     @Published var isMuted = false
 
@@ -30,6 +41,8 @@ final class PhoneViewModel: ObservableObject {
     }
 
     private static let nicknameKey = "voicehost.extensionNickname"
+    private static let dndKey = "voicehost.doNotDisturb"
+    private static let voicemailAccessNumberKey = "voicehost.voicemailAccessNumber"
     private static let historyKey = "voicehost.callHistory.v1"
     private static let maximumHistoryRecords = 500
 
@@ -44,6 +57,8 @@ final class PhoneViewModel: ObservableObject {
 
     init() {
         extensionNickname = UserDefaults.standard.string(forKey: Self.nicknameKey) ?? ""
+        doNotDisturb = UserDefaults.standard.bool(forKey: Self.dndKey)
+        voicemailAccessNumber = UserDefaults.standard.string(forKey: Self.voicemailAccessNumberKey) ?? ""
         callHistory = Self.loadCallHistory()
 
         webRTC.onLocalCandidate = { [weak self] candidate in
@@ -72,6 +87,10 @@ final class PhoneViewModel: ObservableObject {
         !sipUsername.trimmingCharacters(in: .whitespaces).isEmpty &&
         !sipPassword.isEmpty &&
         URL(string: janusURL) != nil
+    }
+
+    var canCallVoicemail: Bool {
+        isRegistered && !voicemailAccessNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func connectAndRegister() async {
@@ -126,37 +145,39 @@ final class PhoneViewModel: ObservableObject {
         sip = nil
         isRegistered = false
         registrationStatus = "Offline"
+        voicemailSubscriptionStatus = "Not subscribed"
+        voicemailWaiting = false
+        voicemailNewCount = 0
+        voicemailOldCount = 0
         callState = .idle
     }
 
     func placeCall() async {
         let number = normalizedDialString(dialledNumber)
-        guard isRegistered, !number.isEmpty, let sip else { return }
-        errorMessage = nil
-        currentNumber = number
-        activeCall = ActiveCallContext(
-            direction: .outgoing,
-            number: number,
-            displayName: nil,
-            startedAt: Date(),
-            connectedAt: nil
-        )
-        callState = .outgoing(number: number)
-        canSendTrickle = false
-        pendingLocalCandidates.removeAll()
+        await startOutgoingCall(to: number)
+    }
 
+    func callVoicemail() async {
+        let number = normalizedDialString(voicemailAccessNumber)
+        guard !number.isEmpty else {
+            errorMessage = "Set the voicemail access number in Settings first."
+            return
+        }
+        dialledNumber = number
+        await startOutgoingCall(to: number)
+    }
+
+    func refreshVoicemailStatus() async {
+        guard isRegistered, let sip else {
+            voicemailSubscriptionStatus = "Not registered"
+            return
+        }
+
+        voicemailSubscriptionStatus = "Subscribing…"
         do {
-            try webRTC.prepareAudioSession()
-            try webRTC.createPeerConnection()
-            let offer = try await webRTC.createOffer()
-            try await sip.call(number: number, realm: sipRealm, offerSDP: offer)
-            canSendTrickle = true
-            await flushLocalCandidates()
+            try await sip.subscribeMessageSummary()
         } catch {
-            errorMessage = error.localizedDescription
-            callState = .ended(reason: error.localizedDescription)
-            finalizeActiveCall(result: .failed)
-            webRTC.closePeerConnection()
+            voicemailSubscriptionStatus = "Unavailable"
         }
     }
 
@@ -242,6 +263,36 @@ final class PhoneViewModel: ObservableObject {
         errorMessage = nil
     }
 
+    private func startOutgoingCall(to number: String) async {
+        guard isRegistered, !number.isEmpty, let sip, !callState.isInCall else { return }
+        errorMessage = nil
+        currentNumber = number
+        activeCall = ActiveCallContext(
+            direction: .outgoing,
+            number: number,
+            displayName: nil,
+            startedAt: Date(),
+            connectedAt: nil
+        )
+        callState = .outgoing(number: number)
+        canSendTrickle = false
+        pendingLocalCandidates.removeAll()
+
+        do {
+            try webRTC.prepareAudioSession()
+            try webRTC.createPeerConnection()
+            let offer = try await webRTC.createOffer()
+            try await sip.call(number: number, realm: sipRealm, offerSDP: offer)
+            canSendTrickle = true
+            await flushLocalCandidates()
+        } catch {
+            errorMessage = error.localizedDescription
+            callState = .ended(reason: error.localizedDescription)
+            finalizeActiveCall(result: .failed)
+            webRTC.closePeerConnection()
+        }
+    }
+
     private func handleSIPEvent(_ payload: [String: Any], jsep: [String: Any]?) {
         if let error = payload["error"] as? String {
             errorMessage = error
@@ -258,12 +309,28 @@ final class PhoneViewModel: ObservableObject {
         case "registered":
             isRegistered = true
             registrationStatus = "Online"
+            Task { await refreshVoicemailStatus() }
 
         case "registration_failed":
             isRegistered = false
             let reason = result["reason"] as? String ?? "Registration failed"
             registrationStatus = "Registration failed"
             errorMessage = reason
+
+        case "subscribing":
+            voicemailSubscriptionStatus = "Subscribing…"
+
+        case "subscribe_succeeded":
+            voicemailSubscriptionStatus = "Active"
+
+        case "subscribe_failed":
+            voicemailSubscriptionStatus = "Unavailable"
+
+        case "notify":
+            if (result["notify"] as? String)?.lowercased() == "message-summary" {
+                updateVoicemailSummary(from: result["content"] as? String ?? "")
+                voicemailSubscriptionStatus = "Active"
+            }
 
         case "calling":
             callState = .outgoing(number: currentNumber)
@@ -292,6 +359,23 @@ final class PhoneViewModel: ObservableObject {
             let callerURI = result["username"] as? String ?? "Unknown"
             let caller = extractUser(from: callerURI)
             let displayName = result["displayname"] as? String
+
+            if doNotDisturb {
+                activeCall = ActiveCallContext(
+                    direction: .incoming,
+                    number: caller,
+                    displayName: displayName,
+                    startedAt: Date(),
+                    connectedAt: nil
+                )
+                finalizeActiveCall(result: .missed)
+                Task { try? await sip?.decline(code: 486) }
+                currentNumber = ""
+                incomingOfferSDP = nil
+                callState = .idle
+                return
+            }
+
             currentNumber = caller
             incomingOfferSDP = jsep?["sdp"] as? String
             activeCall = ActiveCallContext(
@@ -312,6 +396,40 @@ final class PhoneViewModel: ObservableObject {
 
         default:
             break
+        }
+    }
+
+    private func updateVoicemailSummary(from content: String) {
+        var waiting: Bool?
+        var newCount: Int?
+        var oldCount: Int?
+
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lower = line.lowercased()
+
+            if lower.hasPrefix("messages-waiting:") {
+                let value = lower.split(separator: ":", maxSplits: 1).last?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                waiting = value == "yes"
+            }
+
+            if lower.hasPrefix("voice-message:") {
+                let value = line.split(separator: ":", maxSplits: 1).last?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let countsToken = value.split(separator: " ").first.map(String.init) ?? value
+                let counts = countsToken.split(separator: "/", maxSplits: 1)
+                if let first = counts.first { newCount = Int(first) }
+                if counts.count > 1 { oldCount = Int(counts[1]) }
+            }
+        }
+
+        if let newCount { voicemailNewCount = newCount }
+        if let oldCount { voicemailOldCount = oldCount }
+        if let waiting {
+            voicemailWaiting = waiting || voicemailNewCount > 0
+        } else {
+            voicemailWaiting = voicemailNewCount > 0
         }
     }
 
