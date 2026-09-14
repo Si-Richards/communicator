@@ -6,7 +6,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("SIP account") {
+                Section {
                     TextField("Nickname", text: $model.extensionNickname)
                         .textInputAutocapitalization(.words)
                     TextField("Username / extension", text: $model.sipUsername)
@@ -19,6 +19,8 @@ struct SettingsView: View {
                     TextField("Proxy (optional)", text: $model.sipProxy)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                } header: {
+                    Text("SIP account")
                 } footer: {
                     Text("The nickname is shown at the top of the Phone screen. If it is blank, the SIP extension is shown instead.")
                 }
