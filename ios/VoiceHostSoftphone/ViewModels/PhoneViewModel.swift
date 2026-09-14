@@ -3,6 +3,9 @@ import WebRTC
 
 @MainActor
 final class PhoneViewModel: ObservableObject {
+    @Published var extensionNickname: String {
+        didSet { UserDefaults.standard.set(extensionNickname, forKey: Self.nicknameKey) }
+    }
     @Published var sipUsername = ""
     @Published var sipPassword = ""
     @Published var sipRealm = AppConfig.defaultSIPRealm
@@ -14,8 +17,21 @@ final class PhoneViewModel: ObservableObject {
     @Published private(set) var registrationStatus = "Offline"
     @Published private(set) var callState: CallState = .idle
     @Published private(set) var errorMessage: String?
+    @Published private(set) var callHistory: [CallRecord]
     @Published var dialledNumber = ""
     @Published var isMuted = false
+
+    private struct ActiveCallContext {
+        let direction: CallRecord.Direction
+        let number: String
+        let displayName: String?
+        let startedAt: Date
+        var connectedAt: Date?
+    }
+
+    private static let nicknameKey = "voicehost.extensionNickname"
+    private static let historyKey = "voicehost.callHistory.v1"
+    private static let maximumHistoryRecords = 500
 
     private var janus: JanusClient?
     private var sip: JanusSIPPlugin?
@@ -24,8 +40,12 @@ final class PhoneViewModel: ObservableObject {
     private var currentNumber = ""
     private var canSendTrickle = false
     private var pendingLocalCandidates: [[String: Any]] = []
+    private var activeCall: ActiveCallContext?
 
     init() {
+        extensionNickname = UserDefaults.standard.string(forKey: Self.nicknameKey) ?? ""
+        callHistory = Self.loadCallHistory()
+
         webRTC.onLocalCandidate = { [weak self] candidate in
             Task { @MainActor in
                 await self?.queueOrSend(candidate: candidate)
@@ -36,6 +56,16 @@ final class PhoneViewModel: ObservableObject {
                 await self?.queueOrSend(candidateObject: ["completed": true])
             }
         }
+    }
+
+    var extensionDisplayName: String {
+        let nickname = extensionNickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nickname.isEmpty { return nickname }
+
+        let username = sipUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !username.isEmpty { return username }
+
+        return "Phone"
     }
 
     var canRegister: Bool {
@@ -60,7 +90,7 @@ final class PhoneViewModel: ObservableObject {
             password: sipPassword,
             realm: sipRealm.trimmingCharacters(in: .whitespacesAndNewlines),
             proxy: proxyValue.isEmpty ? nil : proxyValue,
-            displayName: nil
+            displayName: extensionNickname.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         )
 
         let janus = JanusClient(serverURL: url)
@@ -87,6 +117,9 @@ final class PhoneViewModel: ObservableObject {
     }
 
     func disconnect() {
+        if activeCall != nil {
+            finalizeActiveCall(result: localEndResult())
+        }
         janus?.disconnect()
         webRTC.closePeerConnection()
         janus = nil
@@ -101,6 +134,13 @@ final class PhoneViewModel: ObservableObject {
         guard isRegistered, !number.isEmpty, let sip else { return }
         errorMessage = nil
         currentNumber = number
+        activeCall = ActiveCallContext(
+            direction: .outgoing,
+            number: number,
+            displayName: nil,
+            startedAt: Date(),
+            connectedAt: nil
+        )
         callState = .outgoing(number: number)
         canSendTrickle = false
         pendingLocalCandidates.removeAll()
@@ -115,6 +155,7 @@ final class PhoneViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             callState = .ended(reason: error.localizedDescription)
+            finalizeActiveCall(result: .failed)
             webRTC.closePeerConnection()
         }
     }
@@ -135,16 +176,21 @@ final class PhoneViewModel: ObservableObject {
             await flushLocalCandidates()
         } catch {
             errorMessage = error.localizedDescription
+            finalizeActiveCall(result: .failed)
+            webRTC.closePeerConnection()
+            callState = .ended(reason: error.localizedDescription)
         }
     }
 
     func rejectIncomingCall() async {
         try? await sip?.decline()
+        finalizeActiveCall(result: .declined)
         resetCall()
     }
 
     func hangup() async {
         try? await sip?.hangup()
+        finalizeActiveCall(result: localEndResult())
         resetCall()
     }
 
@@ -173,6 +219,23 @@ final class PhoneViewModel: ObservableObject {
     func sendDTMF(_ digit: String) async {
         guard callState.isInCall else { return }
         try? await sip?.sendDTMF(digit)
+    }
+
+    func deleteCallRecord(id: UUID) {
+        callHistory.removeAll { $0.id == id }
+        persistCallHistory()
+    }
+
+    func deleteCallRecords(at offsets: IndexSet) {
+        for index in offsets.sorted(by: >) where callHistory.indices.contains(index) {
+            callHistory.remove(at: index)
+        }
+        persistCallHistory()
+    }
+
+    func clearCallHistory() {
+        callHistory.removeAll()
+        persistCallHistory()
     }
 
     func clearError() {
@@ -218,6 +281,9 @@ final class PhoneViewModel: ObservableObject {
             if let answer = jsep?["sdp"] as? String {
                 Task { try? await webRTC.applyRemoteAnswer(answer) }
             }
+            if activeCall?.connectedAt == nil {
+                activeCall?.connectedAt = Date()
+            }
             callState = .connected(number: currentNumber)
 
         case "incomingcall":
@@ -228,10 +294,18 @@ final class PhoneViewModel: ObservableObject {
             let displayName = result["displayname"] as? String
             currentNumber = caller
             incomingOfferSDP = jsep?["sdp"] as? String
+            activeCall = ActiveCallContext(
+                direction: .incoming,
+                number: caller,
+                displayName: displayName,
+                startedAt: Date(),
+                connectedAt: nil
+            )
             callState = .incoming(number: caller, displayName: displayName)
 
         case "hangup":
             let reason = result["reason"] as? String
+            finalizeActiveCall(result: remoteEndResult())
             callState = .ended(reason: reason)
             webRTC.closePeerConnection()
             incomingOfferSDP = nil
@@ -275,6 +349,57 @@ final class PhoneViewModel: ObservableObject {
         }
     }
 
+    private func finalizeActiveCall(result: CallRecord.Result) {
+        guard let call = activeCall else { return }
+        activeCall = nil
+
+        let duration: TimeInterval
+        if let connectedAt = call.connectedAt {
+            duration = max(0, Date().timeIntervalSince(connectedAt))
+        } else {
+            duration = 0
+        }
+
+        let record = CallRecord(
+            direction: call.direction,
+            number: call.number,
+            displayName: call.displayName,
+            startedAt: call.startedAt,
+            duration: duration,
+            result: result
+        )
+        callHistory.insert(record, at: 0)
+        if callHistory.count > Self.maximumHistoryRecords {
+            callHistory.removeLast(callHistory.count - Self.maximumHistoryRecords)
+        }
+        persistCallHistory()
+    }
+
+    private func localEndResult() -> CallRecord.Result {
+        guard let call = activeCall else { return .cancelled }
+        if call.connectedAt != nil { return .completed }
+        return call.direction == .incoming ? .declined : .cancelled
+    }
+
+    private func remoteEndResult() -> CallRecord.Result {
+        guard let call = activeCall else { return .failed }
+        if call.connectedAt != nil { return .completed }
+        return call.direction == .incoming ? .missed : .failed
+    }
+
+    private func persistCallHistory() {
+        guard let data = try? JSONEncoder().encode(callHistory) else { return }
+        UserDefaults.standard.set(data, forKey: Self.historyKey)
+    }
+
+    private static func loadCallHistory() -> [CallRecord] {
+        guard let data = UserDefaults.standard.data(forKey: historyKey),
+              let records = try? JSONDecoder().decode([CallRecord].self, from: data) else {
+            return []
+        }
+        return records
+    }
+
     private func resetCall() {
         webRTC.closePeerConnection()
         incomingOfferSDP = nil
@@ -294,4 +419,8 @@ final class PhoneViewModel: ObservableObject {
             .replacingOccurrences(of: "sip:", with: "")
             .split(separator: "@").first.map(String.init) ?? sipURI
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
