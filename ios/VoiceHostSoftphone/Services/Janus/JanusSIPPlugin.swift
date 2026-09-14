@@ -29,6 +29,15 @@ final class JanusSIPPlugin {
         try await janus.sendPlugin(body: ["request": "unregister"])
     }
 
+    func subscribeMessageSummary(ttl: Int = 3600) async throws {
+        try await janus.sendPlugin(body: [
+            "request": "subscribe",
+            "event": "message-summary",
+            "accept": "application/simple-message-summary",
+            "subscribe_ttl": ttl
+        ])
+    }
+
     func call(number: String, realm: String, offerSDP: String) async throws {
         let uri = number.hasPrefix("sip:") ? number : "sip:\(number)@\(realm)"
         try await janus.sendPlugin(
