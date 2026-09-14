@@ -15,6 +15,7 @@ targets:
       - VoiceHostSoftphone
     dependencies:
       - package: WebRTC
+        product: WebRTC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.voicehost.softphone
