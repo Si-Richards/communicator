@@ -40,7 +40,7 @@ class CallHistoryScreen extends StatelessWidget {
               ? const _EmptyHistory()
               : ListView.separated(
                   itemCount: controller.callHistory.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final record = controller.callHistory[index];
                     return Dismissible(
