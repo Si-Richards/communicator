@@ -31,8 +31,8 @@ class MobileCallCoordinator {
   String? _activeGatewayCallId;
   String? _deviceId;
   String? _pushToken;
+  String? _lastProvisionSignature;
   bool _provisioning = false;
-  bool _lastRegistered = false;
 
   Future<void> initialize() async {
     if (!gateway.enabled || !Platform.isIOS) {
@@ -57,15 +57,26 @@ class MobileCallCoordinator {
     _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
     phone.addListener(_phoneChanged);
     _phoneChanged();
-    debugPrint('[VoiceHost Mobile] device=$_deviceId pushToken=${_pushToken?.isNotEmpty == true ? 'ready' : 'waiting'}');
+    debugPrint(
+      '[VoiceHost Mobile] device=$_deviceId '
+      'pushToken=${_pushToken?.isNotEmpty == true ? 'ready' : 'waiting'}',
+    );
   }
 
   void _phoneChanged() {
-    if (!gateway.enabled) return;
-    if (phone.isRegistered != _lastRegistered) {
-      _lastRegistered = phone.isRegistered;
-      if (_lastRegistered) unawaited(_provision());
-    }
+    if (!gateway.enabled || !phone.isRegistered) return;
+    final token = _pushToken ?? '';
+    final signature = [
+      token,
+      phone.sipUsername,
+      phone.sipRealm,
+      phone.sipProxy,
+      phone.extensionDisplayName,
+      phone.doNotDisturb.toString(),
+    ].join('|');
+    if (signature == _lastProvisionSignature) return;
+    _lastProvisionSignature = signature;
+    unawaited(_provision());
   }
 
   Future<void> _provision() async {
@@ -87,8 +98,11 @@ class MobileCallCoordinator {
         nickname: phone.extensionDisplayName,
         doNotDisturb: phone.doNotDisturb,
       );
-      debugPrint('[VoiceHost Mobile] gateway registration active for ${phone.sipUsername}');
+      debugPrint(
+        '[VoiceHost Mobile] gateway registration active for ${phone.sipUsername}',
+      );
     } catch (error) {
+      _lastProvisionSignature = null;
       debugPrint('[VoiceHost Mobile] provisioning failed: $error');
     } finally {
       _provisioning = false;
@@ -99,7 +113,8 @@ class MobileCallCoordinator {
     if (event == null) return;
     if (event is CallEventActionDidUpdateDevicePushTokenVoip) {
       _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
-      await _provision();
+      _lastProvisionSignature = null;
+      _phoneChanged();
       return;
     }
     if (event is CallEventActionCallAccept) {
@@ -119,17 +134,23 @@ class MobileCallCoordinator {
       return;
     }
     if (event is CallEventActionCallToggleMute) {
-      await _webRtc.setMuted(await FlutterCallkitIncoming.isMuted(event.callKitParams.id));
+      await _webRtc.setMuted(
+        await FlutterCallkitIncoming.isMuted(event.callKitParams.id),
+      );
     }
   }
 
   Future<void> _accept(String callId) async {
     try {
       final call = await gateway.getCall(callId);
-      if (call.offerSdp.isEmpty) throw StateError('Gateway call has no WebRTC offer');
+      if (call.offerSdp.isEmpty) {
+        throw StateError('Gateway call has no WebRTC offer');
+      }
       _activeGatewayCallId = callId;
       await _listenToGateway(callId);
-      await _webRtc.preparePeerConnection(preservePendingRemoteCandidates: true);
+      await _webRtc.preparePeerConnection(
+        preservePendingRemoteCandidates: true,
+      );
       final answer = await _webRtc.createAnswer(call.offerSdp);
       await gateway.answer(callId, answer);
       await FlutterCallkitIncoming.setCallConnected(callId);
@@ -155,7 +176,11 @@ class MobileCallCoordinator {
           case 'trickle':
             final candidate = event['candidate'];
             if (candidate is Map) {
-              unawaited(_webRtc.addRemoteCandidate(Map<String, dynamic>.from(candidate)));
+              unawaited(
+                _webRtc.addRemoteCandidate(
+                  Map<String, dynamic>.from(candidate),
+                ),
+              );
             }
             break;
           case 'hangup':
