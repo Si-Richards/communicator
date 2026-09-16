@@ -1,0 +1,10 @@
+services:
+  mobile-gateway:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./secrets/AuthKey.p8:/run/secrets/AuthKey.p8:ro
