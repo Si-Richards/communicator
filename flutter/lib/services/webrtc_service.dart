@@ -23,6 +23,7 @@ class WebRtcService {
     await close();
     _pendingRemoteCandidates.addAll(preservedCandidates);
 
+    onLog?.call('Requesting microphone stream');
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': {
         'echoCancellation': true,
@@ -32,9 +33,15 @@ class WebRtcService {
       'video': false,
     });
 
+    final stream = _localStream!;
+    final localAudioTracks = stream.getAudioTracks();
+    onLog?.call('Local microphone stream ready: ${localAudioTracks.length} audio track(s)');
+
     final renderer = RTCVideoRenderer();
     await renderer.initialize();
-    renderer.muted = false;
+    // Do not set renderer.muted before srcObject exists. flutter_webrtc throws
+    // "The media stream is null" when the muted property is changed without
+    // an attached MediaStream.
     _remoteRenderer = renderer;
 
     _peerConnection = await createPeerConnection(
@@ -73,18 +80,25 @@ class WebRtcService {
       onConnectionStateChanged?.call(state.toString());
     };
     pc.onTrack = (event) {
-      onLog?.call('Remote track: ${event.track.kind} ${event.track.id}');
+      onLog?.call(
+        'Remote track: ${event.track.kind} ${event.track.id} enabled=${event.track.enabled}',
+      );
       event.track.enabled = true;
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams.first;
         _remoteRenderer?.srcObject = _remoteStream;
+        onLog?.call(
+          'Remote media stream attached: ${_remoteStream?.getAudioTracks().length ?? 0} audio track(s)',
+        );
+      } else {
+        onLog?.call('Remote track arrived without an associated MediaStream');
       }
     };
 
-    final stream = _localStream!;
-    for (final track in stream.getAudioTracks()) {
+    for (final track in localAudioTracks) {
       track.enabled = true;
       await pc.addTrack(track, stream);
+      onLog?.call('Added local audio track ${track.id}');
     }
 
     await Helper.setSpeakerphoneOn(false);
@@ -99,6 +113,7 @@ class WebRtcService {
     });
     await pc.setLocalDescription(offer);
     if (offer.sdp == null) throw StateError('WebRTC offer contained no SDP');
+    onLog?.call('Local SDP offer created');
     return offer.sdp!;
   }
 
@@ -113,12 +128,14 @@ class WebRtcService {
     });
     await pc.setLocalDescription(answer);
     if (answer.sdp == null) throw StateError('WebRTC answer contained no SDP');
+    onLog?.call('Local SDP answer created');
     return answer.sdp!;
   }
 
   Future<void> applyRemoteAnswer(String sdp) async {
     if (_remoteDescriptionSet) return;
     await _setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+    onLog?.call('Remote SDP answer applied');
   }
 
   Future<void> addRemoteCandidate(Map<String, dynamic> object) async {
@@ -139,7 +156,12 @@ class WebRtcService {
   }
 
   Future<void> setMuted(bool muted) async {
-    for (final track in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) {
+    final local = _localStream;
+    if (local == null) {
+      onLog?.call('Ignoring mute=$muted because no local media stream exists');
+      return;
+    }
+    for (final track in local.getAudioTracks()) {
       track.enabled = !muted;
     }
   }
