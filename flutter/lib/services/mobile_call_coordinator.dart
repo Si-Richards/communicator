@@ -122,7 +122,7 @@ class MobileCallCoordinator {
       return;
     }
     if (event is CallEventActionCallDecline) {
-      await _decline(event.callKitParams.id);
+      await _decline(event.id);
       return;
     }
     if (event is CallEventActionCallEnded) {
@@ -134,9 +134,7 @@ class MobileCallCoordinator {
       return;
     }
     if (event is CallEventActionCallToggleMute) {
-      await _webRtc.setMuted(
-        await FlutterCallkitIncoming.isMuted(event.callKitParams.id),
-      );
+      await _webRtc.setMuted(event.isMuted);
     }
   }
 
