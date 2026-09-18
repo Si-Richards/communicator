@@ -727,7 +727,6 @@ class _ActiveCallContext {
     required this.number,
     required this.startedAt,
     this.displayName,
-    this.connectedAt,
   });
 
   final CallDirection direction;
