@@ -3,8 +3,33 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./data:/data
       - ./secrets/AuthKey.p8:/run/secrets/AuthKey.p8:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    depends_on:
+      mobile-gateway:
+        condition: service_healthy
+    environment:
+      GATEWAY_HOSTNAME: ${GATEWAY_HOSTNAME:-randy.voicehost.io}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
