@@ -122,7 +122,7 @@ class MobileCallCoordinator {
       return;
     }
     if (event is CallEventActionCallDecline) {
-      await _decline(event.id);
+      await _decline(event.callKitParams.id);
       return;
     }
     if (event is CallEventActionCallEnded) {
@@ -130,7 +130,7 @@ class MobileCallCoordinator {
       return;
     }
     if (event is CallEventActionCallTimeout) {
-      await _decline(event.callKitParams.id);
+      await _decline(event.id);
       return;
     }
     if (event is CallEventActionCallToggleMute) {
