@@ -1,10 +1,18 @@
 import asyncio
+import hashlib
+import logging
 import uuid
 from dataclasses import dataclass, field
 
 from .apns import APNSClient
 from .janus import JanusSipSession
 from .models import DeviceRecord
+
+logger = logging.getLogger('uvicorn.error')
+
+
+def _safe_ref(value: str) -> str:
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()[:10]
 
 
 @dataclass
@@ -48,6 +56,10 @@ class MobileSessionManager:
                     # Re-provisioning on app cold start/token refresh must not
                     # destroy a Janus session that may own an incoming INVITE.
                     existing.device = device
+                    logger.info(
+                        '[VH-DIAG] event=session_reused device=%s',
+                        _safe_ref(device.device_id),
+                    )
                     return
 
             existing = self.sessions.pop(device.device_id, None)
@@ -64,6 +76,10 @@ class MobileSessionManager:
 
             session = JanusSipSession(device, plugin, trickle)
             self.sessions[device.device_id] = session
+            logger.info(
+                '[VH-DIAG] event=session_start device=%s',
+                _safe_ref(device.device_id),
+            )
             try:
                 await session.start()
             except Exception:
@@ -93,6 +109,12 @@ class MobileSessionManager:
             call_id = str(uuid.uuid4())
             call = CallRuntime(call_id, device.device_id, caller, display, offer)
             self.calls[call_id] = call
+            logger.info(
+                '[VH-DIAG] event=incoming_call call=%s device=%s offer_sdp=%s',
+                _safe_ref(call_id),
+                _safe_ref(device.device_id),
+                bool(offer),
+            )
             self.device_call[device.device_id] = call_id
             await self.apns.send_voip(device.push_token, {
                 'aps': {'content-available': 1},
@@ -108,6 +130,12 @@ class MobileSessionManager:
         if not call:
             return
         if event in {'ringing', 'progress', 'accepted'}:
+            logger.info(
+                '[VH-DIAG] event=janus_%s call=%s jsep=%s',
+                event,
+                _safe_ref(call.id),
+                bool(jsep),
+            )
             await call.publish({'type': event, 'jsep': jsep, 'result': result})
         elif event == 'hangup':
             await call.publish({'type': 'hangup', 'reason': result.get('reason')})
@@ -131,6 +159,11 @@ class MobileSessionManager:
         return session
 
     async def answer(self, call_id: str, sdp: str):
+        logger.info(
+            '[VH-DIAG] event=answer_received call=%s sdp_length=%s',
+            _safe_ref(call_id),
+            len(sdp),
+        )
         await self._session_for_call(call_id).accept(sdp)
 
     async def decline(self, call_id: str):
@@ -140,4 +173,9 @@ class MobileSessionManager:
         await self._session_for_call(call_id).hangup()
 
     async def candidate(self, call_id: str, candidate: dict):
+        logger.info(
+            '[VH-DIAG] event=handset_candidate call=%s completed=%s',
+            _safe_ref(call_id),
+            bool(candidate.get('completed')),
+        )
         await self._session_for_call(call_id).trickle(candidate)
