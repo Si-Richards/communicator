@@ -50,7 +50,7 @@ class JanusSipSession:
         self.ws = None
 
     async def accept(self, sdp: str):
-        await self._message({'request': 'accept'}, {'type': 'answer', 'sdp': sdp})
+        await self._message({'request': 'accept'}, {'type': 'answer', 'sdp': sdp, 'trickle': True})
 
     async def decline(self, code: int = 486):
         await self._message({'request': 'decline', 'code': code})
