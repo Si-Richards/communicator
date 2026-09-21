@@ -25,6 +25,12 @@ class CandidateRequest(BaseModel):
     completed: bool = False
 
 
+class DiagnosticEvent(BaseModel):
+    event: str = Field(min_length=1, max_length=80)
+    call_id: str | None = Field(default=None, max_length=200)
+    details: dict[str, str | int | bool] = Field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class DeviceRecord:
     device_id: str
