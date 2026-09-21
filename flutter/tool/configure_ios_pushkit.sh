@@ -10,6 +10,7 @@ if [[ ! -d "$IOS/Runner" ]]; then
 fi
 
 cp "$ROOT/tool/AppDelegate.PushKit.swift" "$IOS/Runner/AppDelegate.swift"
+cp "$ROOT/tool/LaunchScreen.voicehost.storyboard" "$IOS/Runner/Base.lproj/LaunchScreen.storyboard"
 
 ROOT="$ROOT" python3 <<'PY'
 import os
@@ -31,7 +32,7 @@ with plist_path.open('wb') as fh:
 PY
 
 cat <<'EOF'
-PushKit source and Info.plist configured.
+PushKit source, VoiceHost launch screen, and Info.plist configured.
 
 One Xcode capability step remains (Apple controls provisioning):
   Runner target -> Signing & Capabilities -> + Capability -> Push Notifications
