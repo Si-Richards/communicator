@@ -86,6 +86,8 @@ class PhoneController extends ChangeNotifier {
   bool get canCallVoicemail =>
       isRegistered && voicemailNumber.trim().isNotEmpty && !callState.isInCall;
 
+  DateTime? get activeCallConnectedAt => _activeCall?.connectedAt;
+
   Future<void> initialize() async {
     final settings = await _settingsRepository.load();
     nickname = settings.nickname;
