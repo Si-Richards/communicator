@@ -67,6 +67,8 @@ class PhoneController extends ChangeNotifier {
   String? _incomingOfferSdp;
   String _currentNumber = '';
   bool _canSendTrickle = false;
+  bool _connectRequestRunning = false;
+  bool _registrationPending = false;
   final List<Map<String, dynamic>> _pendingLocalCandidates = [];
   _ActiveCallContext? _activeCall;
 
@@ -87,6 +89,16 @@ class PhoneController extends ChangeNotifier {
       isRegistered && voicemailNumber.trim().isNotEmpty && !callState.isInCall;
 
   DateTime? get activeCallConnectedAt => _activeCall?.connectedAt;
+
+  Future<void> ensureRegistered() async {
+    if (!canRegister ||
+        isRegistered ||
+        _connectRequestRunning ||
+        _registrationPending) {
+      return;
+    }
+    await connectAndRegister();
+  }
 
   Future<void> initialize() async {
     final settings = await _settingsRepository.load();
@@ -155,8 +167,11 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> connectAndRegister() async {
+    if (_connectRequestRunning || _registrationPending) return;
+    _connectRequestRunning = true;
     clearError();
     if (!canRegister) {
+      _connectRequestRunning = false;
       _setError('Enter a SIP username and password before registering.');
       return;
     }
@@ -164,6 +179,7 @@ class PhoneController extends ChangeNotifier {
     final uri = Uri.tryParse(janusUrl);
     if (uri == null || (uri.scheme != 'ws' && uri.scheme != 'wss')) {
       _setError('Janus URL must be a ws:// or wss:// URL.');
+      _connectRequestRunning = false;
       return;
     }
 
@@ -185,6 +201,7 @@ class PhoneController extends ChangeNotifier {
       unawaited(_webRtc.addRemoteCandidate(candidate));
     };
     janus.onDisconnected = (error) {
+      _registrationPending = false;
       _log('Janus disconnected: $error');
       if (isRegistered) {
         isRegistered = false;
@@ -196,6 +213,7 @@ class PhoneController extends ChangeNotifier {
     try {
       await janus.connect(apiSecret: janusApiSecret);
       registrationStatus = 'Registering…';
+      _registrationPending = true;
       notifyListeners();
       await sip.register(
         SipAccount(
@@ -207,9 +225,12 @@ class PhoneController extends ChangeNotifier {
         ),
       );
     } catch (error) {
+      _registrationPending = false;
       isRegistered = false;
       registrationStatus = 'Offline';
       _setError(error.toString());
+    } finally {
+      _connectRequestRunning = false;
     }
   }
 
@@ -226,6 +247,7 @@ class PhoneController extends ChangeNotifier {
     _currentNumber = '';
     _pendingLocalCandidates.clear();
     _canSendTrickle = false;
+    _registrationPending = false;
     isMuted = false;
     speakerphoneOn = false;
     callState = const PhoneCallState.idle();
@@ -425,12 +447,14 @@ class PhoneController extends ChangeNotifier {
         notifyListeners();
         break;
       case 'registered':
+        _registrationPending = false;
         isRegistered = true;
         registrationStatus = 'Online';
         notifyListeners();
         unawaited(refreshVoicemailStatus());
         break;
       case 'registration_failed':
+        _registrationPending = false;
         isRegistered = false;
         registrationStatus = 'Registration failed';
         _setError(result?['reason']?.toString() ?? 'SIP registration failed');
