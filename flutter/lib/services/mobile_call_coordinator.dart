@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -13,7 +14,7 @@ import '../core/app_config.dart';
 import 'mobile_gateway_service.dart';
 import 'webrtc_service.dart';
 
-class MobileCallCoordinator extends ChangeNotifier {
+class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   MobileCallCoordinator(this.phone)
       : gateway = MobileGatewayService(
           baseUrl: AppConfig.mobileGatewayUrl,
@@ -60,6 +61,7 @@ class MobileCallCoordinator extends ChangeNotifier {
       return;
     }
 
+    WidgetsBinding.instance.addObserver(this);
     _deviceId = await _loadOrCreateDeviceId();
     _webRtc.onLog = (message) => debugPrint('[VoiceHost Mobile] $message');
     _webRtc.onLocalCandidate = (candidate) {
@@ -84,7 +86,7 @@ class MobileCallCoordinator extends ChangeNotifier {
   }
 
   void _phoneChanged() {
-    if (!gateway.enabled || !phone.isRegistered) return;
+    if (!gateway.enabled) return;
     final token = _pushToken ?? '';
     final signature = [
       token,
@@ -126,6 +128,13 @@ class MobileCallCoordinator extends ChangeNotifier {
       debugPrint('[VoiceHost Mobile] provisioning failed: $error');
     } finally {
       _provisioning = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(phone.ensureRegistered());
     }
   }
 
@@ -312,6 +321,7 @@ class MobileCallCoordinator extends ChangeNotifier {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
     unawaited(_callKitSubscription?.cancel());
     unawaited(_closeGatewayMedia());
