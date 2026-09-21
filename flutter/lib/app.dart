@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
 
 import 'controllers/phone_controller.dart';
+import 'services/mobile_call_coordinator.dart';
 import 'ui/call_history_screen.dart';
 import 'ui/phone_screen.dart';
 import 'ui/settings_screen.dart';
 import 'ui/voicemail_screen.dart';
 
 class VoiceHostApp extends StatelessWidget {
-  const VoiceHostApp({super.key, required this.controller});
+  const VoiceHostApp({
+    super.key,
+    required this.controller,
+    required this.mobileCalls,
+  });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
 
   @override
   Widget build(BuildContext context) {
@@ -28,15 +34,20 @@ class VoiceHostApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF8F9FB),
       ),
-      home: MainShell(controller: controller),
+      home: MainShell(controller: controller, mobileCalls: mobileCalls),
     );
   }
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.controller});
+  const MainShell({
+    super.key,
+    required this.controller,
+    required this.mobileCalls,
+  });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -51,7 +62,7 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final screens = [
-      PhoneScreen(controller: controller),
+      PhoneScreen(controller: controller, mobileCalls: widget.mobileCalls),
       CallHistoryScreen(controller: controller, onGoToPhone: _goToPhone),
       VoicemailScreen(controller: controller, onGoToPhone: _goToPhone),
       SettingsScreen(controller: controller),
