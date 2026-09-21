@@ -18,5 +18,5 @@ Future<void> main() async {
   final mobileCalls = MobileCallCoordinator(controller);
   await mobileCalls.initialize();
 
-  runApp(VoiceHostApp(controller: controller));
+  runApp(VoiceHostApp(controller: controller, mobileCalls: mobileCalls));
 }
