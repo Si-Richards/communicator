@@ -139,19 +139,26 @@ class MobileCallCoordinator {
   }
 
   Future<void> _accept(String callId) async {
+    if (_activeGatewayCallId == callId) {
+      debugPrint('[VoiceHost Mobile] ignoring duplicate accept for $callId');
+      return;
+    }
+    if (_activeGatewayCallId != null) {
+      await _closeGatewayMedia();
+    }
+    _activeGatewayCallId = callId;
+
     try {
       final call = await gateway.getCall(callId);
       if (call.offerSdp.isEmpty) {
         throw StateError('Gateway call has no WebRTC offer');
       }
-      _activeGatewayCallId = callId;
       await _listenToGateway(callId);
       await _webRtc.preparePeerConnection(
         preservePendingRemoteCandidates: true,
       );
       final answer = await _webRtc.createAnswer(call.offerSdp);
       await gateway.answer(callId, answer);
-      await FlutterCallkitIncoming.setCallConnected(callId);
       debugPrint('[VoiceHost Mobile] answered gateway call $callId');
     } catch (error) {
       debugPrint('[VoiceHost Mobile] answer failed: $error');
