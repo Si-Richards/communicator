@@ -81,6 +81,21 @@ class MobileGatewayService {
         body: candidate,
       );
 
+  Future<void> diagnostic(
+    String event, {
+    String? callId,
+    Map<String, Object> details = const {},
+  }) =>
+      _jsonRequest(
+        'POST',
+        '/v1/diagnostics',
+        body: {
+          'event': event,
+          'call_id': callId,
+          'details': details,
+        },
+      );
+
   Future<WebSocket> watchCall(String callId) async {
     final uri = Uri.parse(_url('/v1/calls/$callId/events'));
     final wsUri = uri.replace(scheme: uri.scheme == 'https' ? 'wss' : 'ws');
