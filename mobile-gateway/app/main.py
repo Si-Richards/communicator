@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
@@ -6,12 +8,19 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocke
 from .apns import APNSClient
 from .config import settings
 from .manager import MobileSessionManager
-from .models import AnswerRequest, CandidateRequest, DeviceRegistration
+from .models import AnswerRequest, CandidateRequest, DeviceRegistration, DiagnosticEvent
 from .store import DeviceStore
 
 store = DeviceStore(settings.database_path, settings.device_data_key)
 apns = APNSClient()
 manager = MobileSessionManager(store, apns)
+diag_logger = logging.getLogger('uvicorn.error')
+
+
+def _safe_ref(value: str | None) -> str:
+    if not value:
+        return '-'
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()[:10]
 
 
 def auth(x_gateway_key: str = Header(default='')):
@@ -106,6 +115,30 @@ async def candidate(call_id: str, body: CandidateRequest):
         await manager.candidate(call_id, body.model_dump(exclude_none=True))
     except KeyError:
         raise HTTPException(404, 'call not found')
+    return {'ok': True}
+
+
+
+
+@app.post('/v1/diagnostics', dependencies=[Depends(auth)])
+async def diagnostics(body: DiagnosticEvent):
+    # Intentionally log only bounded, structured diagnostic data. Never send
+    # or log tokens, credentials, SDP, ICE candidate strings or caller data.
+    safe_details = {
+        key: value
+        for key, value in body.details.items()
+        if key in {
+            'ice_state', 'peer_state', 'local_candidates', 'remote_candidates',
+            'local_audio_tracks', 'remote_audio_tracks', 'sdp_length',
+            'app_state', 'callkit_audio', 'gateway_event',
+        }
+    }
+    diag_logger.info(
+        '[VH-DIAG] event=%s call=%s details=%s',
+        body.event,
+        _safe_ref(body.call_id),
+        safe_details,
+    )
     return {'ok': True}
 
 
