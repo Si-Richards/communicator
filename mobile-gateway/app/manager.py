@@ -41,15 +41,24 @@ class MobileSessionManager:
     async def ensure_session(self, device: DeviceRecord):
         lock = self._locks.setdefault(device.device_id, asyncio.Lock())
         async with lock:
+            existing = self.sessions.get(device.device_id)
+            if existing and self._same_sip_registration(existing.device, device):
+                reader = getattr(existing, '_reader_task', None)
+                if reader is not None and not reader.done():
+                    # Re-provisioning on app cold start/token refresh must not
+                    # destroy a Janus session that may own an incoming INVITE.
+                    existing.device = device
+                    return
+
             existing = self.sessions.pop(device.device_id, None)
             if existing:
                 await existing.stop()
 
             async def plugin(data, jsep):
-                await self._plugin_event(device, session, data, jsep)
+                await self._plugin_event(session.device, session, data, jsep)
 
             async def trickle(candidate):
-                call = self._current_call(device.device_id)
+                call = self._current_call(session.device.device_id)
                 if call:
                     await call.publish({'type': 'trickle', 'candidate': candidate})
 
@@ -60,6 +69,15 @@ class MobileSessionManager:
             except Exception:
                 self.sessions.pop(device.device_id, None)
                 raise
+
+    @staticmethod
+    def _same_sip_registration(current: DeviceRecord, updated: DeviceRecord) -> bool:
+        return (
+            current.sip_username == updated.sip_username
+            and current.sip_password == updated.sip_password
+            and current.sip_realm == updated.sip_realm
+            and current.sip_proxy == updated.sip_proxy
+        )
 
     async def _plugin_event(self, device, session, data, jsep):
         result = data.get('result') or {}
