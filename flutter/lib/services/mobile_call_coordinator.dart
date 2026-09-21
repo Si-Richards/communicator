@@ -79,7 +79,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       if (callId == null) return;
       final normalized = state.toLowerCase();
       _gatewayMediaConnected =
-          normalized.contains('connected') || normalized.contains('completed');
+          normalized.endsWith('stateconnected') ||
+          normalized.endsWith('statecompleted');
       notifyListeners();
       unawaited(_diag(
         'ice_state',
