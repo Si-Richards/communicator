@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
@@ -20,6 +22,7 @@ class PhoneScreen extends StatefulWidget {
 
 class _PhoneScreenState extends State<PhoneScreen> {
   late final TextEditingController _numberController;
+  Timer? _callTimer;
   bool _syncingNumber = false;
 
   static const _keys = [
@@ -35,6 +38,18 @@ class _PhoneScreenState extends State<PhoneScreen> {
     _numberController = TextEditingController(text: widget.controller.dialledNumber);
     _numberController.addListener(_numberChanged);
     widget.controller.addListener(_syncNumberFromController);
+    _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final foregroundConnected =
+          widget.controller.activeCallConnectedAt != null &&
+          widget.controller.callState.isConnected;
+      final gatewayConnected =
+          widget.mobileCalls.hasActiveGatewayCall &&
+          widget.mobileCalls.gatewayConnectedAt != null;
+      if (foregroundConnected || gatewayConnected) {
+        setState(() {});
+      }
+    });
   }
 
   void _numberChanged() {
@@ -57,6 +72,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
 
   @override
   void dispose() {
+    _callTimer?.cancel();
     widget.controller.removeListener(_syncNumberFromController);
     _numberController
       ..removeListener(_numberChanged)
@@ -302,7 +318,9 @@ class _CallControls extends StatelessWidget {
             Text(number, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 8),
           Text(
-            mobileCalls.gatewayCallConnected ? 'Connected' : 'Connecting…',
+            mobileCalls.gatewayCallConnected
+                ? 'Connected · ${_formatCallDuration(mobileCalls.gatewayConnectedAt)}'
+                : 'Connecting…',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 18),
@@ -381,6 +399,13 @@ class _CallControls extends StatelessWidget {
     if (state.isInCall) {
       return Column(
         children: [
+          if (state.isConnected) ...[
+            Text(
+              _formatCallDuration(controller.activeCallConnectedAt),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 14),
+          ],
           Wrap(
             spacing: 16,
             runSpacing: 12,
@@ -428,6 +453,19 @@ class _CallControls extends StatelessWidget {
           : null,
     );
   }
+}
+
+String _formatCallDuration(DateTime? connectedAt) {
+  if (connectedAt == null) return '00:00';
+  final elapsed = DateTime.now().difference(connectedAt);
+  final seconds = elapsed.inSeconds < 0 ? 0 : elapsed.inSeconds;
+  final hours = seconds ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  final remainder = seconds % 60;
+  if (hours > 0) {
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
+  }
+  return '${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
 }
 
 class _RoundAction extends StatelessWidget {
