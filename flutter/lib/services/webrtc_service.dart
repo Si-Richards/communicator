@@ -12,6 +12,9 @@ class WebRtcService {
   void Function(Map<String, dynamic> candidate)? onLocalCandidate;
   VoidCallback? onIceGatheringComplete;
   void Function(String state)? onConnectionStateChanged;
+  void Function(String state)? onIceConnectionStateChanged;
+  void Function(int count)? onLocalAudioReady;
+  void Function(int count)? onRemoteAudioReady;
   void Function(String message)? onLog;
 
   Future<void> preparePeerConnection({
@@ -36,6 +39,7 @@ class WebRtcService {
     final stream = _localStream!;
     final localAudioTracks = stream.getAudioTracks();
     onLog?.call('Local microphone stream ready: ${localAudioTracks.length} audio track(s)');
+    onLocalAudioReady?.call(localAudioTracks.length);
 
     final renderer = RTCVideoRenderer();
     await renderer.initialize();
@@ -74,6 +78,7 @@ class WebRtcService {
     };
     pc.onIceConnectionState = (state) {
       onLog?.call('ICE connection: $state');
+      onIceConnectionStateChanged?.call(state.toString());
     };
     pc.onConnectionState = (state) {
       onLog?.call('Peer connection: $state');
@@ -87,9 +92,11 @@ class WebRtcService {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams.first;
         _remoteRenderer?.srcObject = _remoteStream;
+        final audioTrackCount = _remoteStream?.getAudioTracks().length ?? 0;
         onLog?.call(
-          'Remote media stream attached: ${_remoteStream?.getAudioTracks().length ?? 0} audio track(s)',
+          'Remote media stream attached: $audioTrackCount audio track(s)',
         );
+        onRemoteAudioReady?.call(audioTrackCount);
       } else {
         onLog?.call('Remote track arrived without an associated MediaStream');
       }
