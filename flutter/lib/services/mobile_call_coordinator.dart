@@ -13,7 +13,7 @@ import '../core/app_config.dart';
 import 'mobile_gateway_service.dart';
 import 'webrtc_service.dart';
 
-class MobileCallCoordinator {
+class MobileCallCoordinator extends ChangeNotifier {
   MobileCallCoordinator(this.phone)
       : gateway = MobileGatewayService(
           baseUrl: AppConfig.mobileGatewayUrl,
@@ -33,6 +33,24 @@ class MobileCallCoordinator {
   String? _pushToken;
   String? _lastProvisionSignature;
   bool _provisioning = false;
+  String? _activeGatewayCaller;
+  String? _activeGatewayDisplayName;
+  bool _gatewayConnected = false;
+  bool _gatewayMuted = false;
+  bool _gatewaySpeakerphoneOn = false;
+
+  bool get hasActiveGatewayCall => _activeGatewayCallId != null;
+  bool get gatewayCallConnected => _gatewayConnected;
+  bool get gatewayMuted => _gatewayMuted;
+  bool get gatewaySpeakerphoneOn => _gatewaySpeakerphoneOn;
+  String get gatewayCallerDisplay {
+    final display = _activeGatewayDisplayName?.trim() ?? '';
+    if (display.isNotEmpty) return display;
+    final caller = _activeGatewayCaller?.trim() ?? '';
+    return caller.isNotEmpty ? caller : 'Unknown';
+  }
+
+  String? get gatewayCallerNumber => _activeGatewayCaller;
 
   Future<void> initialize() async {
     if (!gateway.enabled || !Platform.isIOS) {
@@ -134,7 +152,9 @@ class MobileCallCoordinator {
       return;
     }
     if (event is CallEventActionCallToggleMute) {
+      _gatewayMuted = event.isMuted;
       await _webRtc.setMuted(event.isMuted);
+      notifyListeners();
     }
   }
 
@@ -150,6 +170,13 @@ class MobileCallCoordinator {
 
     try {
       final call = await gateway.getCall(callId);
+      _activeGatewayCaller = call.caller;
+      _activeGatewayDisplayName = call.displayName;
+      _gatewayConnected = false;
+      _gatewayMuted = false;
+      _gatewaySpeakerphoneOn = false;
+      notifyListeners();
+
       if (call.offerSdp.isEmpty) {
         throw StateError('Gateway call has no WebRTC offer');
       }
@@ -159,6 +186,8 @@ class MobileCallCoordinator {
       );
       final answer = await _webRtc.createAnswer(call.offerSdp);
       await gateway.answer(callId, answer);
+      _gatewayConnected = true;
+      notifyListeners();
       debugPrint('[VoiceHost Mobile] answered gateway call $callId');
     } catch (error) {
       debugPrint('[VoiceHost Mobile] answer failed: $error');
@@ -199,6 +228,36 @@ class MobileCallCoordinator {
     });
   }
 
+  Future<void> hangupActiveCall() async {
+    final callId = _activeGatewayCallId;
+    if (callId == null) return;
+    await _end(callId);
+    try {
+      await FlutterCallkitIncoming.endCall(callId);
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] CallKit end failed: $error');
+    }
+  }
+
+  Future<void> toggleGatewayMute() async {
+    if (_activeGatewayCallId == null) return;
+    _gatewayMuted = !_gatewayMuted;
+    await _webRtc.setMuted(_gatewayMuted);
+    notifyListeners();
+  }
+
+  Future<void> toggleGatewaySpeakerphone() async {
+    if (_activeGatewayCallId == null) return;
+    _gatewaySpeakerphoneOn = !_gatewaySpeakerphoneOn;
+    try {
+      await _webRtc.setSpeakerphone(_gatewaySpeakerphoneOn);
+    } catch (error) {
+      _gatewaySpeakerphoneOn = !_gatewaySpeakerphoneOn;
+      debugPrint('[VoiceHost Mobile] speaker route failed: $error');
+    }
+    notifyListeners();
+  }
+
   Future<void> _decline(String callId) async {
     try {
       await gateway.decline(callId);
@@ -209,6 +268,7 @@ class MobileCallCoordinator {
   }
 
   Future<void> _end(String callId) async {
+    if (_activeGatewayCallId != callId) return;
     try {
       await gateway.hangup(callId);
     } catch (error) {
@@ -219,11 +279,17 @@ class MobileCallCoordinator {
 
   Future<void> _closeGatewayMedia() async {
     _activeGatewayCallId = null;
+    _activeGatewayCaller = null;
+    _activeGatewayDisplayName = null;
+    _gatewayConnected = false;
+    _gatewayMuted = false;
+    _gatewaySpeakerphoneOn = false;
     await _gatewayEventSubscription?.cancel();
     _gatewayEventSubscription = null;
     await _gatewaySocket?.close();
     _gatewaySocket = null;
     await _webRtc.close();
+    notifyListeners();
   }
 
   Future<String> _loadOrCreateDeviceId() async {
@@ -237,9 +303,11 @@ class MobileCallCoordinator {
     return id;
   }
 
-  Future<void> dispose() async {
+  @override
+  void dispose() {
     phone.removeListener(_phoneChanged);
-    await _callKitSubscription?.cancel();
-    await _closeGatewayMedia();
+    unawaited(_callKitSubscription?.cancel());
+    unawaited(_closeGatewayMedia());
+    super.dispose();
   }
 }
