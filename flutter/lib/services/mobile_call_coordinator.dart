@@ -36,11 +36,13 @@ class MobileCallCoordinator extends ChangeNotifier {
   String? _activeGatewayCaller;
   String? _activeGatewayDisplayName;
   bool _gatewayConnected = false;
+  DateTime? _gatewayConnectedAt;
   bool _gatewayMuted = false;
   bool _gatewaySpeakerphoneOn = false;
 
   bool get hasActiveGatewayCall => _activeGatewayCallId != null;
   bool get gatewayCallConnected => _gatewayConnected;
+  DateTime? get gatewayConnectedAt => _gatewayConnectedAt;
   bool get gatewayMuted => _gatewayMuted;
   bool get gatewaySpeakerphoneOn => _gatewaySpeakerphoneOn;
   String get gatewayCallerDisplay {
@@ -173,6 +175,7 @@ class MobileCallCoordinator extends ChangeNotifier {
       _activeGatewayCaller = call.caller;
       _activeGatewayDisplayName = call.displayName;
       _gatewayConnected = false;
+      _gatewayConnectedAt = null;
       _gatewayMuted = false;
       _gatewaySpeakerphoneOn = false;
       notifyListeners();
@@ -186,8 +189,6 @@ class MobileCallCoordinator extends ChangeNotifier {
       );
       final answer = await _webRtc.createAnswer(call.offerSdp);
       await gateway.answer(callId, answer);
-      _gatewayConnected = true;
-      notifyListeners();
       debugPrint('[VoiceHost Mobile] answered gateway call $callId');
     } catch (error) {
       debugPrint('[VoiceHost Mobile] answer failed: $error');
@@ -207,6 +208,11 @@ class MobileCallCoordinator extends ChangeNotifier {
         if (decoded is! Map) return;
         final event = Map<String, dynamic>.from(decoded);
         switch (event['type']?.toString()) {
+          case 'accepted':
+            _gatewayConnected = true;
+            _gatewayConnectedAt ??= DateTime.now();
+            notifyListeners();
+            break;
           case 'trickle':
             final candidate = event['candidate'];
             if (candidate is Map) {
@@ -282,6 +288,7 @@ class MobileCallCoordinator extends ChangeNotifier {
     _activeGatewayCaller = null;
     _activeGatewayDisplayName = null;
     _gatewayConnected = false;
+    _gatewayConnectedAt = null;
     _gatewayMuted = false;
     _gatewaySpeakerphoneOn = false;
     await _gatewayEventSubscription?.cancel();
