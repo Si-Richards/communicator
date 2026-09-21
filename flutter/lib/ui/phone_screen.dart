@@ -318,9 +318,11 @@ class _CallControls extends StatelessWidget {
             Text(number, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 8),
           Text(
-            mobileCalls.gatewayCallConnected
-                ? 'Connected · ${_formatCallDuration(mobileCalls.gatewayConnectedAt)}'
-                : 'Connecting…',
+            !mobileCalls.gatewayCallConnected
+                ? 'Connecting…'
+                : mobileCalls.gatewayMediaConnected
+                    ? 'Connected · ${_formatCallDuration(mobileCalls.gatewayConnectedAt)}'
+                    : 'Connected · Media connecting…',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 18),
