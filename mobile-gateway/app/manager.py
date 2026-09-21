@@ -72,6 +72,11 @@ class MobileSessionManager:
             async def trickle(candidate):
                 call = self._current_call(session.device.device_id)
                 if call:
+                    logger.info(
+                        '[VH-DIAG] event=janus_candidate call=%s completed=%s',
+                        _safe_ref(call.id),
+                        bool(candidate.get('completed')),
+                    )
                     await call.publish({'type': 'trickle', 'candidate': candidate})
 
             session = JanusSipSession(device, plugin, trickle)
