@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'app.dart';
@@ -19,4 +21,8 @@ Future<void> main() async {
   await mobileCalls.initialize();
 
   runApp(VoiceHostApp(controller: controller, mobileCalls: mobileCalls));
+
+  // A PushKit wake/cold launch creates a fresh Flutter process. Restore the
+  // handset-side Janus/SIP registration without delaying CallKit startup.
+  unawaited(controller.ensureRegistered());
 }
