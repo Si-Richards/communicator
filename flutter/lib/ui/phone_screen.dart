@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
 import '../models/call_state.dart';
+import '../services/mobile_call_coordinator.dart';
 
 class PhoneScreen extends StatefulWidget {
-  const PhoneScreen({super.key, required this.controller});
+  const PhoneScreen({
+    super.key,
+    required this.controller,
+    required this.mobileCalls,
+  });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
 
   @override
   State<PhoneScreen> createState() => _PhoneScreenState();
@@ -62,7 +68,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     return AnimatedBuilder(
-      animation: controller,
+      animation: Listenable.merge([controller, widget.mobileCalls]),
       builder: (context, _) {
         return Scaffold(
           appBar: AppBar(
@@ -113,7 +119,10 @@ class _PhoneScreenState extends State<PhoneScreen> {
                           onBackspace: controller.backspaceDigit,
                         ),
                         const SizedBox(height: 24),
-                        _CallControls(controller: controller),
+                        _CallControls(
+                          controller: controller,
+                          mobileCalls: widget.mobileCalls,
+                        ),
                       ],
                     ),
                   ),
@@ -267,13 +276,74 @@ class _DialPad extends StatelessWidget {
 }
 
 class _CallControls extends StatelessWidget {
-  const _CallControls({required this.controller});
+  const _CallControls({
+    required this.controller,
+    required this.mobileCalls,
+  });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
 
   @override
   Widget build(BuildContext context) {
     final state = controller.callState;
+
+    if (mobileCalls.hasActiveGatewayCall) {
+      final number = mobileCalls.gatewayCallerNumber;
+      return Column(
+        children: [
+          Text(
+            mobileCalls.gatewayCallerDisplay,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          if (number != null &&
+              number.isNotEmpty &&
+              number != mobileCalls.gatewayCallerDisplay)
+            Text(number, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 8),
+          Text(
+            mobileCalls.gatewayCallConnected ? 'Connected' : 'Connecting…',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
+            children: [
+              FilterChip(
+                selected: mobileCalls.gatewayMuted,
+                onSelected: (_) => mobileCalls.toggleGatewayMute(),
+                avatar: Icon(
+                  mobileCalls.gatewayMuted ? Icons.mic_off : Icons.mic,
+                ),
+                label: Text(
+                  mobileCalls.gatewayMuted ? 'Muted' : 'Mute',
+                ),
+              ),
+              FilterChip(
+                selected: mobileCalls.gatewaySpeakerphoneOn,
+                onSelected: (_) => mobileCalls.toggleGatewaySpeakerphone(),
+                avatar: Icon(
+                  mobileCalls.gatewaySpeakerphoneOn
+                      ? Icons.volume_up
+                      : Icons.hearing,
+                ),
+                label: const Text('Speaker'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          _RoundAction(
+            icon: Icons.call_end,
+            color: Colors.red,
+            label: 'End',
+            onTap: mobileCalls.hangupActiveCall,
+          ),
+        ],
+      );
+    }
+
     if (state.phase == CallPhase.incoming) {
       return Column(
         children: [
