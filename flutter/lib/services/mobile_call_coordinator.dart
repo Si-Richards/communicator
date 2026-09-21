@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
@@ -37,12 +36,16 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeGatewayCaller;
   String? _activeGatewayDisplayName;
   bool _gatewayConnected = false;
+  bool _gatewayMediaConnected = false;
   DateTime? _gatewayConnectedAt;
+  int _localCandidateCount = 0;
+  int _remoteCandidateCount = 0;
   bool _gatewayMuted = false;
   bool _gatewaySpeakerphoneOn = false;
 
   bool get hasActiveGatewayCall => _activeGatewayCallId != null;
   bool get gatewayCallConnected => _gatewayConnected;
+  bool get gatewayMediaConnected => _gatewayMediaConnected;
   DateTime? get gatewayConnectedAt => _gatewayConnectedAt;
   bool get gatewayMuted => _gatewayMuted;
   bool get gatewaySpeakerphoneOn => _gatewaySpeakerphoneOn;
@@ -66,12 +69,69 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _webRtc.onLog = (message) => debugPrint('[VoiceHost Mobile] $message');
     _webRtc.onLocalCandidate = (candidate) {
       final callId = _activeGatewayCallId;
-      if (callId != null) unawaited(gateway.candidate(callId, candidate));
+      if (callId != null) {
+        _localCandidateCount++;
+        unawaited(gateway.candidate(callId, candidate));
+      }
+    };
+    _webRtc.onIceConnectionStateChanged = (state) {
+      final callId = _activeGatewayCallId;
+      if (callId == null) return;
+      final normalized = state.toLowerCase();
+      _gatewayMediaConnected =
+          normalized.contains('connected') || normalized.contains('completed');
+      notifyListeners();
+      unawaited(_diag(
+        'ice_state',
+        callId: callId,
+        details: {
+          'ice_state': state,
+          'local_candidates': _localCandidateCount,
+          'remote_candidates': _remoteCandidateCount,
+        },
+      ));
+    };
+    _webRtc.onConnectionStateChanged = (state) {
+      final callId = _activeGatewayCallId;
+      if (callId == null) return;
+      unawaited(_diag(
+        'peer_state',
+        callId: callId,
+        details: {'peer_state': state},
+      ));
+    };
+    _webRtc.onLocalAudioReady = (count) {
+      final callId = _activeGatewayCallId;
+      if (callId != null) {
+        unawaited(_diag(
+          'local_audio_ready',
+          callId: callId,
+          details: {'local_audio_tracks': count},
+        ));
+      }
+    };
+    _webRtc.onRemoteAudioReady = (count) {
+      final callId = _activeGatewayCallId;
+      if (callId != null) {
+        unawaited(_diag(
+          'remote_audio_ready',
+          callId: callId,
+          details: {'remote_audio_tracks': count},
+        ));
+      }
     };
     _webRtc.onIceGatheringComplete = () {
       final callId = _activeGatewayCallId;
       if (callId != null) {
         unawaited(gateway.candidate(callId, {'completed': true}));
+        unawaited(_diag(
+          'ice_gathering_complete',
+          callId: callId,
+          details: {
+            'local_candidates': _localCandidateCount,
+            'remote_candidates': _remoteCandidateCount,
+          },
+        ));
       }
     };
 
@@ -133,6 +193,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final callId = _activeGatewayCallId;
+    if (callId != null) {
+      unawaited(_diag(
+        'app_lifecycle',
+        callId: callId,
+        details: {'app_state': state.name},
+      ));
+    }
     if (state == AppLifecycleState.resumed) {
       unawaited(phone.ensureRegistered());
     }
@@ -147,6 +215,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (event is CallEventActionCallAccept) {
+      unawaited(_diag('callkit_accept', callId: event.callKitParams.id));
       await _accept(event.callKitParams.id);
       return;
     }
@@ -184,11 +253,19 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _activeGatewayCaller = call.caller;
       _activeGatewayDisplayName = call.displayName;
       _gatewayConnected = false;
+      _gatewayMediaConnected = false;
       _gatewayConnectedAt = null;
+      _localCandidateCount = 0;
+      _remoteCandidateCount = 0;
       _gatewayMuted = false;
       _gatewaySpeakerphoneOn = false;
       notifyListeners();
 
+      await _diag(
+        'gateway_call_loaded',
+        callId: callId,
+        details: {'sdp_length': call.offerSdp.length},
+      );
       if (call.offerSdp.isEmpty) {
         throw StateError('Gateway call has no WebRTC offer');
       }
@@ -198,6 +275,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       );
       final answer = await _webRtc.createAnswer(call.offerSdp);
       await gateway.answer(callId, answer);
+      await _diag(
+        'answer_sent',
+        callId: callId,
+        details: {'sdp_length': answer.length},
+      );
       debugPrint('[VoiceHost Mobile] answered gateway call $callId');
     } catch (error) {
       debugPrint('[VoiceHost Mobile] answer failed: $error');
@@ -221,10 +303,16 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             _gatewayConnected = true;
             _gatewayConnectedAt ??= DateTime.now();
             notifyListeners();
+            unawaited(_diag(
+              'gateway_accepted',
+              callId: callId,
+              details: {'gateway_event': 'accepted'},
+            ));
             break;
           case 'trickle':
             final candidate = event['candidate'];
             if (candidate is Map) {
+              _remoteCandidateCount++;
               unawaited(
                 _webRtc.addRemoteCandidate(
                   Map<String, dynamic>.from(candidate),
@@ -297,7 +385,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _activeGatewayCaller = null;
     _activeGatewayDisplayName = null;
     _gatewayConnected = false;
+    _gatewayMediaConnected = false;
     _gatewayConnectedAt = null;
+    _localCandidateCount = 0;
+    _remoteCandidateCount = 0;
     _gatewayMuted = false;
     _gatewaySpeakerphoneOn = false;
     await _gatewayEventSubscription?.cancel();
@@ -306,6 +397,18 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _gatewaySocket = null;
     await _webRtc.close();
     notifyListeners();
+  }
+
+  Future<void> _diag(
+    String event, {
+    String? callId,
+    Map<String, Object> details = const {},
+  }) async {
+    try {
+      await gateway.diagnostic(event, callId: callId, details: details);
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] diagnostic send failed: $error');
+    }
   }
 
   Future<String> _loadOrCreateDeviceId() async {
