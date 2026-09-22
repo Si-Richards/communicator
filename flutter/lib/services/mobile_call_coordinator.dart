@@ -43,6 +43,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   int _remoteCandidateCount = 0;
   bool _gatewayMuted = false;
   bool _gatewaySpeakerphoneOn = false;
+  bool _recoveringCallKitState = false;
 
   bool get hasActiveGatewayCall => _activeGatewayCallId != null;
   bool get gatewayProvisioned => _gatewayProvisioned;
@@ -143,9 +144,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     phone.addListener(_phoneChanged);
     _phoneChanged();
     debugPrint(
-      '[VoiceHost Mobile] device=$_deviceId '
+      '[VoiceHost Mobile] device=ready '
       'pushToken=${_pushToken?.isNotEmpty == true ? 'ready' : 'waiting'}',
     );
+    unawaited(_recoverAcceptedCallKitCall());
   }
 
   void _phoneChanged() {
@@ -186,9 +188,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       );
       _gatewayProvisioned = true;
       notifyListeners();
-      debugPrint(
-        '[VoiceHost Mobile] gateway registration active for ${phone.sipUsername}',
-      );
+      debugPrint('[VoiceHost Mobile] gateway registration active');
     } catch (error) {
       _gatewayProvisioned = false;
       notifyListeners();
@@ -217,6 +217,28 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         !phone.hasActiveDirectCall) {
       unawaited(phone.disconnectDirectRegistrationIfIdle());
     }
+
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_recoverAcceptedCallKitCall());
+    }
+  }
+
+  Future<void> _recoverAcceptedCallKitCall() async {
+    if (_recoveringCallKitState || _activeGatewayCallId != null) return;
+    _recoveringCallKitState = true;
+    try {
+      final calls = await FlutterCallkitIncoming.activeCalls();
+      for (final call in calls) {
+        if (!call.isAccepted || call.id.isEmpty) continue;
+        await _diag('callkit_accept_recovered', callId: call.id);
+        await _accept(call.id);
+        return;
+      }
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] CallKit state recovery failed: $error');
+    } finally {
+      _recoveringCallKitState = false;
+    }
   }
 
   Future<void> _handleCallKitEvent(CallEvent? event) async {
@@ -233,10 +255,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (event is CallEventActionCallDecline) {
+      unawaited(_diag('callkit_decline', callId: event.callKitParams.id));
       await _decline(event.callKitParams.id);
       return;
     }
     if (event is CallEventActionCallEnded) {
+      unawaited(_diag('callkit_end', callId: event.callKitParams.id));
       await _end(event.callKitParams.id);
       return;
     }
