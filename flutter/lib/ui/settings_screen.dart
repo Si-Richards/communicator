@@ -186,9 +186,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Incoming calls are handled by the VoiceHost mobile gateway. '
-                'A direct handset SIP registration is created automatically '
-                'only when placing an outgoing call.',
+                'Incoming and outgoing calls are handled by the VoiceHost '
+                'mobile gateway. Direct handset SIP registration is retained '
+                'only as a diagnostic test.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
