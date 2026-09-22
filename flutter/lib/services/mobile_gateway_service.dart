@@ -81,6 +81,51 @@ class MobileGatewayService {
         body: candidate,
       );
 
+  Future<void> blindTransfer(String callId, String target) =>
+      _jsonRequest(
+        'POST',
+        '/v1/calls/$callId/transfer/blind',
+        body: {'target': target},
+      );
+
+  Future<String> startAttendedTransfer(
+    String callId,
+    String target,
+    String offerSdp,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/v1/calls/$callId/transfer/attended',
+      body: {'target': target, 'sdp': offerSdp},
+    );
+    return json['transfer_id']?.toString() ?? '';
+  }
+
+  Future<void> transferCandidate(
+    String transferId,
+    Map<String, dynamic> candidate,
+  ) =>
+      _jsonRequest(
+        'POST',
+        '/v1/transfers/$transferId/candidate',
+        body: candidate,
+      );
+
+  Future<void> completeAttendedTransfer(String transferId) =>
+      _jsonRequest('POST', '/v1/transfers/$transferId/complete');
+
+  Future<void> cancelAttendedTransfer(String transferId) =>
+      _jsonRequest('POST', '/v1/transfers/$transferId/cancel');
+
+  Future<WebSocket> watchTransfer(String transferId) async {
+    final uri = Uri.parse(_url('/v1/transfers/$transferId/events'));
+    final wsUri = uri.replace(scheme: uri.scheme == 'https' ? 'wss' : 'ws');
+    return WebSocket.connect(
+      wsUri.toString(),
+      headers: {'X-Gateway-Key': apiKey},
+    );
+  }
+
   Future<void> diagnostic(
     String event, {
     String? callId,
