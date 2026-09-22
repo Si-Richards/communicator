@@ -497,8 +497,54 @@ class _CallControls extends StatelessWidget {
                 ),
                 label: const Text('Speaker'),
               ),
+              FilterChip(
+                selected: controller.hasDirectTransfer,
+                onSelected: controller.hasDirectTransfer
+                    ? null
+                    : (_) async {
+                        final request = await _showTransferSheet(context);
+                        if (request == null) return;
+                        if (request.attended) {
+                          await controller.startAttendedTransfer(request.target);
+                        } else {
+                          await controller.blindTransfer(request.target);
+                        }
+                      },
+                avatar: const Icon(Icons.swap_horiz),
+                label: const Text('Transfer'),
+              ),
             ],
           ),
+          if (controller.hasDirectTransfer ||
+              controller.directTransferStatus.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Text(
+              controller.directTransferStatus,
+              style: Theme.of(context).textTheme.titleSmall,
+              textAlign: TextAlign.center,
+            ),
+            if (controller.directAttendedTransferActive) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                alignment: WrapAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: controller.directTransferConnected
+                        ? () => controller.completeAttendedTransfer()
+                        : null,
+                    icon: const Icon(Icons.call_merge),
+                    label: const Text('Complete transfer'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => controller.cancelAttendedTransfer(),
+                    icon: const Icon(Icons.close),
+                    label: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            ],
+          ],
           const SizedBox(height: 22),
           _RoundAction(
             icon: Icons.call_end,
