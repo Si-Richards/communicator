@@ -139,7 +139,7 @@ import flutter_callkit_incoming
         print("[VoiceHost Audio] local ringback stopped")
     }
 
-    private func makeUKRingbackWav() -> Data {
+    private func makeUKRingbackWav() -> Foundation.Data {
         // UK ringback cadence: 400 ms tone, 200 ms silence,
         // 400 ms tone, 2 s silence. The tone combines 400 Hz + 450 Hz.
         let sampleRate = 16_000
@@ -148,7 +148,7 @@ import flutter_callkit_incoming
         let bytesPerSample = 2
         let dataSize = sampleCount * bytesPerSample
 
-        var data = Data()
+        var data = Foundation.Data()
 
         func appendASCII(_ value: String) {
             if let bytes = value.data(using: .ascii) {
