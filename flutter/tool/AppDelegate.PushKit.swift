@@ -37,7 +37,7 @@ import flutter_callkit_incoming
     ) {
         guard type == .voIP else { return }
         let token = credentials.token.map { String(format: "%02x", $0) }.joined()
-        print("[VoiceHost PushKit] token=\(token)")
+        print("[VoiceHost PushKit] VoIP token ready (\(credentials.token.count) bytes)")
         SwiftFlutterCallkitIncomingPlugin.sharedInstance?.setDevicePushTokenVoIP(token)
     }
 
@@ -49,22 +49,22 @@ import flutter_callkit_incoming
     // flutter_callkit_incoming sends the Dart event first, then invokes these
     // delegate callbacks. Fulfil CallKit actions here; media setup remains in Dart.
     func onAccept(_ call: Call, _ action: CXAnswerCallAction) {
-        print("[VoiceHost CallKit] answer accepted \(call.uuid)")
+        print("[VoiceHost CallKit] answer accepted")
         action.fulfill()
     }
 
     func onDecline(_ call: Call, _ action: CXEndCallAction) {
-        print("[VoiceHost CallKit] call declined \(call.uuid)")
+        print("[VoiceHost CallKit] call declined")
         action.fulfill()
     }
 
     func onEnd(_ call: Call, _ action: CXEndCallAction) {
-        print("[VoiceHost CallKit] call ended \(call.uuid)")
+        print("[VoiceHost CallKit] call ended")
         action.fulfill()
     }
 
     func onTimeOut(_ call: Call) {
-        print("[VoiceHost CallKit] call timed out \(call.uuid)")
+        print("[VoiceHost CallKit] call timed out")
     }
 
     func didActivateAudioSession(_ audioSession: AVAudioSession) {
@@ -107,12 +107,36 @@ import flutter_callkit_incoming
             handle: caller,
             type: 0
         )
+        data.appName = "VoiceHost"
         data.extra = ["call_id": id, "source": "voicehost-mobile-gateway"]
         data.duration = 45_000
-        data.supportsHolding = true
-        data.supportsDTMF = true
+        data.normalHandle = 1
+        data.handleType = "number"
+        data.supportsVideo = false
+        data.maximumCallGroups = 1
+        data.maximumCallsPerCallGroup = 1
+
+        // Only advertise controls that the gateway path currently implements.
+        // Decline/End remains a native CallKit CXEndCallAction.
+        data.supportsHolding = false
+        data.supportsDTMF = false
         data.supportsGrouping = false
         data.supportsUngrouping = false
+
+        // Do not let the plugin activate AVAudioSession itself. CallKit owns
+        // activation and didActivateAudioSession hands that session to WebRTC.
+        data.configureAudioSession = false
+        data.audioSessionMode = "voiceChat"
+        data.audioSessionActive = false
+
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+            try audioSession.setPreferredSampleRate(48_000)
+            try audioSession.setPreferredIOBufferDuration(0.01)
+        } catch {
+            print("[VoiceHost CallKit] audio session preconfiguration failed")
+        }
 
         SwiftFlutterCallkitIncomingPlugin.sharedInstance?.showCallkitIncoming(
             data,
