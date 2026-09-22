@@ -11,6 +11,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
 import 'mobile_gateway_service.dart';
+import 'ringback_service.dart';
 import 'webrtc_service.dart';
 
 class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
@@ -24,10 +25,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final MobileGatewayService gateway;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   final WebRtcService _webRtc = WebRtcService();
+  final WebRtcService _transferWebRtc = WebRtcService();
+  final RingbackService _ringback = RingbackService();
 
   StreamSubscription<CallEvent?>? _callKitSubscription;
   StreamSubscription<dynamic>? _gatewayEventSubscription;
+  StreamSubscription<dynamic>? _transferEventSubscription;
   WebSocket? _gatewaySocket;
+  WebSocket? _transferSocket;
   String? _activeGatewayCallId;
   String? _deviceId;
   String? _pushToken;
@@ -44,6 +49,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool _gatewayMuted = false;
   bool _gatewaySpeakerphoneOn = false;
   bool _recoveringCallKitState = false;
+  String? _transferId;
+  String? _transferTarget;
+  String _transferStatus = '';
+  bool _transferConnected = false;
+  bool _transferBusy = false;
+  final List<Map<String, dynamic>> _pendingTransferCandidates = [];
 
   bool get hasActiveGatewayCall => _activeGatewayCallId != null;
   bool get gatewayProvisioned => _gatewayProvisioned;
@@ -52,6 +63,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? get gatewayConnectedAt => _gatewayConnectedAt;
   bool get gatewayMuted => _gatewayMuted;
   bool get gatewaySpeakerphoneOn => _gatewaySpeakerphoneOn;
+  bool get hasActiveTransfer => _transferId != null || _transferBusy;
+  bool get attendedTransferConnected => _transferConnected;
+  String get transferStatus => _transferStatus;
+  String? get transferTarget => _transferTarget;
   String get gatewayCallerDisplay {
     final display = _activeGatewayDisplayName?.trim() ?? '';
     if (display.isNotEmpty) return display;
@@ -136,6 +151,26 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             'remote_candidates': _remoteCandidateCount,
           },
         ));
+      }
+    };
+
+    _transferWebRtc.onLog =
+        (message) => debugPrint('[VoiceHost Transfer] $message');
+    _transferWebRtc.onLocalCandidate = (candidate) {
+      final transferId = _transferId;
+      if (transferId == null) {
+        _pendingTransferCandidates.add(candidate);
+      } else {
+        unawaited(gateway.transferCandidate(transferId, candidate));
+      }
+    };
+    _transferWebRtc.onIceGatheringComplete = () {
+      final candidate = <String, dynamic>{'completed': true};
+      final transferId = _transferId;
+      if (transferId == null) {
+        _pendingTransferCandidates.add(candidate);
+      } else {
+        unawaited(gateway.transferCandidate(transferId, candidate));
       }
     };
 
@@ -360,8 +395,24 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
               );
             }
             break;
+          case 'transfer':
+            final state = event['state']?.toString() ?? '';
+            if (state == 'transferring') {
+              _transferStatus = 'Transferring…';
+            } else if (state == 'completed') {
+              _transferStatus = 'Transfer complete';
+            } else if (state == 'failed') {
+              _transferStatus = 'Transfer failed';
+              _transferBusy = false;
+            } else if (state == 'cancelled') {
+              _transferStatus = '';
+              _transferBusy = false;
+            }
+            notifyListeners();
+            break;
           case 'hangup':
             unawaited(FlutterCallkitIncoming.endCall(callId));
+            unawaited(_closeTransferMedia());
             unawaited(_closeGatewayMedia());
             break;
         }
@@ -371,9 +422,220 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  Future<void> blindTransferActiveCall(String target) async {
+    final callId = _activeGatewayCallId;
+    final cleanTarget = target.trim();
+    if (callId == null || cleanTarget.isEmpty || _transferBusy) return;
+
+    _transferBusy = true;
+    _transferTarget = cleanTarget;
+    _transferStatus = 'Transferring…';
+    notifyListeners();
+    try {
+      await gateway.blindTransfer(callId, cleanTarget);
+      await _diag('blind_transfer_requested', callId: callId);
+    } catch (error) {
+      _transferBusy = false;
+      _transferStatus = 'Transfer failed';
+      debugPrint('[VoiceHost Mobile] blind transfer failed: $error');
+      notifyListeners();
+    }
+  }
+
+  Future<void> startAttendedTransfer(String target) async {
+    final callId = _activeGatewayCallId;
+    final cleanTarget = target.trim();
+    if (callId == null ||
+        cleanTarget.isEmpty ||
+        !_gatewayConnected ||
+        _transferBusy ||
+        _transferId != null) {
+      return;
+    }
+
+    _transferBusy = true;
+    _transferTarget = cleanTarget;
+    _transferStatus = 'Calling transfer target…';
+    _transferConnected = false;
+    _pendingTransferCandidates.clear();
+    notifyListeners();
+
+    try {
+      await _transferWebRtc.preparePeerConnection();
+      final offer = await _transferWebRtc.createOffer();
+      unawaited(_ringback.start());
+
+      final transferId =
+          await gateway.startAttendedTransfer(callId, cleanTarget, offer);
+      if (transferId.isEmpty) {
+        throw StateError('Gateway did not return a transfer id');
+      }
+      _transferId = transferId;
+
+      for (final candidate
+          in List<Map<String, dynamic>>.from(_pendingTransferCandidates)) {
+        await gateway.transferCandidate(transferId, candidate);
+      }
+      _pendingTransferCandidates.clear();
+
+      await _listenToTransfer(transferId);
+      await _diag('attended_transfer_started', callId: callId);
+    } catch (error) {
+      await _ringback.stop();
+      _transferBusy = false;
+      _transferStatus = 'Transfer failed';
+      debugPrint('[VoiceHost Mobile] attended transfer failed: $error');
+      await _closeTransferMedia(keepStatus: true);
+      notifyListeners();
+    }
+  }
+
+  Future<void> _listenToTransfer(String transferId) async {
+    await _transferEventSubscription?.cancel();
+    await _transferSocket?.close();
+
+    final socket = await gateway.watchTransfer(transferId);
+    _transferSocket = socket;
+    _transferEventSubscription = socket.listen((raw) {
+      try {
+        final decoded = jsonDecode(raw.toString());
+        if (decoded is! Map) return;
+        final event = Map<String, dynamic>.from(decoded);
+        switch (event['type']?.toString()) {
+          case 'calling':
+            _transferStatus = 'Calling transfer target…';
+            notifyListeners();
+            break;
+          case 'ringing':
+            _transferStatus = 'Transfer target ringing…';
+            unawaited(_ringback.start());
+            notifyListeners();
+            break;
+          case 'progress':
+            final jsep = event['jsep'];
+            if (jsep is Map) {
+              final sdp = jsep['sdp']?.toString();
+              if (sdp != null && sdp.isNotEmpty) {
+                unawaited(_ringback.stop());
+                unawaited(_transferWebRtc.applyRemoteAnswer(sdp));
+              }
+            }
+            _transferStatus = 'Connecting transfer target…';
+            notifyListeners();
+            break;
+          case 'accepted':
+            final jsep = event['jsep'];
+            if (jsep is Map) {
+              final sdp = jsep['sdp']?.toString();
+              if (sdp != null && sdp.isNotEmpty) {
+                unawaited(_transferWebRtc.applyRemoteAnswer(sdp));
+              }
+            }
+            unawaited(_ringback.stop());
+            _transferConnected = true;
+            _transferStatus = 'Consulting ' + (_transferTarget ?? 'target');
+            notifyListeners();
+            break;
+          case 'trickle':
+            final candidate = event['candidate'];
+            if (candidate is Map) {
+              unawaited(
+                _transferWebRtc.addRemoteCandidate(
+                  Map<String, dynamic>.from(candidate),
+                ),
+              );
+            }
+            break;
+          case 'transfer':
+            final state = event['state']?.toString() ?? '';
+            if (state == 'completing' || state == 'transferring') {
+              _transferStatus = 'Completing transfer…';
+            } else if (state == 'completed') {
+              _transferStatus = 'Transfer complete';
+              _transferBusy = false;
+              unawaited(_closeTransferMedia(keepStatus: true));
+            } else if (state == 'failed') {
+              _transferStatus = 'Transfer failed';
+              _transferBusy = false;
+              unawaited(_closeTransferMedia(keepStatus: true));
+            } else if (state == 'cancelled') {
+              _transferStatus = '';
+              _transferBusy = false;
+              unawaited(_closeTransferMedia());
+            }
+            notifyListeners();
+            break;
+          case 'hangup':
+            _transferStatus = 'Consultation ended';
+            _transferBusy = false;
+            unawaited(_ringback.stop());
+            unawaited(_closeTransferMedia(keepStatus: true));
+            notifyListeners();
+            break;
+          case 'error':
+            _transferStatus = 'Transfer failed';
+            _transferBusy = false;
+            unawaited(_ringback.stop());
+            notifyListeners();
+            break;
+        }
+      } catch (error) {
+        debugPrint('[VoiceHost Mobile] transfer event error: $error');
+      }
+    });
+  }
+
+  Future<void> completeAttendedTransfer() async {
+    final transferId = _transferId;
+    if (transferId == null || !_transferConnected) return;
+    _transferStatus = 'Completing transfer…';
+    notifyListeners();
+    try {
+      await gateway.completeAttendedTransfer(transferId);
+    } catch (error) {
+      _transferStatus = 'Transfer failed';
+      debugPrint('[VoiceHost Mobile] complete transfer failed: $error');
+      notifyListeners();
+    }
+  }
+
+  Future<void> cancelAttendedTransfer() async {
+    final transferId = _transferId;
+    if (transferId != null) {
+      try {
+        await gateway.cancelAttendedTransfer(transferId);
+      } catch (error) {
+        debugPrint('[VoiceHost Mobile] cancel transfer failed: $error');
+      }
+    }
+    _transferBusy = false;
+    _transferStatus = '';
+    await _closeTransferMedia();
+    notifyListeners();
+  }
+
+  Future<void> _closeTransferMedia({bool keepStatus = false}) async {
+    await _ringback.stop();
+    await _transferEventSubscription?.cancel();
+    _transferEventSubscription = null;
+    await _transferSocket?.close();
+    _transferSocket = null;
+    await _transferWebRtc.close();
+    _transferId = null;
+    _transferConnected = false;
+    _pendingTransferCandidates.clear();
+    if (!keepStatus) {
+      _transferTarget = null;
+      _transferStatus = '';
+    }
+  }
+
   Future<void> hangupActiveCall() async {
     final callId = _activeGatewayCallId;
     if (callId == null) return;
+    if (_transferId != null) {
+      await cancelAttendedTransfer();
+    }
     await _end(callId);
     try {
       await FlutterCallkitIncoming.endCall(callId);
@@ -431,6 +693,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _remoteCandidateCount = 0;
     _gatewayMuted = false;
     _gatewaySpeakerphoneOn = false;
+    _transferBusy = false;
+    _transferTarget = null;
+    _transferStatus = '';
+    await _closeTransferMedia();
     await _gatewayEventSubscription?.cancel();
     _gatewayEventSubscription = null;
     await _gatewaySocket?.close();
@@ -467,6 +733,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
     unawaited(_callKitSubscription?.cancel());
+    unawaited(_closeTransferMedia());
     unawaited(_closeGatewayMedia());
     super.dispose();
   }
