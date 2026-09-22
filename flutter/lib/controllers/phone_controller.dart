@@ -1185,7 +1185,18 @@ class PhoneController extends ChangeNotifier {
     if (clean.contains('*')) return clean;
 
     final account = sipUsername.trim();
-    if (account.contains('*') && RegExp(r'^\d{1,6}
+    if (account.contains('*') && RegExp(r'^\d{1,6}$').hasMatch(clean)) {
+      final tenant = account.split('*').first;
+      if (tenant.isNotEmpty) return '$tenant*$clean';
+    }
+    return clean;
+  }
+
+  String _transferUri(String target) {
+    final clean = target.trim();
+    if (clean.startsWith('sip:') || clean.startsWith('sips:')) return clean;
+    return 'sip:${_transferUser(clean)}@$sipRealm';
+  }
   static int? _sipStatus(String? content) {
     if (content == null || content.isEmpty) return null;
     final match = RegExp(r'SIP/2\.0\s+(\d{3})').firstMatch(content);
