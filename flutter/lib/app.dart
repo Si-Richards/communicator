@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'controllers/phone_controller.dart';
 import 'services/mobile_call_coordinator.dart';
 import 'ui/call_history_screen.dart';
+import 'ui/contacts_screen.dart';
 import 'ui/phone_screen.dart';
 import 'ui/settings_screen.dart';
 import 'ui/voicemail_screen.dart';
@@ -64,6 +65,7 @@ class _MainShellState extends State<MainShell> {
     final screens = [
       PhoneScreen(controller: controller, mobileCalls: widget.mobileCalls),
       CallHistoryScreen(controller: controller, onGoToPhone: _goToPhone),
+      ContactsScreen(controller: controller, onGoToPhone: _goToPhone),
       VoicemailScreen(controller: controller, onGoToPhone: _goToPhone),
       SettingsScreen(controller: controller),
     ];
@@ -89,6 +91,11 @@ class _MainShellState extends State<MainShell> {
                 icon: Icon(Icons.history),
                 selectedIcon: Icon(Icons.history),
                 label: 'Recents',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.contacts_outlined),
+                selectedIcon: Icon(Icons.contacts),
+                label: 'Contacts',
               ),
               NavigationDestination(
                 icon: Badge(
