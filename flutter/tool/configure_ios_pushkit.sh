@@ -22,6 +22,7 @@ plist_path = root / 'ios' / 'Runner' / 'Info.plist'
 with plist_path.open('rb') as fh:
     plist = plistlib.load(fh)
 plist['NSMicrophoneUsageDescription'] = 'VoiceHost needs microphone access for telephone calls.'
+plist['NSCameraUsageDescription'] = 'VoiceHost uses the camera for video calling features when enabled.'
 plist['NSContactsUsageDescription'] = 'VoiceHost uses your contacts so you can find and dial telephone numbers from the app.'
 modes = list(plist.get('UIBackgroundModes', []))
 for mode in ('audio', 'voip', 'remote-notification'):
