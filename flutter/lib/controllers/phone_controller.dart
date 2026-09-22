@@ -225,6 +225,7 @@ class PhoneController extends ChangeNotifier {
     }
 
     await disconnect(clearRegistrationState: false);
+    _masterId = null;
     isRegistered = false;
     registrationStatus = 'Connecting…';
     notifyListeners();
@@ -811,6 +812,7 @@ class PhoneController extends ChangeNotifier {
         break;
       case 'registration_failed':
         _registrationPending = false;
+        _masterId = null;
         isRegistered = false;
         registrationStatus = 'Registration failed';
         _setError(result?['reason']?.toString() ?? 'SIP registration failed');
@@ -1108,6 +1110,7 @@ class PhoneController extends ChangeNotifier {
     _janus = null;
     _registrationPending = false;
     _connectRequestRunning = false;
+    _masterId = null;
     _canSendTrickle = false;
     _pendingLocalCandidates.clear();
 
