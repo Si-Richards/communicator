@@ -54,6 +54,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String _transferStatus = '';
   bool _transferConnected = false;
   bool _transferBusy = false;
+  Timer? _transferWatchdog;
   final List<Map<String, dynamic>> _pendingTransferCandidates = [];
 
   bool get hasActiveGatewayCall => _activeGatewayCallId != null;
@@ -401,10 +402,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             if (state == 'transferring') {
               _transferStatus = 'Transferring…';
             } else if (state == 'completed') {
+              _transferWatchdog?.cancel();
               _transferStatus = 'Transfer complete';
+              _transferBusy = false;
             } else if (state == 'failed') {
+              _transferWatchdog?.cancel();
               _transferStatus = 'Transfer failed';
               _transferBusy = false;
+              _transferTarget = null;
             } else if (state == 'cancelled') {
               _transferStatus = '';
               _transferBusy = false;
@@ -435,6 +440,15 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     try {
       await gateway.blindTransfer(callId, cleanTarget);
       await _diag('blind_transfer_requested', callId: callId);
+      _transferWatchdog?.cancel();
+      _transferWatchdog = Timer(const Duration(seconds: 22), () {
+        if (_transferBusy && _transferId == null) {
+          _transferBusy = false;
+          _transferTarget = null;
+          _transferStatus = 'Transfer not completed';
+          notifyListeners();
+        }
+      });
     } catch (error) {
       _transferBusy = false;
       _transferStatus = 'Transfer failed';
@@ -684,6 +698,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _closeGatewayMedia() async {
+    _transferWatchdog?.cancel();
     _activeGatewayCallId = null;
     _activeGatewayCaller = null;
     _activeGatewayDisplayName = null;
@@ -731,6 +746,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _transferWatchdog?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
     unawaited(_callKitSubscription?.cancel());
