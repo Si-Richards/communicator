@@ -422,7 +422,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         throw StateError('Gateway call has no WebRTC offer');
       }
 
-      await _listenToGateway(context);
+      if (context.socket == null) {
+        await _listenToGateway(context);
+      }
       await context.webRtc.preparePeerConnection(
         preservePendingRemoteCandidates: true,
       );
@@ -633,7 +635,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    if (_gatewayCalls.length >= 3) {
+    if (_gatewayCalls.length >= 2) {
       debugPrint('[VoiceHost Mobile] no free mobile call slot');
       return;
     }
