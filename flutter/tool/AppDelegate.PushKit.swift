@@ -11,7 +11,9 @@ import flutter_callkit_incoming
     private var voipRegistry: PKPushRegistry?
     private var ringbackPlayer: AVAudioPlayer?
     private var audioChannel: FlutterMethodChannel?
+    private var callKitChannel: FlutterMethodChannel?
     private let callController = CXCallController()
+    private let pendingCallKitActionsKey = "voicehost.pendingCallKitActions"
 
     override func application(
         _ application: UIApplication,
@@ -53,7 +55,26 @@ import flutter_callkit_incoming
                 }
             }
             audioChannel = channel
+
+            let callKitChannel = FlutterMethodChannel(
+                name: "voicehost/callkit",
+                binaryMessenger: controller.binaryMessenger
+            )
+            callKitChannel.setMethodCallHandler { [weak self] call, result in
+                guard let self else {
+                    result([])
+                    return
+                }
+                switch call.method {
+                case "drainPendingActions":
+                    result(self.drainPendingCallKitActions())
+                default:
+                    result(FlutterMethodNotImplemented)
+                }
+            }
+            self.callKitChannel = callKitChannel
             print("[VoiceHost Audio] native audio channel ready")
+            print("[VoiceHost CallKit] native recovery channel ready")
         } else {
             print("[VoiceHost Audio] native audio channel unavailable")
         }
@@ -81,18 +102,22 @@ import flutter_callkit_incoming
     // delegate callbacks. Fulfil CallKit actions here; media setup remains in Dart.
     func onAccept(_ call: Call, _ action: CXAnswerCallAction) {
         stopRingback()
+        persistPendingCallKitAction(type: "accept", id: call.uuid.uuidString)
         print("[VoiceHost CallKit] answer accepted")
         action.fulfill()
+        foregroundAppForCall(id: call.uuid.uuidString)
     }
 
     func onDecline(_ call: Call, _ action: CXEndCallAction) {
         stopRingback()
+        persistPendingCallKitAction(type: "decline", id: call.uuid.uuidString)
         print("[VoiceHost CallKit] call declined")
         action.fulfill()
     }
 
     func onEnd(_ call: Call, _ action: CXEndCallAction) {
         stopRingback()
+        persistPendingCallKitAction(type: "end", id: call.uuid.uuidString)
         print("[VoiceHost CallKit] call ended")
         action.fulfill()
     }
@@ -119,6 +144,54 @@ import flutter_callkit_incoming
         print("[VoiceHost CallKit] provider reset")
     }
 
+
+    private func persistPendingCallKitAction(type: String, id: String) {
+        var actions = UserDefaults.standard.array(
+            forKey: pendingCallKitActionsKey
+        ) as? [[String: String]] ?? []
+
+        if !actions.contains(where: {
+            $0["type"] == type && $0["id"]?.lowercased() == id.lowercased()
+        }) {
+            actions.append(["type": type, "id": id])
+            if actions.count > 12 {
+                actions.removeFirst(actions.count - 12)
+            }
+            UserDefaults.standard.set(actions, forKey: pendingCallKitActionsKey)
+        }
+    }
+
+    private func drainPendingCallKitActions() -> [[String: String]] {
+        let actions = UserDefaults.standard.array(
+            forKey: pendingCallKitActionsKey
+        ) as? [[String: String]] ?? []
+        UserDefaults.standard.removeObject(forKey: pendingCallKitActionsKey)
+        if !actions.isEmpty {
+            print("[VoiceHost CallKit] recovered \(actions.count) native action(s)")
+        }
+        return actions
+    }
+
+    private func foregroundAppForCall(id: String) {
+        guard UIApplication.shared.applicationState != .active,
+              let encoded = id.addingPercentEncoding(
+                  withAllowedCharacters: .urlPathAllowed
+              ),
+              let url = URL(string: "voicehost-softphone://call/\(encoded)")
+        else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                print(
+                    opened
+                        ? "[VoiceHost CallKit] foreground request accepted"
+                        : "[VoiceHost CallKit] foreground request unavailable"
+                )
+            }
+        }
+    }
 
     private func endCallKitCall(
         id: String,
