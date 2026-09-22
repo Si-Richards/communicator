@@ -577,7 +577,7 @@ class PhoneController extends ChangeNotifier {
         await _ringback.stop();
         _directTransferConnected = true;
         _directTransferStatus =
-            'Consulting ' + (_directTransferTarget ?? 'target');
+            'Consulting ${_directTransferTarget ?? 'target'}';
         notifyListeners();
         break;
       case 'hangup':
