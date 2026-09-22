@@ -593,8 +593,8 @@ class _CallControls extends StatelessWidget {
       icon: Icons.call,
       color: Colors.green,
       label: 'Call',
-      onTap: controller.canRegister && controller.dialledNumber.trim().isNotEmpty
-          ? () => controller.placeCall()
+      onTap: controller.dialledNumber.trim().isNotEmpty
+          ? () => mobileCalls.placeCall(controller.dialledNumber)
           : null,
     );
   }
