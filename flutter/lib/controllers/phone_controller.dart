@@ -41,6 +41,7 @@ class PhoneController extends ChangeNotifier {
   JanusClient? _janus;
   JanusSipService? _sip;
   Timer? _endedResetTimer;
+  Timer? _directDisconnectTimer;
 
   String nickname = '';
   String sipUsername = '';
@@ -53,7 +54,7 @@ class PhoneController extends ChangeNotifier {
   bool doNotDisturb = false;
 
   bool isRegistered = false;
-  String registrationStatus = 'Offline';
+  String registrationStatus = 'Standby';
   String voicemailSubscriptionStatus = 'Not subscribed';
   VoicemailSummary voicemail = const VoicemailSummary.empty();
   PhoneCallState callState = const PhoneCallState.idle();
@@ -86,18 +87,31 @@ class PhoneController extends ChangeNotifier {
       Uri.tryParse(janusUrl) != null;
 
   bool get canCallVoicemail =>
-      isRegistered && voicemailNumber.trim().isNotEmpty && !callState.isInCall;
+      canRegister && voicemailNumber.trim().isNotEmpty && !callState.isInCall;
 
   DateTime? get activeCallConnectedAt => _activeCall?.connectedAt;
+  bool get hasActiveDirectCall => callState.isInCall || _activeCall != null;
 
-  Future<void> ensureRegistered() async {
-    if (!canRegister ||
-        isRegistered ||
-        _connectRequestRunning ||
-        _registrationPending) {
-      return;
+  Future<bool> ensureRegistered({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    if (isRegistered) return true;
+    if (!canRegister) return false;
+
+    if (!_connectRequestRunning && !_registrationPending) {
+      await connectAndRegister();
     }
-    await connectAndRegister();
+
+    final deadline = DateTime.now().add(timeout);
+    while (!isRegistered && DateTime.now().isBefore(deadline)) {
+      if (!_connectRequestRunning &&
+          !_registrationPending &&
+          registrationStatus == 'Registration failed') {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return isRegistered;
   }
 
   Future<void> initialize() async {
@@ -205,7 +219,7 @@ class PhoneController extends ChangeNotifier {
       _log('Janus disconnected: $error');
       if (isRegistered) {
         isRegistered = false;
-        registrationStatus = 'Offline';
+        registrationStatus = 'Standby';
         notifyListeners();
       }
     };
@@ -235,6 +249,7 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> disconnect({bool clearRegistrationState = true}) async {
+    _directDisconnectTimer?.cancel();
     if (_activeCall != null) {
       await _finalizeActiveCall(_localEndResult());
     }
@@ -261,13 +276,27 @@ class PhoneController extends ChangeNotifier {
 
   Future<void> placeCall([String? requestedNumber]) async {
     _endedResetTimer?.cancel();
-    final sip = _sip;
+    _directDisconnectTimer?.cancel();
+
     final number = _normalizeDialString(requestedNumber ?? dialledNumber);
-    if (!isRegistered || sip == null || number.isEmpty || callState.isInCall) {
+    if (number.isEmpty || callState.isInCall) return;
+
+    clearError();
+
+    if (!isRegistered) {
+      final registered = await ensureRegistered();
+      if (!registered) {
+        _setError('Unable to establish the outgoing SIP session.');
+        return;
+      }
+    }
+
+    final sip = _sip;
+    if (sip == null) {
+      _setError('Outgoing SIP session is unavailable.');
       return;
     }
 
-    clearError();
     dialledNumber = number;
     _currentNumber = number;
     _activeCall = _ActiveCallContext(
@@ -291,6 +320,7 @@ class PhoneController extends ChangeNotifier {
       await _webRtc.close();
       _showEnded(error.toString());
       _setError(error.toString());
+      _scheduleDirectDisconnect();
     }
   }
 
@@ -326,6 +356,7 @@ class PhoneController extends ChangeNotifier {
     } catch (_) {}
     await _finalizeActiveCall(CallResult.declined);
     await _resetCall();
+    _scheduleDirectDisconnect();
   }
 
   Future<void> hangup() async {
@@ -335,6 +366,7 @@ class PhoneController extends ChangeNotifier {
     await _finalizeActiveCall(_localEndResult());
     await _webRtc.close();
     _showEnded('Call ended');
+    _scheduleDirectDisconnect();
   }
 
   Future<void> toggleMute() async {
@@ -529,6 +561,7 @@ class PhoneController extends ChangeNotifier {
         await _finalizeActiveCall(_remoteEndResult());
         await _webRtc.close();
         _showEnded(reason ?? 'Call ended');
+        _scheduleDirectDisconnect();
         break;
       default:
         _log('Unhandled SIP event: $event');
@@ -701,6 +734,42 @@ class PhoneController extends ChangeNotifier {
     });
   }
 
+  void _scheduleDirectDisconnect() {
+    _directDisconnectTimer?.cancel();
+    _directDisconnectTimer = Timer(const Duration(milliseconds: 300), () {
+      unawaited(disconnectDirectRegistrationIfIdle());
+    });
+  }
+
+  Future<void> disconnectDirectRegistrationIfIdle() async {
+    if (hasActiveDirectCall) return;
+
+    _directDisconnectTimer?.cancel();
+    _directDisconnectTimer = null;
+
+    final sip = _sip;
+    final janus = _janus;
+    _sip = null;
+    _janus = null;
+    _registrationPending = false;
+    _connectRequestRunning = false;
+    _canSendTrickle = false;
+    _pendingLocalCandidates.clear();
+
+    try {
+      await sip?.unregister();
+    } catch (_) {}
+    try {
+      await janus?.disconnect();
+    } catch (_) {}
+
+    isRegistered = false;
+    registrationStatus = 'Standby';
+    voicemailSubscriptionStatus = 'Not subscribed';
+    connectionDiagnostic = '';
+    notifyListeners();
+  }
+
   Future<void> _persistSettings() => _settingsRepository.save(
         SoftphoneSettings(
           nickname: nickname,
@@ -741,6 +810,7 @@ class PhoneController extends ChangeNotifier {
   @override
   void dispose() {
     _endedResetTimer?.cancel();
+    _directDisconnectTimer?.cancel();
     unawaited(_webRtc.close());
     unawaited(_janus?.disconnect());
     super.dispose();
