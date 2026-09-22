@@ -506,7 +506,7 @@ class PhoneController extends ChangeNotifier {
       await _transferWebRtc.preparePeerConnection();
       final offer = await _transferWebRtc.createOffer();
       await helperSip.call(
-        number: cleanTarget,
+        number: _transferUser(cleanTarget),
         realm: sipRealm,
         offerSdp: offer,
       );
@@ -1180,10 +1180,79 @@ class PhoneController extends ChangeNotifier {
         ),
       );
 
+  String _transferUser(String target) {
+    final clean = target.trim();
+    if (clean.contains('*')) return clean;
+
+    final account = sipUsername.trim();
+    if (account.contains('*') && RegExp(r'^\d{1,6}
+  static int? _sipStatus(String? content) {
+    if (content == null || content.isEmpty) return null;
+    final match = RegExp(r'SIP/2\.0\s+(\d{3})').firstMatch(content);
+    return int.tryParse(match?.group(1) ?? '');
+  }
+
+  String _normalizeDialString(String value) {
+    return value.replaceAll(RegExp(r'[^0-9+*#]'), '');
+  }
+
+  String _extractUser(String sipUri) {
+    final withoutScheme = sipUri.replaceFirst(RegExp(r'^sips?:'), '');
+    return withoutScheme.split('@').first;
+  }
+
+  void _setError(String message) {
+    errorMessage = message;
+    notifyListeners();
+  }
+
+  void _log(String message) {
+    debugPrint('[VoiceHost] $message');
+  }
+
+  static Map<String, dynamic>? _map(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _endedResetTimer?.cancel();
+    _directDisconnectTimer?.cancel();
+    unawaited(_ringback.stop());
+    unawaited(_transferWebRtc.close());
+    unawaited(_transferJanus?.disconnect());
+    unawaited(_webRtc.close());
+    unawaited(_janus?.disconnect());
+    super.dispose();
+  }
+}
+
+class _ActiveCallContext {
+  _ActiveCallContext({
+    required this.direction,
+    required this.number,
+    required this.startedAt,
+    this.displayName,
+  });
+
+  final CallDirection direction;
+  final String number;
+  final String? displayName;
+  final DateTime startedAt;
+  DateTime? connectedAt;
+}
+).hasMatch(clean)) {
+      final tenant = account.split('*').first;
+      if (tenant.isNotEmpty) return '$tenant*$clean';
+    }
+    return clean;
+  }
+
   String _transferUri(String target) {
     final clean = target.trim();
     if (clean.startsWith('sip:') || clean.startsWith('sips:')) return clean;
-    return 'sip:$clean@$sipRealm';
+    return 'sip:${_transferUser(clean)}@$sipRealm';
   }
 
   static int? _sipStatus(String? content) {
