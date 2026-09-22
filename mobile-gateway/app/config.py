@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     database_path: Path = Path('/data/mobile-gateway.db')
     janus_url: str = 'wss://devrtc.voicehost.io:443'
     janus_api_secret: str = ''
+    janus_helper_count: int = 2
     apns_team_id: str = ''
     apns_key_id: str = ''
     apns_bundle_id: str = ''
