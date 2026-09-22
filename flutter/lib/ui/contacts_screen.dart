@@ -232,7 +232,7 @@ class _ContactsScreenState extends State<ContactsScreen>
                                     24,
                                   ),
                                   itemCount: contacts.length,
-                                  separatorBuilder: (_, __) =>
+                                  separatorBuilder: (_, _) =>
                                       const Divider(height: 1),
                                   itemBuilder: (context, index) {
                                     final contact = contacts[index];
