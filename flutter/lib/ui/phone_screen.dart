@@ -107,7 +107,10 @@ class _PhoneScreenState extends State<PhoneScreen> {
           body: SafeArea(
             child: Column(
               children: [
-                _StatusStrip(controller: controller),
+                _StatusStrip(
+                  controller: controller,
+                  mobileCalls: widget.mobileCalls,
+                ),
                 if (controller.errorMessage != null)
                   _ErrorBanner(
                     message: controller.errorMessage!,
@@ -153,13 +156,27 @@ class _PhoneScreenState extends State<PhoneScreen> {
 }
 
 class _StatusStrip extends StatelessWidget {
-  const _StatusStrip({required this.controller});
+  const _StatusStrip({
+    required this.controller,
+    required this.mobileCalls,
+  });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = controller.isRegistered ? Colors.green : Colors.grey;
+    final mobileReady = mobileCalls.gatewayProvisioned;
+    final statusColor = mobileReady
+        ? Colors.green
+        : controller.isRegistered
+            ? Colors.orange
+            : Colors.grey;
+    final registrationLabel = mobileReady
+        ? controller.isRegistered
+            ? 'Mobile ready · Outgoing SIP active'
+            : 'Mobile ready'
+        : controller.registrationStatus;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
       child: Row(
@@ -172,8 +189,8 @@ class _StatusStrip extends StatelessWidget {
           const SizedBox(width: 7),
           Text(
             controller.doNotDisturb
-                ? '${controller.registrationStatus} · DND'
-                : controller.registrationStatus,
+                ? '$registrationLabel · DND'
+                : registrationLabel,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const Spacer(),
@@ -450,7 +467,7 @@ class _CallControls extends StatelessWidget {
       icon: Icons.call,
       color: Colors.green,
       label: 'Call',
-      onTap: controller.isRegistered && controller.dialledNumber.trim().isNotEmpty
+      onTap: controller.canRegister && controller.dialledNumber.trim().isNotEmpty
           ? () => controller.placeCall()
           : null,
     );
