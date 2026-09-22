@@ -154,6 +154,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     final signature = [
       token,
       phone.sipUsername,
+      phone.sipPassword,
       phone.sipRealm,
       phone.sipProxy,
       phone.extensionDisplayName,
