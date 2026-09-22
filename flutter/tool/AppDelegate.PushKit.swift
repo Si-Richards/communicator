@@ -11,6 +11,7 @@ import flutter_callkit_incoming
     private var voipRegistry: PKPushRegistry?
     private var ringbackPlayer: AVAudioPlayer?
     private var audioChannel: FlutterMethodChannel?
+    private let callController = CXCallController()
 
     override func application(
         _ application: UIApplication,
@@ -119,6 +120,30 @@ import flutter_callkit_incoming
     }
 
 
+    private func endCallKitCall(
+        id: String,
+        completion: @escaping () -> Void
+    ) {
+        guard let uuid = UUID(uuidString: id) else {
+            print("[VoiceHost CallKit] invalid end-call UUID")
+            completion()
+            return
+        }
+
+        let transaction = CXTransaction()
+        transaction.addAction(CXEndCallAction(call: uuid))
+        callController.request(transaction) { error in
+            if error != nil {
+                print("[VoiceHost CallKit] remote end request was not needed")
+            } else {
+                print("[VoiceHost CallKit] remote ringing call dismissed")
+            }
+            DispatchQueue.main.async {
+                completion()
+            }
+        }
+    }
+
     private func startRingback() {
         if ringbackPlayer?.isPlaying == true { return }
 
@@ -224,6 +249,16 @@ import flutter_callkit_incoming
         stopRingback()
         let body = payload.dictionaryPayload
         let id = body["id"] as? String ?? UUID().uuidString
+
+        // Randy sends this when the SIP INVITE disappears before we answer,
+        // e.g. the call was answered on another registered endpoint. Handle it
+        // natively because Flutter may still be suspended while CallKit rings.
+        if body["action"] as? String == "end" {
+            print("[VoiceHost PushKit] received remote ringing-end")
+            endCallKitCall(id: id, completion: completion)
+            return
+        }
+
         let caller = body["handle"] as? String ?? "Unknown"
         let callerName = body["nameCaller"] as? String ?? caller
 
