@@ -239,12 +239,12 @@ import flutter_callkit_incoming
         data.normalHandle = 1
         data.handleType = "number"
         data.supportsVideo = false
-        data.maximumCallGroups = 1
+        // Two separate CallKit groups allow an active call plus a waiting/held
+        // call. We intentionally do not support conferencing/grouping yet.
+        data.maximumCallGroups = 2
         data.maximumCallsPerCallGroup = 1
 
-        // Only advertise controls that the gateway path currently implements.
-        // Decline/End remains a native CallKit CXEndCallAction.
-        data.supportsHolding = false
+        data.supportsHolding = true
         data.supportsDTMF = false
         data.supportsGrouping = false
         data.supportsUngrouping = false
