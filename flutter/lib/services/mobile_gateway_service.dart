@@ -7,18 +7,24 @@ class GatewayCall {
     required this.caller,
     required this.offerSdp,
     this.displayName,
+    this.connected = false,
+    this.held = false,
   });
 
   final String id;
   final String caller;
   final String? displayName;
   final String offerSdp;
+  final bool connected;
+  final bool held;
 
   factory GatewayCall.fromJson(Map<String, dynamic> json) => GatewayCall(
         id: json['id']?.toString() ?? '',
         caller: json['caller']?.toString() ?? 'Unknown',
         displayName: json['display_name']?.toString(),
         offerSdp: json['offer_sdp']?.toString() ?? '',
+        connected: json['connected'] == true,
+        held: json['held'] == true,
       );
 }
 
@@ -73,6 +79,12 @@ class MobileGatewayService {
 
   Future<void> hangup(String callId) =>
       _jsonRequest('POST', '/v1/calls/$callId/hangup');
+
+  Future<void> hold(String callId) =>
+      _jsonRequest('POST', '/v1/calls/$callId/hold');
+
+  Future<void> resume(String callId) =>
+      _jsonRequest('POST', '/v1/calls/$callId/resume');
 
   Future<void> candidate(String callId, Map<String, dynamic> candidate) =>
       _jsonRequest(
