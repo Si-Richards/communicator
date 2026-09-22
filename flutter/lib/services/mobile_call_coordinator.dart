@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
@@ -45,6 +46,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final WebRtcService _transferWebRtc = WebRtcService();
   final RingbackService _ringback = RingbackService();
   final Map<String, _GatewayCallContext> _gatewayCalls = {};
+  static const MethodChannel _nativeCallKitChannel =
+      MethodChannel('voicehost/callkit');
 
   StreamSubscription<CallEvent?>? _callKitSubscription;
   StreamSubscription<dynamic>? _transferEventSubscription;
@@ -158,7 +161,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       '[VoiceHost Mobile] device=ready '
       'pushToken=${_pushToken?.isNotEmpty == true ? 'ready' : 'waiting'}',
     );
-    unawaited(_recoverAcceptedCallKitCall());
+    unawaited(_recoverCallKitState());
   }
 
   void _phoneChanged() {
@@ -230,7 +233,47 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (state == AppLifecycleState.resumed) {
-      unawaited(_recoverAcceptedCallKitCall());
+      unawaited(_recoverCallKitState());
+    }
+  }
+
+  Future<void> _recoverCallKitState() async {
+    await _drainNativeCallKitActions();
+    await _recoverAcceptedCallKitCall();
+  }
+
+  Future<void> _drainNativeCallKitActions() async {
+    try {
+      final raw = await _nativeCallKitChannel
+              .invokeMethod<List<dynamic>>('drainPendingActions') ??
+          const <dynamic>[];
+
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final action = Map<String, dynamic>.from(item);
+        final type = action['type']?.toString() ?? '';
+        final id = action['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+
+        switch (type) {
+          case 'accept':
+            await _diag('callkit_accept_native_recovered', callId: id);
+            await _accept(id);
+            break;
+          case 'decline':
+            await _diag('callkit_decline_native_recovered', callId: id);
+            await _decline(id);
+            break;
+          case 'end':
+            await _diag('callkit_end_native_recovered', callId: id);
+            await _end(id);
+            break;
+        }
+      }
+    } on MissingPluginException {
+      // Native recovery bridge is not present on older/local builds.
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] native CallKit recovery failed: $error');
     }
   }
 
