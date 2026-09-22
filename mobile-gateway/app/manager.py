@@ -218,6 +218,12 @@ class MobileSessionManager:
 
         if event == 'notify' and call.transfer_mode:
             status = self._refer_status(result.get('content'))
+            logger.info(
+                '[VH-DIAG] event=transfer_notify call=%s status=%s substate=%s',
+                _safe_ref(call.id),
+                status,
+                result.get('substate'),
+            )
             await call.publish({
                 'type': 'transfer',
                 'state': 'notify',
