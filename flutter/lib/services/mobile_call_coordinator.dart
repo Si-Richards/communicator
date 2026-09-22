@@ -232,15 +232,15 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _recoverAcceptedCallKitCall() async {
-    if (_recoveringCallKitState || _activeGatewayCallId != null) return;
+    if (_recoveringCallKitState) return;
     _recoveringCallKitState = true;
     try {
       final calls = await FlutterCallkitIncoming.activeCalls();
       for (final call in calls) {
         if (!call.isAccepted || call.id.isEmpty) continue;
+        if (_contextFor(call.id)?.connected == true) continue;
         await _diag('callkit_accept_recovered', callId: call.id);
         await _accept(call.id);
-        return;
       }
     } catch (error) {
       debugPrint('[VoiceHost Mobile] CallKit state recovery failed: $error');
@@ -277,98 +277,194 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (event is CallEventActionCallToggleMute) {
-      _gatewayMuted = event.isMuted;
-      await _webRtc.setMuted(event.isMuted);
+      final context = _contextFor(event.id);
+      if (context == null) return;
+      context.muted = event.isMuted;
+      await context.webRtc.setMuted(context.held || context.muted);
       notifyListeners();
+      return;
+    }
+    if (event is CallEventActionCallToggleHold) {
+      final context = _contextFor(event.id);
+      if (context == null) return;
+      await _setGatewayHold(
+        context.id,
+        event.isOnHold,
+        syncCallKit: false,
+      );
     }
   }
 
-  Future<void> _accept(String callId) async {
-    if (_activeGatewayCallId == callId) {
-      debugPrint('[VoiceHost Mobile] ignoring duplicate accept for $callId');
+  void _configureGatewayCall(_GatewayCallContext context) {
+    context.webRtc.onLog =
+        (message) => debugPrint('[VoiceHost Mobile] media: $message');
+    context.webRtc.onLocalCandidate = (candidate) {
+      context.localCandidateCount++;
+      unawaited(gateway.candidate(context.id, candidate));
+    };
+    context.webRtc.onIceConnectionStateChanged = (state) {
+      final normalized = state.toLowerCase();
+      context.mediaConnected =
+          normalized.endsWith('stateconnected') ||
+          normalized.endsWith('statecompleted');
+      notifyListeners();
+      unawaited(_diag(
+        'ice_state',
+        callId: context.id,
+        details: {
+          'ice_state': state,
+          'local_candidates': context.localCandidateCount,
+          'remote_candidates': context.remoteCandidateCount,
+        },
+      ));
+    };
+    context.webRtc.onConnectionStateChanged = (state) {
+      unawaited(_diag(
+        'peer_state',
+        callId: context.id,
+        details: {'peer_state': state},
+      ));
+    };
+    context.webRtc.onLocalAudioReady = (count) {
+      unawaited(_diag(
+        'local_audio_ready',
+        callId: context.id,
+        details: {'local_audio_tracks': count},
+      ));
+    };
+    context.webRtc.onRemoteAudioReady = (count) {
+      unawaited(_diag(
+        'remote_audio_ready',
+        callId: context.id,
+        details: {'remote_audio_tracks': count},
+      ));
+    };
+    context.webRtc.onIceGatheringComplete = () {
+      unawaited(gateway.candidate(context.id, {'completed': true}));
+      unawaited(_diag(
+        'ice_gathering_complete',
+        callId: context.id,
+        details: {
+          'local_candidates': context.localCandidateCount,
+          'remote_candidates': context.remoteCandidateCount,
+        },
+      ));
+    };
+  }
+
+  Future<void> _accept(String requestedCallId) async {
+    final existing = _contextFor(requestedCallId);
+    if (existing?.answering == true || existing?.connected == true) {
       return;
     }
-    if (_activeGatewayCallId != null) {
-      await _closeGatewayMedia();
+
+    await phone.disconnectDirectRegistrationIfIdle();
+
+    final previous = _activeGatewayCall;
+    if (previous != null &&
+        previous.id.toLowerCase() != requestedCallId.toLowerCase() &&
+        previous.connected &&
+        !previous.held) {
+      await _setGatewayHold(previous.id, true);
     }
 
-    // A gateway/CallKit call must not compete with a handset SIP registration.
-    await phone.disconnectDirectRegistrationIfIdle();
-    _activeGatewayCallId = callId;
-
+    _GatewayCallContext? context = existing;
     try {
-      final call = await gateway.getCall(callId);
-      _activeGatewayCaller = call.caller;
-      _activeGatewayDisplayName = call.displayName;
-      _gatewayConnected = false;
-      _gatewayMediaConnected = false;
-      _gatewayConnectedAt = null;
-      _localCandidateCount = 0;
-      _remoteCandidateCount = 0;
-      _gatewayMuted = false;
-      _gatewaySpeakerphoneOn = false;
+      final call = await gateway.getCall(requestedCallId);
+      context ??= _GatewayCallContext(call.id);
+      if (!_gatewayCalls.containsKey(context.id)) {
+        _configureGatewayCall(context);
+        _gatewayCalls[context.id] = context;
+      }
+
+      context.answering = true;
+      context.caller = call.caller;
+      context.displayName = call.displayName;
+      context.connected = call.connected;
+      context.held = call.held;
+      context.mediaConnected = false;
+      context.connectedAt = call.connected ? DateTime.now() : null;
+      context.localCandidateCount = 0;
+      context.remoteCandidateCount = 0;
+      _activeGatewayCallId = context.id;
       notifyListeners();
 
       await _diag(
         'gateway_call_loaded',
-        callId: callId,
+        callId: context.id,
         details: {'sdp_length': call.offerSdp.length},
       );
       if (call.offerSdp.isEmpty) {
         throw StateError('Gateway call has no WebRTC offer');
       }
-      await _listenToGateway(callId);
-      await _webRtc.preparePeerConnection(
+
+      await _listenToGateway(context);
+      await context.webRtc.preparePeerConnection(
         preservePendingRemoteCandidates: true,
       );
-      final answer = await _webRtc.createAnswer(call.offerSdp);
-      await gateway.answer(callId, answer);
+      final answer = await context.webRtc.createAnswer(call.offerSdp);
+      await gateway.answer(context.id, answer);
       await _diag(
         'answer_sent',
-        callId: callId,
+        callId: context.id,
         details: {'sdp_length': answer.length},
       );
-      debugPrint('[VoiceHost Mobile] answered gateway call $callId');
+      debugPrint('[VoiceHost Mobile] answered gateway call');
     } catch (error) {
       debugPrint('[VoiceHost Mobile] answer failed: $error');
-      await FlutterCallkitIncoming.endCall(callId);
-      await _closeGatewayMedia();
+      final id = context?.id ?? requestedCallId;
+      try {
+        await FlutterCallkitIncoming.endCall(id);
+      } catch (_) {}
+      await _closeGatewayCall(id);
+    } finally {
+      if (context != null) context.answering = false;
     }
   }
 
-  Future<void> _listenToGateway(String callId) async {
-    await _gatewayEventSubscription?.cancel();
-    await _gatewaySocket?.close();
-    final socket = await gateway.watchCall(callId);
-    _gatewaySocket = socket;
-    _gatewayEventSubscription = socket.listen((raw) {
+  Future<void> _listenToGateway(_GatewayCallContext context) async {
+    await context.subscription?.cancel();
+    await context.socket?.close();
+
+    final socket = await gateway.watchCall(context.id);
+    context.socket = socket;
+    context.subscription = socket.listen((raw) {
       try {
         final decoded = jsonDecode(raw.toString());
         if (decoded is! Map) return;
         final event = Map<String, dynamic>.from(decoded);
         switch (event['type']?.toString()) {
           case 'accepted':
-            _gatewayConnected = true;
-            _gatewayConnectedAt ??= DateTime.now();
+            context.connected = true;
+            context.held = false;
+            context.connectedAt ??= DateTime.now();
             notifyListeners();
             unawaited(_diag(
               'gateway_accepted',
-              callId: callId,
+              callId: context.id,
               details: {'gateway_event': 'accepted'},
             ));
+            break;
+          case 'hold':
+            context.held = event['held'] == true;
+            unawaited(
+              context.webRtc.setMuted(context.held || context.muted),
+            );
+            notifyListeners();
             break;
           case 'trickle':
             final candidate = event['candidate'];
             if (candidate is Map) {
-              _remoteCandidateCount++;
+              context.remoteCandidateCount++;
               unawaited(
-                _webRtc.addRemoteCandidate(
+                context.webRtc.addRemoteCandidate(
                   Map<String, dynamic>.from(candidate),
                 ),
               );
             }
             break;
           case 'transfer':
+            if (context.id != _activeGatewayCallId) break;
             final state = event['state']?.toString() ?? '';
             if (state == 'transferring') {
               _transferStatus = 'Transferring…';
@@ -388,15 +484,85 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             notifyListeners();
             break;
           case 'hangup':
-            unawaited(FlutterCallkitIncoming.endCall(callId));
-            unawaited(_closeTransferMedia());
-            unawaited(_closeGatewayMedia());
+            unawaited(FlutterCallkitIncoming.endCall(context.id));
+            if (context.id == _activeGatewayCallId) {
+              unawaited(_closeTransferMedia());
+            }
+            unawaited(_closeGatewayCall(context.id));
             break;
         }
       } catch (error) {
         debugPrint('[VoiceHost Mobile] gateway event error: $error');
       }
     });
+  }
+
+  Future<void> _setGatewayHold(
+    String callId,
+    bool held, {
+    bool syncCallKit = true,
+  }) async {
+    final context = _contextFor(callId);
+    if (context == null || !context.connected) return;
+
+    if (!held) {
+      for (final other in _gatewayCalls.values.toList(growable: false)) {
+        if (other.id == context.id || !other.connected || other.held) continue;
+        await _setGatewayHold(other.id, true);
+      }
+      _activeGatewayCallId = context.id;
+    }
+
+    if (context.held == held) {
+      notifyListeners();
+      return;
+    }
+
+    try {
+      if (held) {
+        await gateway.hold(context.id);
+      } else {
+        await gateway.resume(context.id);
+      }
+      context.held = held;
+      await context.webRtc.setMuted(held || context.muted);
+
+      if (syncCallKit) {
+        try {
+          await FlutterCallkitIncoming.holdCall(
+            context.id,
+            isOnHold: held,
+          );
+        } catch (error) {
+          debugPrint('[VoiceHost Mobile] CallKit hold sync failed: $error');
+        }
+      }
+      notifyListeners();
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] hold/resume failed: $error');
+    }
+  }
+
+  Future<void> toggleGatewayHold() async {
+    final active = _activeGatewayCall;
+    if (active == null || !active.connected) return;
+    await _setGatewayHold(active.id, !active.held);
+  }
+
+  Future<void> switchToGatewayCall(String callId) async {
+    final target = _contextFor(callId);
+    if (target == null || !target.connected) return;
+
+    final current = _activeGatewayCall;
+    if (current != null && current.id != target.id && !current.held) {
+      await _setGatewayHold(current.id, true);
+    }
+    _activeGatewayCallId = target.id;
+    if (target.held) {
+      await _setGatewayHold(target.id, false);
+    } else {
+      notifyListeners();
+    }
   }
 
   Future<void> blindTransferActiveCall(String target) async {
