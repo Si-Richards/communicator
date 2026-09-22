@@ -64,6 +64,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool get gatewayMuted => _gatewayMuted;
   bool get gatewaySpeakerphoneOn => _gatewaySpeakerphoneOn;
   bool get hasActiveTransfer => _transferId != null || _transferBusy;
+  bool get attendedTransferActive => _transferId != null;
   bool get attendedTransferConnected => _transferConnected;
   String get transferStatus => _transferStatus;
   String? get transferTarget => _transferTarget;
