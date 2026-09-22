@@ -269,7 +269,7 @@ class PhoneController extends ChangeNotifier {
     voicemailSubscriptionStatus = 'Not subscribed';
     if (clearRegistrationState) {
       isRegistered = false;
-      registrationStatus = 'Offline';
+      registrationStatus = 'Standby';
     }
     notifyListeners();
   }
