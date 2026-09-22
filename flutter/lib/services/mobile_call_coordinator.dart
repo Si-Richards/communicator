@@ -534,7 +534,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             }
             unawaited(_ringback.stop());
             _transferConnected = true;
-            _transferStatus = 'Consulting ' + (_transferTarget ?? 'target');
+            _transferStatus = 'Consulting ${_transferTarget ?? 'target'}';
             notifyListeners();
             break;
           case 'trickle':
