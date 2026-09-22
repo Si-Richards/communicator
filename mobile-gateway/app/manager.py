@@ -430,6 +430,29 @@ class MobileSessionManager:
             return value
         return f'sip:{value}@{device.sip_realm}'
 
+    @staticmethod
+    def _transfer_user(device: DeviceRecord, target: str) -> str:
+        value = target.strip()
+        if '*' in value:
+            return value
+
+        # VoiceHost hosted-PBX usernames are tenant*extension. A plain short
+        # transfer destination therefore needs the tenant prefix from the
+        # authenticated SIP account, e.g. 10000*213 -> transfer 207 as 10000*207.
+        account = device.sip_username.strip()
+        if '*' in account and re.fullmatch(r'\d{1,6}', value):
+            tenant = account.split('*', 1)[0]
+            if tenant:
+                return f'{tenant}*{value}'
+        return value
+
+    @classmethod
+    def _transfer_uri(cls, device: DeviceRecord, target: str) -> str:
+        value = target.strip()
+        if value.startswith('sip:') or value.startswith('sips:'):
+            return value
+        return f'sip:{cls._transfer_user(device, value)}@{device.sip_realm}'
+
     def _idle_session(self, device_id: str):
         candidates = []
         master = self.sessions.get(device_id)
@@ -490,7 +513,7 @@ class MobileSessionManager:
         if call.transfer_mode:
             raise RuntimeError('A transfer is already in progress')
         session = self._session_for_call(call_id)
-        uri = self._target_uri(session.device, target)
+        uri = self._transfer_uri(session.device, target)
         call.transfer_mode = 'blind'
         call.transfer_target = target
         logger.info(
@@ -567,7 +590,7 @@ class MobileSessionManager:
             await helper.start()
             await helper.wait_registered()
             await helper.call(
-                self._target_uri(master.device, target),
+                self._transfer_uri(master.device, target),
                 offer_sdp,
             )
             logger.info(
@@ -648,7 +671,7 @@ class MobileSessionManager:
             _safe_ref(transfer.id),
         )
         await master.transfer(
-            self._target_uri(master.device, transfer.target),
+            self._transfer_uri(master.device, transfer.target),
             replace=transfer.sip_call_id,
         )
 
