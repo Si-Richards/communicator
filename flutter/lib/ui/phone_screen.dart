@@ -371,6 +371,14 @@ class _CallControls extends StatelessWidget {
                 label: const Text('Speaker'),
               ),
               FilterChip(
+                selected: mobileCalls.gatewayHeld,
+                onSelected: mobileCalls.gatewayCallConnected
+                    ? (_) => mobileCalls.toggleGatewayHold()
+                    : null,
+                avatar: const Icon(Icons.pause),
+                label: Text(mobileCalls.gatewayHeld ? 'Held' : 'Hold'),
+              ),
+              FilterChip(
                 selected: mobileCalls.hasActiveTransfer,
                 onSelected: mobileCalls.hasActiveTransfer
                     ? null
@@ -388,6 +396,31 @@ class _CallControls extends StatelessWidget {
               ),
             ],
           ),
+          if (mobileCalls.otherGatewayCalls.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            for (final other in mobileCalls.otherGatewayCalls)
+              Card(
+                child: ListTile(
+                  leading: Icon(
+                    other.held ? Icons.pause_circle : Icons.call,
+                  ),
+                  title: Text(other.displayName),
+                  subtitle: Text(
+                    other.held
+                        ? 'On hold'
+                        : other.connected
+                            ? 'Connected'
+                            : 'Connecting…',
+                  ),
+                  trailing: FilledButton(
+                    onPressed: other.connected
+                        ? () => mobileCalls.switchToGatewayCall(other.id)
+                        : null,
+                    child: const Text('Switch'),
+                  ),
+                ),
+              ),
+          ],
           if (mobileCalls.hasActiveTransfer || mobileCalls.transferStatus.isNotEmpty) ...[
             const SizedBox(height: 18),
             Text(
