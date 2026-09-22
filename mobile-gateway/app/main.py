@@ -8,7 +8,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocke
 from .apns import APNSClient
 from .config import settings
 from .manager import MobileSessionManager
-from .models import AnswerRequest, CandidateRequest, DeviceRegistration, DiagnosticEvent
+from .models import (
+    AnswerRequest,
+    AttendedTransferStartRequest,
+    CandidateRequest,
+    DeviceRegistration,
+    DiagnosticEvent,
+    TransferRequest,
+)
 from .store import DeviceStore
 
 store = DeviceStore(settings.database_path, settings.device_data_key)
@@ -118,6 +125,88 @@ async def candidate(call_id: str, body: CandidateRequest):
     return {'ok': True}
 
 
+
+
+
+@app.post('/v1/calls/{call_id}/transfer/blind', dependencies=[Depends(auth)])
+async def blind_transfer(call_id: str, body: TransferRequest):
+    try:
+        await manager.blind_transfer(call_id, body.target)
+    except KeyError:
+        raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True}
+
+
+@app.post('/v1/calls/{call_id}/transfer/attended', dependencies=[Depends(auth)])
+async def start_attended_transfer(call_id: str, body: AttendedTransferStartRequest):
+    try:
+        transfer = await manager.start_attended_transfer(
+            call_id,
+            body.target,
+            body.sdp,
+        )
+    except KeyError:
+        raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True, 'transfer_id': transfer.id}
+
+
+@app.post('/v1/transfers/{transfer_id}/candidate', dependencies=[Depends(auth)])
+async def transfer_candidate(transfer_id: str, body: CandidateRequest):
+    try:
+        await manager.attended_candidate(
+            transfer_id,
+            body.model_dump(exclude_none=True),
+        )
+    except KeyError:
+        raise HTTPException(404, 'transfer not found')
+    return {'ok': True}
+
+
+@app.post('/v1/transfers/{transfer_id}/complete', dependencies=[Depends(auth)])
+async def complete_attended_transfer(transfer_id: str):
+    try:
+        await manager.complete_attended_transfer(transfer_id)
+    except KeyError:
+        raise HTTPException(404, 'transfer not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True}
+
+
+@app.post('/v1/transfers/{transfer_id}/cancel', dependencies=[Depends(auth)])
+async def cancel_attended_transfer(transfer_id: str):
+    await manager.cancel_attended_transfer(transfer_id)
+    return {'ok': True}
+
+
+@app.websocket('/v1/transfers/{transfer_id}/events')
+async def transfer_events(websocket: WebSocket, transfer_id: str):
+    if websocket.headers.get('x-gateway-key', '') != settings.gateway_api_key:
+        await websocket.close(code=4401)
+        return
+    try:
+        transfer = manager.get_transfer(transfer_id)
+    except KeyError:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    queue = asyncio.Queue()
+    transfer.subscribers.add(queue)
+    try:
+        for event in transfer.buffered:
+            await websocket.send_json(event)
+        transfer.buffered.clear()
+        while True:
+            await websocket.send_json(await queue.get())
+    except WebSocketDisconnect:
+        pass
+    finally:
+        transfer.subscribers.discard(queue)
 
 
 @app.post('/v1/diagnostics', dependencies=[Depends(auth)])
