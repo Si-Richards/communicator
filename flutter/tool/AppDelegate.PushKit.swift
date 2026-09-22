@@ -1,5 +1,6 @@
 import AVFAudio
 import CallKit
+import Contacts
 import Flutter
 import PushKit
 import UIKit
@@ -12,6 +13,7 @@ import flutter_callkit_incoming
     private var ringbackPlayer: AVAudioPlayer?
     private var audioChannel: FlutterMethodChannel?
     private var callKitChannel: FlutterMethodChannel?
+    private var contactsChannel: FlutterMethodChannel?
     private let callController = CXCallController()
     private let pendingCallKitActionsKey = "voicehost.pendingCallKitActions"
 
@@ -73,8 +75,36 @@ import flutter_callkit_incoming
                 }
             }
             self.callKitChannel = callKitChannel
+
+            let contactsChannel = FlutterMethodChannel(
+                name: "voicehost/contacts",
+                binaryMessenger: controller.binaryMessenger
+            )
+            contactsChannel.setMethodCallHandler { [weak self] call, result in
+                guard let self else {
+                    result(
+                        FlutterError(
+                            code: "CONTACTS_UNAVAILABLE",
+                            message: "Contacts service unavailable",
+                            details: nil
+                        )
+                    )
+                    return
+                }
+                switch call.method {
+                case "getContacts":
+                    self.loadContacts(result: result)
+                case "openSettings":
+                    self.openAppSettings(result: result)
+                default:
+                    result(FlutterMethodNotImplemented)
+                }
+            }
+            self.contactsChannel = contactsChannel
+
             print("[VoiceHost Audio] native audio channel ready")
             print("[VoiceHost CallKit] native recovery channel ready")
+            print("[VoiceHost Contacts] native contacts channel ready")
         } else {
             print("[VoiceHost Audio] native audio channel unavailable")
         }
@@ -144,6 +174,119 @@ import flutter_callkit_incoming
         print("[VoiceHost CallKit] provider reset")
     }
 
+
+    private func loadContacts(result: @escaping FlutterResult) {
+        let store = CNContactStore()
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+
+        // CNAuthorizationStatus.limited was added in iOS 18 and has raw value 4.
+        // Treat it like authorized so contacts selected by the user remain usable.
+        if status == .authorized || status.rawValue == 4 {
+            fetchContacts(from: store, result: result)
+            return
+        }
+
+        if status == .notDetermined {
+            store.requestAccess(for: .contacts) { [weak self] granted, error in
+                guard let self else { return }
+                if granted {
+                    self.fetchContacts(from: store, result: result)
+                } else {
+                    DispatchQueue.main.async {
+                        result(
+                            FlutterError(
+                                code: "CONTACTS_DENIED",
+                                message: error?.localizedDescription ??
+                                    "Contacts access was not granted",
+                                details: nil
+                            )
+                        )
+                    }
+                }
+            }
+            return
+        }
+
+        result(
+            FlutterError(
+                code: "CONTACTS_DENIED",
+                message: "Contacts access is disabled for VoiceHost",
+                details: nil
+            )
+        )
+    }
+
+    private func fetchContacts(
+        from store: CNContactStore,
+        result: @escaping FlutterResult
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let nameKeys = CNContactFormatter.descriptorForRequiredKeys(
+                for: .fullName
+            )
+            let keys: [CNKeyDescriptor] = [
+                nameKeys,
+                CNContactOrganizationNameKey as CNKeyDescriptor,
+                CNContactPhoneNumbersKey as CNKeyDescriptor,
+            ]
+            let request = CNContactFetchRequest(keysToFetch: keys)
+            request.sortOrder = .userDefault
+
+            var payload: [[String: Any]] = []
+            do {
+                try store.enumerateContacts(with: request) { contact, _ in
+                    let numbers = contact.phoneNumbers
+                        .map { $0.value.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if numbers.isEmpty {
+                        return
+                    }
+
+                    var name = CNContactFormatter.string(
+                        from: contact,
+                        style: .fullName
+                    )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if name.isEmpty {
+                        name = contact.organizationName
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    if name.isEmpty {
+                        name = numbers[0]
+                    }
+
+                    payload.append([
+                        "name": name,
+                        "numbers": numbers,
+                    ])
+                }
+
+                DispatchQueue.main.async {
+                    result(payload)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    result(
+                        FlutterError(
+                            code: "CONTACTS_ERROR",
+                            message: error.localizedDescription,
+                            details: nil
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func openAppSettings(result: @escaping FlutterResult) {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else {
+            result(false)
+            return
+        }
+
+        UIApplication.shared.open(url, options: [:]) { opened in
+            result(opened)
+        }
+    }
 
     private func persistPendingCallKitAction(type: String, id: String) {
         var actions = UserDefaults.standard.array(
