@@ -25,6 +25,15 @@ class CandidateRequest(BaseModel):
     completed: bool = False
 
 
+
+
+class TransferRequest(BaseModel):
+    target: str = Field(min_length=1, max_length=200)
+
+
+class AttendedTransferStartRequest(TransferRequest):
+    sdp: str = Field(min_length=1)
+
 class DiagnosticEvent(BaseModel):
     event: str = Field(min_length=1, max_length=80)
     call_id: str | None = Field(default=None, max_length=200)
