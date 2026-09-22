@@ -714,9 +714,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _ringback.stop();
       await webRtc.close();
       final active = _activeGatewayCall;
-      if (active?.outgoing == true && active?.caller == target) {
+      if (active != null && active.outgoing && active.caller == target) {
         try {
-          await FlutterCallkitIncoming.endCall(active!.id);
+          await FlutterCallkitIncoming.endCall(active.id);
         } catch (_) {}
         _gatewayCalls.remove(active.id);
         _activeGatewayCallId = null;
