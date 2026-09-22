@@ -29,6 +29,7 @@ class CallRuntime:
     direction: str = 'incoming'
     connected: bool = False
     held: bool = False
+    local_ending: bool = False
     transfer_mode: str | None = None
     transfer_target: str | None = None
     subscribers: set[asyncio.Queue] = field(default_factory=set)
@@ -217,6 +218,7 @@ class MobileSessionManager:
         session = call.session
         if session:
             self.session_call.pop(id(session), None)
+        call.session = None
         calls = self.device_calls.get(call.device_id)
         if calls:
             calls.discard(call.id)
@@ -366,7 +368,43 @@ class MobileSessionManager:
             call.held = False
             await call.publish({'type': 'hold', 'held': False})
         elif event == 'hangup':
-            await call.publish({'type': 'hangup', 'reason': result.get('reason')})
+            await call.publish({
+                'type': 'hangup',
+                'reason': result.get('reason'),
+                'code': result.get('code'),
+                'reason_header_cause': result.get('reason_header_cause'),
+            })
+
+            # If an unanswered fork disappears because another endpoint answered
+            # (or the caller cancelled), dismiss native CallKit even when Dart is
+            # suspended and therefore has no websocket subscriber.
+            if (
+                call.direction == 'incoming'
+                and not call.connected
+                and not call.local_ending
+            ):
+                logger.info(
+                    '[VH-DIAG] event=remote_ringing_end call=%s code=%s cause=%s',
+                    _safe_ref(call.id),
+                    result.get('code'),
+                    result.get('reason_header_cause'),
+                )
+                try:
+                    await self.apns.send_voip(device.push_token, {
+                        'aps': {'content-available': 1},
+                        'action': 'end',
+                        'id': call.id,
+                        'extra': {
+                            'call_id': call.id,
+                            'reason': 'remote_ringing_end',
+                        },
+                    })
+                except Exception:
+                    logger.exception(
+                        '[VH-DIAG] event=callkit_end_push_failed call=%s',
+                        _safe_ref(call.id),
+                    )
+
             self._release_call_session(call)
             transfer = self._current_transfer(device.device_id)
             if transfer and not transfer.closing:
@@ -758,9 +796,13 @@ class MobileSessionManager:
         await self._session_for_call(call_id).accept(sdp)
 
     async def decline(self, call_id: str):
+        call = self.get_call(call_id)
+        call.local_ending = True
         await self._session_for_call(call_id).decline(486)
 
     async def hangup(self, call_id: str):
+        call = self.get_call(call_id)
+        call.local_ending = True
         await self._session_for_call(call_id).hangup()
 
     async def candidate(self, call_id: str, candidate: dict):
