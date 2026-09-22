@@ -54,6 +54,7 @@ class PhoneController extends ChangeNotifier {
   JanusSipService? _transferSip;
   Timer? _endedResetTimer;
   Timer? _directDisconnectTimer;
+  Timer? _transferWatchdog;
 
   String nickname = '';
   String sipUsername = '';
@@ -309,6 +310,7 @@ class PhoneController extends ChangeNotifier {
   Future<void> placeCall([String? requestedNumber]) async {
     _endedResetTimer?.cancel();
     _directDisconnectTimer?.cancel();
+    _transferWatchdog?.cancel();
 
     final number = _normalizeDialString(requestedNumber ?? dialledNumber);
     if (number.isEmpty || callState.isInCall) return;
@@ -423,6 +425,15 @@ class PhoneController extends ChangeNotifier {
     notifyListeners();
     try {
       await sip.transfer(uri: _transferUri(cleanTarget));
+      _transferWatchdog?.cancel();
+      _transferWatchdog = Timer(const Duration(seconds: 20), () {
+        if (_directTransferMode == 'blind') {
+          _directTransferMode = null;
+          _directTransferTarget = null;
+          _directTransferStatus = 'Transfer not completed';
+          notifyListeners();
+        }
+      });
     } catch (error) {
       _directTransferMode = null;
       _directTransferTarget = null;
@@ -630,6 +641,7 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> _finishDirectTransferSuccess() async {
+    _transferWatchdog?.cancel();
     _directTransferStatus = 'Transfer complete';
     notifyListeners();
     try {
@@ -647,6 +659,7 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> _finishDirectTransferFailure(int status) async {
+    _transferWatchdog?.cancel();
     _directTransferCompleting = false;
     _directTransferStatus = 'Transfer failed ($status)';
     notifyListeners();
@@ -658,6 +671,7 @@ class PhoneController extends ChangeNotifier {
     bool keepStatus = false,
   }) async {
     final hadAttended = _directTransferMode == 'attended';
+    _transferWatchdog?.cancel();
     await _ringback.stop();
     _directTransferCompleting = false;
     _canSendTransferTrickle = false;
@@ -788,6 +802,12 @@ class PhoneController extends ChangeNotifier {
   ) async {
     final pluginError = payload['error']?.toString();
     if (pluginError != null && pluginError.isNotEmpty) {
+      if (_directTransferMode != null) {
+        _transferWatchdog?.cancel();
+        _directTransferMode = null;
+        _directTransferTarget = null;
+        _directTransferStatus = 'Transfer failed';
+      }
       _setError(pluginError);
       return;
     }
@@ -854,6 +874,22 @@ class PhoneController extends ChangeNotifier {
               : 'Transferring…';
           notifyListeners();
         }
+        break;
+      case 'transfer_failed':
+        _transferWatchdog?.cancel();
+        _directTransferCompleting = false;
+        _directTransferMode = null;
+        _directTransferTarget = null;
+        _directTransferStatus = 'Transfer failed';
+        final code = result?['code']?.toString();
+        final reason = result?['reason']?.toString();
+        _setError(
+          [
+            'Transfer failed',
+            if (code != null && code.isNotEmpty) code,
+            if (reason != null && reason.isNotEmpty) reason,
+          ].join(' · '),
+        );
         break;
       case 'calling':
         if (_activeCall?.direction == CallDirection.outgoing) {
