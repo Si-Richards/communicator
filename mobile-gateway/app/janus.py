@@ -13,16 +13,25 @@ TrickleCallback = Callable[[dict], Awaitable[None]]
 
 
 class JanusSipSession:
-    def __init__(self, device: DeviceRecord, on_plugin: PluginCallback, on_trickle: TrickleCallback):
+    def __init__(
+        self,
+        device: DeviceRecord,
+        on_plugin: PluginCallback,
+        on_trickle: TrickleCallback,
+        helper_master_id: int | None = None,
+    ):
         self.device = device
         self.on_plugin = on_plugin
         self.on_trickle = on_trickle
+        self.helper_master_id = helper_master_id
         self.ws = None
         self.session_id: int | None = None
         self.handle_id: int | None = None
         self._waiters: dict[str, asyncio.Future] = {}
         self._reader_task = None
         self._keepalive_task = None
+        self.master_id: int | None = helper_master_id
+        self._registered = asyncio.Event()
 
     async def start(self):
         self.ws = await websockets.connect(
@@ -49,6 +58,16 @@ class JanusSipSession:
             await self.ws.close()
         self.ws = None
 
+    async def wait_registered(self, timeout: float = 10):
+        await asyncio.wait_for(self._registered.wait(), timeout)
+        return self.master_id
+
+    async def call(self, uri: str, sdp: str):
+        await self._message(
+            {'request': 'call', 'uri': uri},
+            {'type': 'offer', 'sdp': sdp, 'trickle': True},
+        )
+
     async def accept(self, sdp: str):
         await self._message({'request': 'accept'}, {'type': 'answer', 'sdp': sdp, 'trickle': True})
 
@@ -58,6 +77,18 @@ class JanusSipSession:
     async def hangup(self):
         await self._message({'request': 'hangup'})
 
+    async def hold(self):
+        await self._message({'request': 'hold', 'direction': 'sendonly'})
+
+    async def unhold(self):
+        await self._message({'request': 'unhold'})
+
+    async def transfer(self, uri: str, replace: str | None = None):
+        body = {'request': 'transfer', 'uri': uri}
+        if replace:
+            body['replace'] = replace
+        await self._message(body)
+
     async def trickle(self, candidate: dict):
         await self._send({
             'janus': 'trickle', 'session_id': self.session_id,
@@ -65,6 +96,14 @@ class JanusSipSession:
         })
 
     def _register_body(self):
+        if self.helper_master_id is not None:
+            return {
+                'request': 'register',
+                'type': 'helper',
+                'username': f'sip:{self.device.sip_username}@{self.device.sip_realm}',
+                'master_id': self.helper_master_id,
+            }
+
         body = {
             'request': 'register',
             'username': f'sip:{self.device.sip_username}@{self.device.sip_realm}',
@@ -115,6 +154,12 @@ class JanusSipSession:
                 continue
             if message.get('janus') == 'event':
                 data = (message.get('plugindata') or {}).get('data') or {}
+                result = data.get('result') or {}
+                if result.get('event') == 'registered':
+                    value = result.get('master_id')
+                    if value is not None:
+                        self.master_id = int(value)
+                    self._registered.set()
                 await self.on_plugin(data, message.get('jsep'))
                 continue
             if message.get('janus') == 'trickle':
