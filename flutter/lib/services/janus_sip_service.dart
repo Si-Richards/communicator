@@ -27,6 +27,18 @@ class JanusSipService {
     await _janus.sendPlugin(body: body);
   }
 
+  Future<void> registerHelper({
+    required String username,
+    required String realm,
+    required int masterId,
+  }) =>
+      _janus.sendPlugin(body: {
+        'request': 'register',
+        'type': 'helper',
+        'username': 'sip:$username@$realm',
+        'master_id': masterId,
+      });
+
   Future<void> unregister() =>
       _janus.sendPlugin(body: const {'request': 'unregister'});
 
@@ -52,6 +64,20 @@ class JanusSipService {
 
   Future<void> hangup() =>
       _janus.sendPlugin(body: const {'request': 'hangup'});
+
+  Future<void> transfer({
+    required String uri,
+    String? replace,
+  }) {
+    final body = <String, dynamic>{
+      'request': 'transfer',
+      'uri': uri,
+    };
+    if (replace != null && replace.isNotEmpty) {
+      body['replace'] = replace;
+    }
+    return _janus.sendPlugin(body: body);
+  }
 
   Future<void> hold() => _janus.sendPlugin(
         body: const {'request': 'hold', 'direction': 'sendonly'},
