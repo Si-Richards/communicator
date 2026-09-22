@@ -33,15 +33,25 @@ class PhoneController extends ChangeNotifier {
       connectionDiagnostic = state;
       notifyListeners();
     };
+    _transferWebRtc.onLocalCandidate = (candidate) {
+      unawaited(_queueOrSendTransferCandidate(candidate));
+    };
+    _transferWebRtc.onIceGatheringComplete = () {
+      unawaited(_queueOrSendTransferCandidate({'completed': true}));
+    };
+    _transferWebRtc.onLog = (message) => _log('Transfer: $message');
   }
 
   final SettingsRepository _settingsRepository;
   final CallHistoryRepository _historyRepository;
   final WebRtcService _webRtc;
+  final WebRtcService _transferWebRtc = WebRtcService();
   final RingbackService _ringback = RingbackService();
 
   JanusClient? _janus;
   JanusSipService? _sip;
+  JanusClient? _transferJanus;
+  JanusSipService? _transferSip;
   Timer? _endedResetTimer;
   Timer? _directDisconnectTimer;
 
@@ -72,6 +82,16 @@ class PhoneController extends ChangeNotifier {
   bool _canSendTrickle = false;
   bool _connectRequestRunning = false;
   bool _registrationPending = false;
+  int? _masterId;
+  String? _directTransferMode;
+  String? _directTransferTarget;
+  String _directTransferStatus = '';
+  bool _directTransferConnected = false;
+  bool _directTransferCompleting = false;
+  String? _directTransferSipCallId;
+  Completer<void>? _transferHelperReady;
+  bool _canSendTransferTrickle = false;
+  final List<Map<String, dynamic>> _pendingTransferCandidates = [];
   final List<Map<String, dynamic>> _pendingLocalCandidates = [];
   _ActiveCallContext? _activeCall;
 
@@ -93,6 +113,11 @@ class PhoneController extends ChangeNotifier {
 
   DateTime? get activeCallConnectedAt => _activeCall?.connectedAt;
   bool get hasActiveDirectCall => callState.isInCall || _activeCall != null;
+  bool get hasDirectTransfer => _directTransferMode != null;
+  bool get directAttendedTransferActive => _directTransferMode == 'attended';
+  bool get directTransferConnected => _directTransferConnected;
+  String get directTransferStatus => _directTransferStatus;
+  String? get directTransferTarget => _directTransferTarget;
 
   Future<bool> ensureRegistered({
     Duration timeout = const Duration(seconds: 8),
@@ -252,6 +277,7 @@ class PhoneController extends ChangeNotifier {
 
   Future<void> disconnect({bool clearRegistrationState = true}) async {
     _directDisconnectTimer?.cancel();
+    await _cleanupDirectTransfer(restoreOriginal: false);
     if (_activeCall != null) {
       await _finalizeActiveCall(_localEndResult());
     }
@@ -368,6 +394,7 @@ class PhoneController extends ChangeNotifier {
 
   Future<void> hangup() async {
     await _ringback.stop();
+    await _cleanupDirectTransfer(restoreOriginal: false);
     try {
       await _sip?.hangup();
     } catch (_) {}
@@ -375,6 +402,291 @@ class PhoneController extends ChangeNotifier {
     await _webRtc.close();
     _showEnded('Call ended');
     _scheduleDirectDisconnect();
+  }
+
+  Future<void> blindTransfer(String target) async {
+    final sip = _sip;
+    final cleanTarget = target.trim();
+    if (sip == null ||
+        cleanTarget.isEmpty ||
+        !callState.isConnected ||
+        _directTransferMode != null) {
+      return;
+    }
+
+    _directTransferMode = 'blind';
+    _directTransferTarget = cleanTarget;
+    _directTransferStatus = 'Transferring…';
+    notifyListeners();
+    try {
+      await sip.transfer(uri: _transferUri(cleanTarget));
+    } catch (error) {
+      _directTransferMode = null;
+      _directTransferTarget = null;
+      _directTransferStatus = 'Transfer failed';
+      _setError('Transfer failed: $error');
+    }
+  }
+
+  Future<void> startAttendedTransfer(String target) async {
+    final sip = _sip;
+    final masterId = _masterId;
+    final cleanTarget = target.trim();
+    if (sip == null ||
+        masterId == null ||
+        cleanTarget.isEmpty ||
+        !callState.isConnected ||
+        _directTransferMode != null) {
+      if (masterId == null) {
+        _setError('Attended transfer is unavailable until SIP registration completes.');
+      }
+      return;
+    }
+
+    _directTransferMode = 'attended';
+    _directTransferTarget = cleanTarget;
+    _directTransferStatus = 'Calling transfer target…';
+    _directTransferConnected = false;
+    _directTransferCompleting = false;
+    _directTransferSipCallId = null;
+    _pendingTransferCandidates.clear();
+    _canSendTransferTrickle = false;
+    notifyListeners();
+
+    try {
+      await sip.hold();
+      callState = PhoneCallState(
+        phase: CallPhase.held,
+        number: callState.number,
+      );
+      notifyListeners();
+
+      final uri = Uri.parse(janusUrl);
+      final helperJanus = JanusClient(serverUrl: uri);
+      final helperSip = JanusSipService(helperJanus);
+      _transferJanus = helperJanus;
+      _transferSip = helperSip;
+      _transferHelperReady = Completer<void>();
+
+      helperJanus.onLog = (message) => _log('Transfer Janus: $message');
+      helperJanus.onRemoteCandidate = (candidate) {
+        unawaited(_transferWebRtc.addRemoteCandidate(candidate));
+      };
+      helperJanus.onPluginEvent = (payload, jsep) {
+        unawaited(_handleTransferSipEvent(payload, jsep));
+      };
+      helperJanus.onDisconnected = (error) {
+        if (_directTransferMode == 'attended' && !_directTransferCompleting) {
+          _log('Transfer Janus disconnected: $error');
+        }
+      };
+
+      await helperJanus.connect(apiSecret: janusApiSecret);
+      await helperSip.registerHelper(
+        username: sipUsername.trim(),
+        realm: sipRealm.trim(),
+        masterId: masterId,
+      );
+      await _transferHelperReady!.future.timeout(const Duration(seconds: 8));
+
+      await _transferWebRtc.preparePeerConnection();
+      final offer = await _transferWebRtc.createOffer();
+      await helperSip.call(
+        number: cleanTarget,
+        realm: sipRealm,
+        offerSdp: offer,
+      );
+      _canSendTransferTrickle = true;
+      await _flushTransferCandidates();
+      unawaited(_ringback.start());
+    } catch (error) {
+      _setError('Attended transfer failed: $error');
+      await _cleanupDirectTransfer();
+    }
+  }
+
+  Future<void> completeAttendedTransfer() async {
+    final sip = _sip;
+    final replace = _directTransferSipCallId;
+    final target = _directTransferTarget;
+    if (sip == null ||
+        replace == null ||
+        target == null ||
+        !_directTransferConnected) {
+      return;
+    }
+
+    _directTransferCompleting = true;
+    _directTransferStatus = 'Completing transfer…';
+    notifyListeners();
+    try {
+      await sip.transfer(uri: _transferUri(target), replace: replace);
+    } catch (error) {
+      _directTransferCompleting = false;
+      _directTransferStatus = 'Transfer failed';
+      _setError('Unable to complete transfer: $error');
+    }
+  }
+
+  Future<void> cancelAttendedTransfer() => _cleanupDirectTransfer();
+
+  Future<void> _handleTransferSipEvent(
+    Map<String, dynamic> payload,
+    Map<String, dynamic>? jsep,
+  ) async {
+    final result = _map(payload['result']);
+    final event = result?['event']?.toString();
+    if (event == null) return;
+
+    final callId = payload['call_id']?.toString();
+    if (callId != null && callId.isNotEmpty) {
+      _directTransferSipCallId = callId;
+    }
+
+    switch (event) {
+      case 'registered':
+        final ready = _transferHelperReady;
+        if (ready != null && !ready.isCompleted) ready.complete();
+        break;
+      case 'calling':
+        _directTransferStatus = 'Calling transfer target…';
+        notifyListeners();
+        break;
+      case 'ringing':
+        _directTransferStatus = 'Transfer target ringing…';
+        unawaited(_ringback.start());
+        notifyListeners();
+        break;
+      case 'progress':
+        final sdp = jsep?['sdp']?.toString();
+        if (sdp != null && sdp.isNotEmpty) {
+          await _ringback.stop();
+          await _transferWebRtc.applyRemoteAnswer(sdp);
+        }
+        _directTransferStatus = 'Connecting transfer target…';
+        notifyListeners();
+        break;
+      case 'accepted':
+        final sdp = jsep?['sdp']?.toString();
+        if (sdp != null && sdp.isNotEmpty) {
+          await _transferWebRtc.applyRemoteAnswer(sdp);
+        }
+        await _ringback.stop();
+        _directTransferConnected = true;
+        _directTransferStatus =
+            'Consulting ' + (_directTransferTarget ?? 'target');
+        notifyListeners();
+        break;
+      case 'hangup':
+        await _ringback.stop();
+        if (!_directTransferCompleting) {
+          _directTransferStatus = 'Consultation ended';
+          notifyListeners();
+          await _cleanupDirectTransfer();
+        }
+        break;
+      case 'registration_failed':
+        final ready = _transferHelperReady;
+        if (ready != null && !ready.isCompleted) {
+          ready.completeError(
+            StateError(result?['reason']?.toString() ?? 'Helper registration failed'),
+          );
+        }
+        break;
+    }
+  }
+
+  Future<void> _queueOrSendTransferCandidate(
+    Map<String, dynamic> candidate,
+  ) async {
+    final janus = _transferJanus;
+    if (!_canSendTransferTrickle || janus == null) {
+      _pendingTransferCandidates.add(candidate);
+      return;
+    }
+    try {
+      await janus.sendTrickle(candidate);
+    } catch (error) {
+      _log('Unable to send transfer ICE candidate: $error');
+    }
+  }
+
+  Future<void> _flushTransferCandidates() async {
+    final janus = _transferJanus;
+    if (janus == null) return;
+    final queued =
+        List<Map<String, dynamic>>.from(_pendingTransferCandidates);
+    _pendingTransferCandidates.clear();
+    for (final candidate in queued) {
+      try {
+        await janus.sendTrickle(candidate);
+      } catch (error) {
+        _log('Unable to flush transfer ICE candidate: $error');
+      }
+    }
+  }
+
+  Future<void> _finishDirectTransferSuccess() async {
+    _directTransferStatus = 'Transfer complete';
+    notifyListeners();
+    try {
+      await _transferSip?.hangup();
+    } catch (_) {}
+    try {
+      await _sip?.hangup();
+    } catch (_) {}
+    await _finalizeActiveCall(CallResult.completed);
+    await _transferWebRtc.close();
+    await _webRtc.close();
+    await _cleanupDirectTransfer(restoreOriginal: false, keepStatus: true);
+    _showEnded('Transfer complete');
+    _scheduleDirectDisconnect();
+  }
+
+  Future<void> _finishDirectTransferFailure(int status) async {
+    _directTransferCompleting = false;
+    _directTransferStatus = 'Transfer failed ($status)';
+    notifyListeners();
+    await _cleanupDirectTransfer(keepStatus: true);
+  }
+
+  Future<void> _cleanupDirectTransfer({
+    bool restoreOriginal = true,
+    bool keepStatus = false,
+  }) async {
+    final hadAttended = _directTransferMode == 'attended';
+    await _ringback.stop();
+    _directTransferCompleting = false;
+    _canSendTransferTrickle = false;
+    _pendingTransferCandidates.clear();
+    _transferHelperReady = null;
+    try {
+      await _transferSip?.hangup();
+    } catch (_) {}
+    try {
+      await _transferJanus?.disconnect();
+    } catch (_) {}
+    _transferSip = null;
+    _transferJanus = null;
+    await _transferWebRtc.close();
+    _directTransferSipCallId = null;
+    _directTransferConnected = false;
+    _directTransferMode = null;
+    _directTransferTarget = null;
+    if (!keepStatus) _directTransferStatus = '';
+
+    if (restoreOriginal && hadAttended && _sip != null && _activeCall != null) {
+      try {
+        await _sip!.unhold();
+        callState = PhoneCallState(
+          phase: CallPhase.connected,
+          number: callState.number,
+        );
+      } catch (error) {
+        _setError('Unable to resume original call: $error');
+      }
+    }
+    notifyListeners();
   }
 
   Future<void> toggleMute() async {
@@ -488,6 +800,10 @@ class PhoneController extends ChangeNotifier {
         break;
       case 'registered':
         _registrationPending = false;
+        final masterValue = result?['master_id'];
+        _masterId = masterValue is int
+            ? masterValue
+            : int.tryParse(masterValue?.toString() ?? '');
         isRegistered = true;
         registrationStatus = 'Online';
         notifyListeners();
@@ -515,6 +831,23 @@ class PhoneController extends ChangeNotifier {
         if (result?['notify']?.toString().toLowerCase() == 'message-summary') {
           voicemail = VoicemailSummary.parse(result?['content']?.toString() ?? '');
           voicemailSubscriptionStatus = 'Active';
+          notifyListeners();
+          break;
+        }
+        if (_directTransferMode != null) {
+          final status = _sipStatus(result?['content']?.toString());
+          if (status != null && status >= 200 && status < 300) {
+            unawaited(_finishDirectTransferSuccess());
+          } else if (status != null && status >= 300) {
+            unawaited(_finishDirectTransferFailure(status));
+          }
+        }
+        break;
+      case 'transferring':
+        if (_directTransferMode != null) {
+          _directTransferStatus = _directTransferCompleting
+              ? 'Completing transfer…'
+              : 'Transferring…';
           notifyListeners();
         }
         break;
@@ -576,6 +909,7 @@ class PhoneController extends ChangeNotifier {
         break;
       case 'hangup':
         await _ringback.stop();
+        await _cleanupDirectTransfer(restoreOriginal: false);
         final reason = result?['reason']?.toString();
         await _finalizeActiveCall(_remoteEndResult());
         await _webRtc.close();
@@ -805,6 +1139,18 @@ class PhoneController extends ChangeNotifier {
         ),
       );
 
+  String _transferUri(String target) {
+    final clean = target.trim();
+    if (clean.startsWith('sip:') || clean.startsWith('sips:')) return clean;
+    return 'sip:$clean@$sipRealm';
+  }
+
+  static int? _sipStatus(String? content) {
+    if (content == null || content.isEmpty) return null;
+    final match = RegExp(r'SIP/2\.0\s+(\d{3})').firstMatch(content);
+    return int.tryParse(match?.group(1) ?? '');
+  }
+
   String _normalizeDialString(String value) {
     return value.replaceAll(RegExp(r'[^0-9+*#]'), '');
   }
@@ -833,6 +1179,8 @@ class PhoneController extends ChangeNotifier {
     _endedResetTimer?.cancel();
     _directDisconnectTimer?.cancel();
     unawaited(_ringback.stop());
+    unawaited(_transferWebRtc.close());
+    unawaited(_transferJanus?.disconnect());
     unawaited(_webRtc.close());
     unawaited(_janus?.disconnect());
     super.dispose();
