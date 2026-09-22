@@ -240,10 +240,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final calls = await FlutterCallkitIncoming.activeCalls();
       for (final call in calls) {
-        if (!call.isAccepted || call.id.isEmpty) continue;
-        if (_contextFor(call.id)?.connected == true) continue;
-        await _diag('callkit_accept_recovered', callId: call.id);
-        await _accept(call.id);
+        if (call.id.isEmpty) continue;
+        if (call.isAccepted) {
+          if (_contextFor(call.id)?.connected == true) continue;
+          await _diag('callkit_accept_recovered', callId: call.id);
+          await _accept(call.id);
+        } else {
+          await _trackIncomingCall(call.id);
+        }
       }
     } catch (error) {
       debugPrint('[VoiceHost Mobile] CallKit state recovery failed: $error');
