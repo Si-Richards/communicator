@@ -9,12 +9,34 @@ import flutter_callkit_incoming
 @main
 @objc class AppDelegate: FlutterAppDelegate, PKPushRegistryDelegate, CallkitIncomingAppDelegate {
     private var voipRegistry: PKPushRegistry?
+    private var ringbackPlayer: AVAudioPlayer?
+    private var audioChannel: FlutterMethodChannel?
 
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
+
+        if let controller = window?.rootViewController as? FlutterViewController {
+            let channel = FlutterMethodChannel(
+                name: "voicehost/audio",
+                binaryMessenger: controller.binaryMessenger
+            )
+            channel.setMethodCallHandler { [weak self] call, result in
+                switch call.method {
+                case "startRingback":
+                    self?.startRingback()
+                    result(nil)
+                case "stopRingback":
+                    self?.stopRingback()
+                    result(nil)
+                default:
+                    result(FlutterMethodNotImplemented)
+                }
+            }
+            audioChannel = channel
+        }
 
         // CallKit owns AVAudioSession activation for incoming VoIP calls.
         // Keep WebRTC audio manual until CallKit activates the session.
@@ -49,16 +71,19 @@ import flutter_callkit_incoming
     // flutter_callkit_incoming sends the Dart event first, then invokes these
     // delegate callbacks. Fulfil CallKit actions here; media setup remains in Dart.
     func onAccept(_ call: Call, _ action: CXAnswerCallAction) {
+        stopRingback()
         print("[VoiceHost CallKit] answer accepted")
         action.fulfill()
     }
 
     func onDecline(_ call: Call, _ action: CXEndCallAction) {
+        stopRingback()
         print("[VoiceHost CallKit] call declined")
         action.fulfill()
     }
 
     func onEnd(_ call: Call, _ action: CXEndCallAction) {
+        stopRingback()
         print("[VoiceHost CallKit] call ended")
         action.fulfill()
     }
@@ -85,6 +110,98 @@ import flutter_callkit_incoming
         print("[VoiceHost CallKit] provider reset")
     }
 
+
+    private func startRingback() {
+        if ringbackPlayer?.isPlaying == true { return }
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+            try session.setActive(true)
+
+            let player = try AVAudioPlayer(data: makeUKRingbackWav())
+            player.numberOfLoops = -1
+            player.volume = 0.32
+            player.prepareToPlay()
+            player.play()
+            ringbackPlayer = player
+            print("[VoiceHost Audio] local ringback started")
+        } catch {
+            ringbackPlayer = nil
+            print("[VoiceHost Audio] local ringback failed")
+        }
+    }
+
+    private func stopRingback() {
+        guard let player = ringbackPlayer else { return }
+        player.stop()
+        ringbackPlayer = nil
+        print("[VoiceHost Audio] local ringback stopped")
+    }
+
+    private func makeUKRingbackWav() -> Data {
+        // UK ringback cadence: 400 ms tone, 200 ms silence,
+        // 400 ms tone, 2 s silence. The tone combines 400 Hz + 450 Hz.
+        let sampleRate = 16_000
+        let duration = 3.0
+        let sampleCount = Int(Double(sampleRate) * duration)
+        let bytesPerSample = 2
+        let dataSize = sampleCount * bytesPerSample
+
+        var data = Data()
+
+        func appendASCII(_ value: String) {
+            if let bytes = value.data(using: .ascii) {
+                data.append(bytes)
+            }
+        }
+
+        func appendUInt16(_ value: UInt16) {
+            var little = value.littleEndian
+            Swift.withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+
+        func appendUInt32(_ value: UInt32) {
+            var little = value.littleEndian
+            Swift.withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+
+        appendASCII("RIFF")
+        appendUInt32(UInt32(36 + dataSize))
+        appendASCII("WAVE")
+        appendASCII("fmt ")
+        appendUInt32(16)
+        appendUInt16(1)
+        appendUInt16(1)
+        appendUInt32(UInt32(sampleRate))
+        appendUInt32(UInt32(sampleRate * bytesPerSample))
+        appendUInt16(UInt16(bytesPerSample))
+        appendUInt16(16)
+        appendASCII("data")
+        appendUInt32(UInt32(dataSize))
+
+        let amplitude = 5_500.0
+        for index in 0..<sampleCount {
+            let time = Double(index) / Double(sampleRate)
+            let cycle = time.truncatingRemainder(dividingBy: 3.0)
+            let toneOn = cycle < 0.4 || (cycle >= 0.6 && cycle < 1.0)
+
+            let value: Double
+            if toneOn {
+                let a = sin(2.0 * Double.pi * 400.0 * time)
+                let b = sin(2.0 * Double.pi * 450.0 * time)
+                value = ((a + b) * 0.5) * amplitude
+            } else {
+                value = 0
+            }
+
+            var sample = Int16(max(-32767, min(32767, Int(value)))).littleEndian
+            Swift.withUnsafeBytes(of: &sample) { data.append(contentsOf: $0) }
+        }
+
+        return data
+    }
+
     func pushRegistry(
         _ registry: PKPushRegistry,
         didReceiveIncomingPushWith payload: PKPushPayload,
@@ -96,6 +213,7 @@ import flutter_callkit_incoming
             return
         }
 
+        stopRingback()
         let body = payload.dictionaryPayload
         let id = body["id"] as? String ?? UUID().uuidString
         let caller = body["handle"] as? String ?? "Unknown"
