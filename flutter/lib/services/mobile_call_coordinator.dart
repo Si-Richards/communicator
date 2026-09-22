@@ -495,6 +495,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             context.connected = true;
             context.held = false;
             context.connectedAt ??= DateTime.now();
+            unawaited(FlutterCallkitIncoming.setCallConnected(context.id));
             notifyListeners();
             unawaited(_diag(
               'gateway_accepted',
@@ -674,6 +675,31 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _gatewayCalls[callId] = context;
       _activeGatewayCallId = callId;
       _configureGatewayCall(context);
+
+      await FlutterCallkitIncoming.startCall(
+        CallKitParams(
+          id: callId,
+          nameCaller: target,
+          handle: target,
+          type: 0,
+          extra: const {'source': 'voicehost-mobile-gateway'},
+          ios: const IOSParams(
+            handleType: 'number',
+            normalHandle: 1,
+            supportsVideo: false,
+            maximumCallGroups: 2,
+            maximumCallsPerCallGroup: 1,
+            supportsDTMF: false,
+            supportsHolding: true,
+            supportsGrouping: false,
+            supportsUngrouping: false,
+            configureAudioSession: false,
+            audioSessionMode: 'voiceChat',
+            audioSessionActive: false,
+          ),
+        ),
+      );
+
       await _listenToGateway(context);
 
       for (final candidate in pendingCandidates) {
@@ -687,6 +713,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     } catch (error) {
       await _ringback.stop();
       await webRtc.close();
+      final active = _activeGatewayCall;
+      if (active?.outgoing == true && active?.caller == target) {
+        try {
+          await FlutterCallkitIncoming.endCall(active!.id);
+        } catch (_) {}
+        _gatewayCalls.remove(active.id);
+        _activeGatewayCallId = null;
+      }
       debugPrint('[VoiceHost Mobile] outgoing call failed: $error');
       if (previous != null && previous.held) {
         await _setGatewayHold(previous.id, false);
