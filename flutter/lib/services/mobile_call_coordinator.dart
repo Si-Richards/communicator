@@ -599,7 +599,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     final cleanTarget = target.trim();
     if (callId == null ||
         cleanTarget.isEmpty ||
-        !_gatewayConnected ||
+        !gatewayCallConnected ||
+        gatewayHeld ||
         _transferBusy ||
         _transferId != null) {
       return;
@@ -783,79 +784,114 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> hangupActiveCall() async {
-    final callId = _activeGatewayCallId;
-    if (callId == null) return;
+    final active = _activeGatewayCall;
+    if (active == null) return;
     if (_transferId != null) {
       await cancelAttendedTransfer();
     }
-    await _end(callId);
+    await _end(active.id);
     try {
-      await FlutterCallkitIncoming.endCall(callId);
+      await FlutterCallkitIncoming.endCall(active.id);
     } catch (error) {
       debugPrint('[VoiceHost Mobile] CallKit end failed: $error');
     }
   }
 
   Future<void> toggleGatewayMute() async {
-    if (_activeGatewayCallId == null) return;
-    _gatewayMuted = !_gatewayMuted;
-    await _webRtc.setMuted(_gatewayMuted);
+    final active = _activeGatewayCall;
+    if (active == null) return;
+    active.muted = !active.muted;
+    await active.webRtc.setMuted(active.held || active.muted);
     notifyListeners();
   }
 
   Future<void> toggleGatewaySpeakerphone() async {
-    if (_activeGatewayCallId == null) return;
-    _gatewaySpeakerphoneOn = !_gatewaySpeakerphoneOn;
+    final active = _activeGatewayCall;
+    if (active == null) return;
+    active.speakerphoneOn = !active.speakerphoneOn;
     try {
-      await _webRtc.setSpeakerphone(_gatewaySpeakerphoneOn);
+      await active.webRtc.setSpeakerphone(active.speakerphoneOn);
     } catch (error) {
-      _gatewaySpeakerphoneOn = !_gatewaySpeakerphoneOn;
+      active.speakerphoneOn = !active.speakerphoneOn;
       debugPrint('[VoiceHost Mobile] speaker route failed: $error');
     }
     notifyListeners();
   }
 
-  Future<void> _decline(String callId) async {
+  Future<void> _decline(String requestedCallId) async {
+    final context = _contextFor(requestedCallId);
+    final callId = context?.id ?? requestedCallId;
     try {
       await gateway.decline(callId);
     } catch (error) {
       debugPrint('[VoiceHost Mobile] decline failed: $error');
     }
-    await _closeGatewayMedia();
+    if (context != null) {
+      await _closeGatewayCall(context.id);
+    }
   }
 
-  Future<void> _end(String callId) async {
-    if (_activeGatewayCallId != callId) return;
+  Future<void> _end(String requestedCallId) async {
+    final context = _contextFor(requestedCallId);
+    final callId = context?.id ?? requestedCallId;
     try {
       await gateway.hangup(callId);
     } catch (error) {
       debugPrint('[VoiceHost Mobile] hangup failed: $error');
     }
-    await _closeGatewayMedia();
+    if (context != null) {
+      await _closeGatewayCall(context.id);
+    }
   }
 
-  Future<void> _closeGatewayMedia() async {
-    _transferWatchdog?.cancel();
-    _activeGatewayCallId = null;
-    _activeGatewayCaller = null;
-    _activeGatewayDisplayName = null;
-    _gatewayConnected = false;
-    _gatewayMediaConnected = false;
-    _gatewayConnectedAt = null;
-    _localCandidateCount = 0;
-    _remoteCandidateCount = 0;
-    _gatewayMuted = false;
-    _gatewaySpeakerphoneOn = false;
-    _transferBusy = false;
-    _transferTarget = null;
-    _transferStatus = '';
-    await _closeTransferMedia();
-    await _gatewayEventSubscription?.cancel();
-    _gatewayEventSubscription = null;
-    await _gatewaySocket?.close();
-    _gatewaySocket = null;
-    await _webRtc.close();
+  Future<void> _closeGatewayCall(
+    String requestedCallId, {
+    bool resumeAnother = true,
+  }) async {
+    final context = _contextFor(requestedCallId);
+    if (context == null) return;
+
+    final wasActive = _activeGatewayCallId == context.id;
+    if (wasActive && _transferId != null) {
+      await _closeTransferMedia();
+    }
+
+    await context.subscription?.cancel();
+    context.subscription = null;
+    await context.socket?.close();
+    context.socket = null;
+    await context.webRtc.close();
+    _gatewayCalls.remove(context.id);
+
+    if (wasActive) {
+      _activeGatewayCallId = null;
+      final remaining = _gatewayCalls.values
+          .where((call) => call.connected)
+          .toList(growable: false);
+      if (remaining.isNotEmpty) {
+        final next = remaining.first;
+        _activeGatewayCallId = next.id;
+        if (resumeAnother && next.held) {
+          await _setGatewayHold(next.id, false);
+        }
+      }
+    }
+
+    if (_gatewayCalls.isEmpty) {
+      _transferWatchdog?.cancel();
+      _transferBusy = false;
+      _transferTarget = null;
+      _transferStatus = '';
+    }
     notifyListeners();
+  }
+
+  Future<void> _closeAllGatewayCalls() async {
+    final ids = _gatewayCalls.keys.toList(growable: false);
+    for (final id in ids) {
+      await _closeGatewayCall(id, resumeAnother: false);
+    }
+    _activeGatewayCallId = null;
   }
 
   Future<void> _diag(
@@ -888,7 +924,28 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     phone.removeListener(_phoneChanged);
     unawaited(_callKitSubscription?.cancel());
     unawaited(_closeTransferMedia());
-    unawaited(_closeGatewayMedia());
+    unawaited(_closeAllGatewayCalls());
     super.dispose();
   }
+}
+
+
+class _GatewayCallContext {
+  _GatewayCallContext(this.id);
+
+  final String id;
+  final WebRtcService webRtc = WebRtcService();
+  StreamSubscription<dynamic>? subscription;
+  WebSocket? socket;
+  String? caller;
+  String? displayName;
+  bool answering = false;
+  bool connected = false;
+  bool mediaConnected = false;
+  bool held = false;
+  bool muted = false;
+  bool speakerphoneOn = false;
+  DateTime? connectedAt;
+  int localCandidateCount = 0;
+  int remoteCandidateCount = 0;
 }
