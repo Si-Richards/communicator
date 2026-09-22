@@ -130,6 +130,23 @@ class MobileSessionManager:
     async def _plugin_event(self, device, session, data, jsep):
         result = data.get('result') or {}
         event = result.get('event')
+        plugin_error = data.get('error')
+        if plugin_error:
+            call = self._current_call(device.device_id)
+            if call and call.transfer_mode:
+                logger.warning(
+                    '[VH-DIAG] event=transfer_plugin_error call=%s',
+                    _safe_ref(call.id),
+                )
+                await call.publish({
+                    'type': 'transfer',
+                    'state': 'failed',
+                    'reason': 'janus_plugin_error',
+                })
+                call.transfer_mode = None
+                call.transfer_target = None
+            return
+
         if event == 'incomingcall':
             if device.dnd:
                 await session.decline(486)
@@ -174,6 +191,29 @@ class MobileSessionManager:
             transfer = self._current_transfer(device.device_id)
             if transfer:
                 await transfer.publish({'type': 'transfer', 'state': 'transferring'})
+            return
+
+        if event == 'transfer_failed':
+            status = result.get('code')
+            logger.warning(
+                '[VH-DIAG] event=transfer_failed call=%s status=%s',
+                _safe_ref(call.id),
+                status,
+            )
+            await call.publish({
+                'type': 'transfer',
+                'state': 'failed',
+                'status': status,
+            })
+            transfer = self._current_transfer(device.device_id)
+            if transfer:
+                await transfer.publish({
+                    'type': 'transfer',
+                    'state': 'failed',
+                    'status': status,
+                })
+            call.transfer_mode = None
+            call.transfer_target = None
             return
 
         if event == 'notify' and call.transfer_mode:
@@ -248,6 +288,25 @@ class MobileSessionManager:
             _safe_ref(call_id),
         )
         await session.transfer(uri)
+        asyncio.create_task(self._transfer_watchdog(call.id, 'blind'))
+
+    async def _transfer_watchdog(self, call_id: str, mode: str):
+        await asyncio.sleep(20)
+        call = self.calls.get(call_id)
+        if not call or call.transfer_mode != mode:
+            return
+        logger.warning(
+            '[VH-DIAG] event=transfer_timeout call=%s mode=%s',
+            _safe_ref(call_id),
+            mode,
+        )
+        await call.publish({
+            'type': 'transfer',
+            'state': 'failed',
+            'reason': 'timeout',
+        })
+        call.transfer_mode = None
+        call.transfer_target = None
 
     async def start_attended_transfer(self, call_id: str, target: str, offer_sdp: str):
         call = self.get_call(call_id)
