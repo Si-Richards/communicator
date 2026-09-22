@@ -17,7 +17,8 @@ class ContactsScreen extends StatefulWidget {
   State<ContactsScreen> createState() => _ContactsScreenState();
 }
 
-class _ContactsScreenState extends State<ContactsScreen> {
+class _ContactsScreenState extends State<ContactsScreen>
+    with WidgetsBindingObserver {
   static const MethodChannel _contactsChannel =
       MethodChannel('voicehost/contacts');
 
@@ -30,16 +31,25 @@ class _ContactsScreenState extends State<ContactsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _search.addListener(_searchChanged);
     _loadContacts();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _search
       ..removeListener(_searchChanged)
       ..dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _permissionDenied) {
+      _loadContacts();
+    }
   }
 
   void _searchChanged() => setState(() {});
