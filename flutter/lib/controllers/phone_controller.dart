@@ -244,6 +244,7 @@ class PhoneController extends ChangeNotifier {
     };
     janus.onDisconnected = (error) {
       _registrationPending = false;
+      _masterId = null;
       _log('Janus disconnected: $error');
       if (isRegistered) {
         isRegistered = false;
@@ -293,6 +294,7 @@ class PhoneController extends ChangeNotifier {
     _pendingLocalCandidates.clear();
     _canSendTrickle = false;
     _registrationPending = false;
+    _masterId = null;
     isMuted = false;
     speakerphoneOn = false;
     callState = const PhoneCallState.idle();
