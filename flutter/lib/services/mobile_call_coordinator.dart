@@ -33,6 +33,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _pushToken;
   String? _lastProvisionSignature;
   bool _provisioning = false;
+  bool _gatewayProvisioned = false;
   String? _activeGatewayCaller;
   String? _activeGatewayDisplayName;
   bool _gatewayConnected = false;
@@ -44,6 +45,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool _gatewaySpeakerphoneOn = false;
 
   bool get hasActiveGatewayCall => _activeGatewayCallId != null;
+  bool get gatewayProvisioned => _gatewayProvisioned;
   bool get gatewayCallConnected => _gatewayConnected;
   bool get gatewayMediaConnected => _gatewayMediaConnected;
   DateTime? get gatewayConnectedAt => _gatewayConnectedAt;
@@ -181,10 +183,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         nickname: phone.extensionDisplayName,
         doNotDisturb: phone.doNotDisturb,
       );
+      _gatewayProvisioned = true;
+      notifyListeners();
       debugPrint(
         '[VoiceHost Mobile] gateway registration active for ${phone.sipUsername}',
       );
     } catch (error) {
+      _gatewayProvisioned = false;
+      notifyListeners();
       _lastProvisionSignature = null;
       debugPrint('[VoiceHost Mobile] provisioning failed: $error');
     } finally {
@@ -202,8 +208,13 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         details: {'app_state': state.name},
       ));
     }
-    if (state == AppLifecycleState.resumed) {
-      unawaited(phone.ensureRegistered());
+
+    // Randy owns the persistent incoming SIP registration. The handset only
+    // creates a direct Janus/SIP session when originating an outgoing call.
+    if ((state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden) &&
+        !phone.hasActiveDirectCall) {
+      unawaited(phone.disconnectDirectRegistrationIfIdle());
     }
   }
 
@@ -247,6 +258,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeGatewayCallId != null) {
       await _closeGatewayMedia();
     }
+
+    // A gateway/CallKit call must not compete with a handset SIP registration.
+    await phone.disconnectDirectRegistrationIfIdle();
     _activeGatewayCallId = callId;
 
     try {
