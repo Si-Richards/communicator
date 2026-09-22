@@ -316,6 +316,9 @@ class PhoneController extends ChangeNotifier {
       await _webRtc.preparePeerConnection();
       final offer = await _webRtc.createOffer();
       await sip.call(number: number, realm: sipRealm, offerSdp: offer);
+      // Start local ringback as soon as the INVITE is handed to Janus.
+      // 183 + SDP, answer, failure or hangup will stop it.
+      unawaited(_ringback.start());
       _canSendTrickle = true;
       await _flushLocalCandidates();
     } catch (error) {
@@ -516,6 +519,9 @@ class PhoneController extends ChangeNotifier {
         }
         break;
       case 'calling':
+        if (_activeCall?.direction == CallDirection.outgoing) {
+          unawaited(_ringback.start());
+        }
         callState = PhoneCallState(
           phase: CallPhase.outgoing,
           number: _currentNumber,
