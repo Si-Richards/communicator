@@ -2,7 +2,7 @@
 
 Prototype signalling service for mobile softphone background calling.
 
-It keeps a persistent Janus `janus.plugin.sip` registration for each provisioned device, stores SIP passwords encrypted at rest, receives `incomingcall` events while the handset is suspended, sends an APNs VoIP push, and holds the Janus call while the iPhone answers through CallKit.
+It keeps a persistent Janus `janus.plugin.sip` master registration for each provisioned device, plus a helper call slot for call waiting. SIP passwords are encrypted at rest. Incoming calls can wake the handset through APNs VoIP/CallKit, while outgoing calls are also originated through the gateway so the mobile app has one signalling owner.
 
 ## Network layout
 
@@ -125,7 +125,7 @@ flutter run -d <iphone-id> \
   --dart-define=VOICEHOST_GATEWAY_KEY=<gateway-key>
 ```
 
-After the normal foreground SIP registration becomes Online, the app provisions its PushKit token and SIP account to the gateway. The gateway then owns an additional persistent Janus registration so an incoming call can wake the handset.
+After the app provisions its PushKit token and SIP account, Randy owns the persistent SIP registration. Normal outgoing calls are originated through Randy as well; direct handset SIP registration remains available only as a diagnostic test.
 
 ## Test PushKit / CallKit
 
@@ -141,4 +141,6 @@ The locked/backgrounded iPhone should immediately show the native incoming CallK
 
 ## Current prototype boundary
 
-Foreground direct-Janus calling remains unchanged. Background incoming calls use the gateway-owned Janus handle and answer media directly between the handset and Janus. The next hardening step is to make the gateway the single signalling owner for foreground and background calls, add authenticated per-user tokens instead of the development gateway key, and move device/account storage to the production database.
+Randy is now the signalling owner for normal foreground and background calls. The master Janus SIP handle plus one persistent helper support an active call and one waiting/held call; attended transfer creates a temporary helper leg on demand. The handset maintains an independent WebRTC peer connection per live call and CallKit exposes hold/switch controls.
+
+The remaining hardening work includes authenticated per-user/device tokens instead of the development gateway key, production device/account storage, stronger session-recovery/watchdog behaviour, and validating the deployed Janus SIP plugin includes current REFER authentication fixes for blind/attended transfers.
