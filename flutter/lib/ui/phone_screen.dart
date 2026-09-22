@@ -123,7 +123,9 @@ class _PhoneScreenState extends State<PhoneScreen> {
                       children: [
                         TextField(
                           controller: _numberController,
-                          keyboardType: TextInputType.phone,
+                          readOnly: true,
+                          showCursor: false,
+                          enableInteractiveSelection: false,
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.headlineLarge,
                           decoration: const InputDecoration(
