@@ -46,7 +46,13 @@ app = FastAPI(title='VoiceHost Mobile Gateway', version='0.1.0', lifespan=lifesp
 
 @app.get('/health')
 async def health():
-    return {'ok': True, 'sessions': len(manager.sessions), 'calls': len(manager.calls)}
+    return {
+        'ok': True,
+        'sessions': len(manager.sessions),
+        'helpers': sum(len(items) for items in manager.helpers.values()),
+        'active_calls': sum(len(items) for items in manager.device_calls.values()),
+        'calls': len(manager.calls),
+    }
 
 
 @app.post('/v1/devices/register', dependencies=[Depends(auth)])
@@ -86,6 +92,8 @@ async def get_call(call_id: str):
         'caller': call.caller,
         'display_name': call.display_name,
         'offer_sdp': call.offer_sdp,
+        'connected': call.connected,
+        'held': call.held,
     }
 
 
@@ -113,6 +121,28 @@ async def hangup(call_id: str):
         await manager.hangup(call_id)
     except KeyError:
         raise HTTPException(404, 'call not found')
+    return {'ok': True}
+
+
+@app.post('/v1/calls/{call_id}/hold', dependencies=[Depends(auth)])
+async def hold(call_id: str):
+    try:
+        await manager.set_hold(call_id, True)
+    except KeyError:
+        raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True}
+
+
+@app.post('/v1/calls/{call_id}/resume', dependencies=[Depends(auth)])
+async def resume(call_id: str):
+    try:
+        await manager.set_hold(call_id, False)
+    except KeyError:
+        raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
     return {'ok': True}
 
 
