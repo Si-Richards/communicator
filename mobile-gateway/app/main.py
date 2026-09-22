@@ -14,6 +14,7 @@ from .models import (
     CandidateRequest,
     DeviceRegistration,
     DiagnosticEvent,
+    OutboundCallRequest,
     TransferRequest,
 )
 from .store import DeviceStore
@@ -81,6 +82,21 @@ async def test_push(device_id: str):
     return {'ok': True, 'call_id': call_id}
 
 
+@app.post('/v1/devices/{device_id}/calls', dependencies=[Depends(auth)])
+async def start_call(device_id: str, body: OutboundCallRequest):
+    try:
+        call = await manager.start_outbound_call(
+            device_id,
+            body.target,
+            body.sdp,
+        )
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True, 'call_id': call.id}
+
+
 @app.get('/v1/calls/{call_id}', dependencies=[Depends(auth)])
 async def get_call(call_id: str):
     try:
@@ -94,6 +110,7 @@ async def get_call(call_id: str):
         'offer_sdp': call.offer_sdp,
         'connected': call.connected,
         'held': call.held,
+        'direction': call.direction,
     }
 
 
