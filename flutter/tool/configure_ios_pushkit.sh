@@ -27,6 +27,21 @@ for mode in ('audio', 'voip', 'remote-notification'):
     if mode not in modes:
         modes.append(mode)
 plist['UIBackgroundModes'] = modes
+
+url_types = list(plist.get('CFBundleURLTypes', []))
+scheme_name = 'voicehost-softphone'
+has_scheme = any(
+    scheme_name in item.get('CFBundleURLSchemes', [])
+    for item in url_types
+    if isinstance(item, dict)
+)
+if not has_scheme:
+    url_types.append({
+        'CFBundleURLName': 'io.voicehost.softphone',
+        'CFBundleURLSchemes': [scheme_name],
+    })
+plist['CFBundleURLTypes'] = url_types
+
 with plist_path.open('wb') as fh:
     plistlib.dump(plist, fh, sort_keys=False)
 PY
