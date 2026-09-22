@@ -225,7 +225,7 @@ class MobileSessionManager:
     def _refer_status(content) -> int | None:
         if not content:
             return None
-        match = re.search(r'SIP/2\\.0\\s+(\\d{3})', str(content))
+        match = re.search(r'SIP/2\.0\s+(\d{3})', str(content))
         return int(match.group(1)) if match else None
 
     @staticmethod
