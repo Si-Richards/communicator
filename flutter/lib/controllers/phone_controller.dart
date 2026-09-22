@@ -11,6 +11,7 @@ import '../repositories/call_history_repository.dart';
 import '../repositories/settings_repository.dart';
 import '../services/janus_client.dart';
 import '../services/janus_sip_service.dart';
+import '../services/ringback_service.dart';
 import '../services/webrtc_service.dart';
 
 class PhoneController extends ChangeNotifier {
@@ -37,6 +38,7 @@ class PhoneController extends ChangeNotifier {
   final SettingsRepository _settingsRepository;
   final CallHistoryRepository _historyRepository;
   final WebRtcService _webRtc;
+  final RingbackService _ringback = RingbackService();
 
   JanusClient? _janus;
   JanusSipService? _sip;
@@ -254,6 +256,7 @@ class PhoneController extends ChangeNotifier {
       await _finalizeActiveCall(_localEndResult());
     }
     _endedResetTimer?.cancel();
+    await _ringback.stop();
     await _webRtc.close();
     await _janus?.disconnect();
     _janus = null;
@@ -316,6 +319,7 @@ class PhoneController extends ChangeNotifier {
       _canSendTrickle = true;
       await _flushLocalCandidates();
     } catch (error) {
+      await _ringback.stop();
       await _finalizeActiveCall(CallResult.failed);
       await _webRtc.close();
       _showEnded(error.toString());
@@ -360,6 +364,7 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> hangup() async {
+    await _ringback.stop();
     try {
       await _sip?.hangup();
     } catch (_) {}
@@ -518,6 +523,9 @@ class PhoneController extends ChangeNotifier {
         notifyListeners();
         break;
       case 'ringing':
+        if (_activeCall?.direction == CallDirection.outgoing) {
+          unawaited(_ringback.start());
+        }
         callState = PhoneCallState(
           phase: CallPhase.ringing,
           number: _currentNumber,
@@ -527,7 +535,10 @@ class PhoneController extends ChangeNotifier {
       case 'progress':
         final progressSdp = jsep?['sdp']?.toString();
         if (progressSdp != null && progressSdp.isNotEmpty) {
+          await _ringback.stop();
           await _webRtc.applyRemoteAnswer(progressSdp);
+        } else if (_activeCall?.direction == CallDirection.outgoing) {
+          unawaited(_ringback.start());
         }
         callState = PhoneCallState(
           phase: CallPhase.earlyMedia,
@@ -536,6 +547,7 @@ class PhoneController extends ChangeNotifier {
         notifyListeners();
         break;
       case 'accepted':
+        await _ringback.stop();
         final acceptedSdp = jsep?['sdp']?.toString();
         if (acceptedSdp != null && acceptedSdp.isNotEmpty) {
           await _webRtc.applyRemoteAnswer(acceptedSdp);
@@ -557,6 +569,7 @@ class PhoneController extends ChangeNotifier {
         await _recordStandaloneMissedCall(result ?? const {});
         break;
       case 'hangup':
+        await _ringback.stop();
         final reason = result?['reason']?.toString();
         await _finalizeActiveCall(_remoteEndResult());
         await _webRtc.close();
@@ -704,6 +717,7 @@ class PhoneController extends ChangeNotifier {
 
   Future<void> _resetCall() async {
     _endedResetTimer?.cancel();
+    await _ringback.stop();
     await _webRtc.close();
     _incomingOfferSdp = null;
     _currentNumber = '';
@@ -716,6 +730,7 @@ class PhoneController extends ChangeNotifier {
   }
 
   void _showEnded(String reason) {
+    unawaited(_ringback.stop());
     _incomingOfferSdp = null;
     _currentNumber = '';
     _pendingLocalCandidates.clear();
@@ -811,6 +826,7 @@ class PhoneController extends ChangeNotifier {
   void dispose() {
     _endedResetTimer?.cancel();
     _directDisconnectTimer?.cancel();
+    unawaited(_ringback.stop());
     unawaited(_webRtc.close());
     unawaited(_janus?.disconnect());
     super.dispose();
