@@ -14,6 +14,22 @@ import 'mobile_gateway_service.dart';
 import 'ringback_service.dart';
 import 'webrtc_service.dart';
 
+class GatewayCallSummary {
+  const GatewayCallSummary({
+    required this.id,
+    required this.displayName,
+    required this.number,
+    required this.connected,
+    required this.held,
+  });
+
+  final String id;
+  final String displayName;
+  final String? number;
+  final bool connected;
+  final bool held;
+}
+
 class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   MobileCallCoordinator(this.phone)
       : gateway = MobileGatewayService(
@@ -24,14 +40,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final PhoneController phone;
   final MobileGatewayService gateway;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
-  final WebRtcService _webRtc = WebRtcService();
   final WebRtcService _transferWebRtc = WebRtcService();
   final RingbackService _ringback = RingbackService();
+  final Map<String, _GatewayCallContext> _gatewayCalls = {};
 
   StreamSubscription<CallEvent?>? _callKitSubscription;
-  StreamSubscription<dynamic>? _gatewayEventSubscription;
   StreamSubscription<dynamic>? _transferEventSubscription;
-  WebSocket? _gatewaySocket;
   WebSocket? _transferSocket;
   String? _activeGatewayCallId;
   String? _deviceId;
@@ -39,15 +53,6 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _lastProvisionSignature;
   bool _provisioning = false;
   bool _gatewayProvisioned = false;
-  String? _activeGatewayCaller;
-  String? _activeGatewayDisplayName;
-  bool _gatewayConnected = false;
-  bool _gatewayMediaConnected = false;
-  DateTime? _gatewayConnectedAt;
-  int _localCandidateCount = 0;
-  int _remoteCandidateCount = 0;
-  bool _gatewayMuted = false;
-  bool _gatewaySpeakerphoneOn = false;
   bool _recoveringCallKitState = false;
   String? _transferId;
   String? _transferTarget;
@@ -57,26 +62,62 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _transferWatchdog;
   final List<Map<String, dynamic>> _pendingTransferCandidates = [];
 
-  bool get hasActiveGatewayCall => _activeGatewayCallId != null;
+  _GatewayCallContext? get _activeGatewayCall {
+    final id = _activeGatewayCallId;
+    return id == null ? null : _gatewayCalls[id];
+  }
+
+  _GatewayCallContext? _contextFor(String callId) {
+    final direct = _gatewayCalls[callId];
+    if (direct != null) return direct;
+    final normalized = callId.toLowerCase();
+    for (final entry in _gatewayCalls.entries) {
+      if (entry.key.toLowerCase() == normalized) return entry.value;
+    }
+    return null;
+  }
+
+  bool get hasActiveGatewayCall => _activeGatewayCall != null;
+  int get gatewayCallCount => _gatewayCalls.length;
   bool get gatewayProvisioned => _gatewayProvisioned;
-  bool get gatewayCallConnected => _gatewayConnected;
-  bool get gatewayMediaConnected => _gatewayMediaConnected;
-  DateTime? get gatewayConnectedAt => _gatewayConnectedAt;
-  bool get gatewayMuted => _gatewayMuted;
-  bool get gatewaySpeakerphoneOn => _gatewaySpeakerphoneOn;
+  bool get gatewayCallConnected => _activeGatewayCall?.connected ?? false;
+  bool get gatewayMediaConnected => _activeGatewayCall?.mediaConnected ?? false;
+  bool get gatewayHeld => _activeGatewayCall?.held ?? false;
+  DateTime? get gatewayConnectedAt => _activeGatewayCall?.connectedAt;
+  bool get gatewayMuted => _activeGatewayCall?.muted ?? false;
+  bool get gatewaySpeakerphoneOn => _activeGatewayCall?.speakerphoneOn ?? false;
   bool get hasActiveTransfer => _transferId != null || _transferBusy;
   bool get attendedTransferActive => _transferId != null;
   bool get attendedTransferConnected => _transferConnected;
   String get transferStatus => _transferStatus;
   String? get transferTarget => _transferTarget;
+
   String get gatewayCallerDisplay {
-    final display = _activeGatewayDisplayName?.trim() ?? '';
+    final active = _activeGatewayCall;
+    final display = active?.displayName?.trim() ?? '';
     if (display.isNotEmpty) return display;
-    final caller = _activeGatewayCaller?.trim() ?? '';
+    final caller = active?.caller?.trim() ?? '';
     return caller.isNotEmpty ? caller : 'Unknown';
   }
 
-  String? get gatewayCallerNumber => _activeGatewayCaller;
+  String? get gatewayCallerNumber => _activeGatewayCall?.caller;
+
+  List<GatewayCallSummary> get otherGatewayCalls => _gatewayCalls.values
+      .where((call) => call.id != _activeGatewayCallId)
+      .map(
+        (call) => GatewayCallSummary(
+          id: call.id,
+          displayName: call.displayName?.trim().isNotEmpty == true
+              ? call.displayName!.trim()
+              : (call.caller?.trim().isNotEmpty == true
+                  ? call.caller!.trim()
+                  : 'Unknown'),
+          number: call.caller,
+          connected: call.connected,
+          held: call.held,
+        ),
+      )
+      .toList(growable: false);
 
   Future<void> initialize() async {
     if (!gateway.enabled || !Platform.isIOS) {
@@ -86,76 +127,6 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     WidgetsBinding.instance.addObserver(this);
     _deviceId = await _loadOrCreateDeviceId();
-    _webRtc.onLog = (message) => debugPrint('[VoiceHost Mobile] $message');
-    _webRtc.onLocalCandidate = (candidate) {
-      final callId = _activeGatewayCallId;
-      if (callId != null) {
-        _localCandidateCount++;
-        unawaited(gateway.candidate(callId, candidate));
-      }
-    };
-    _webRtc.onIceConnectionStateChanged = (state) {
-      final callId = _activeGatewayCallId;
-      if (callId == null) return;
-      final normalized = state.toLowerCase();
-      _gatewayMediaConnected =
-          normalized.endsWith('stateconnected') ||
-          normalized.endsWith('statecompleted');
-      notifyListeners();
-      unawaited(_diag(
-        'ice_state',
-        callId: callId,
-        details: {
-          'ice_state': state,
-          'local_candidates': _localCandidateCount,
-          'remote_candidates': _remoteCandidateCount,
-        },
-      ));
-    };
-    _webRtc.onConnectionStateChanged = (state) {
-      final callId = _activeGatewayCallId;
-      if (callId == null) return;
-      unawaited(_diag(
-        'peer_state',
-        callId: callId,
-        details: {'peer_state': state},
-      ));
-    };
-    _webRtc.onLocalAudioReady = (count) {
-      final callId = _activeGatewayCallId;
-      if (callId != null) {
-        unawaited(_diag(
-          'local_audio_ready',
-          callId: callId,
-          details: {'local_audio_tracks': count},
-        ));
-      }
-    };
-    _webRtc.onRemoteAudioReady = (count) {
-      final callId = _activeGatewayCallId;
-      if (callId != null) {
-        unawaited(_diag(
-          'remote_audio_ready',
-          callId: callId,
-          details: {'remote_audio_tracks': count},
-        ));
-      }
-    };
-    _webRtc.onIceGatheringComplete = () {
-      final callId = _activeGatewayCallId;
-      if (callId != null) {
-        unawaited(gateway.candidate(callId, {'completed': true}));
-        unawaited(_diag(
-          'ice_gathering_complete',
-          callId: callId,
-          details: {
-            'local_candidates': _localCandidateCount,
-            'remote_candidates': _remoteCandidateCount,
-          },
-        ));
-      }
-    };
-
     _transferWebRtc.onLog =
         (message) => debugPrint('[VoiceHost Transfer] $message');
     _transferWebRtc.onLocalCandidate = (candidate) {
