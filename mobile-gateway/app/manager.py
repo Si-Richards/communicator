@@ -237,6 +237,8 @@ class MobileSessionManager:
 
     async def blind_transfer(self, call_id: str, target: str):
         call = self.get_call(call_id)
+        if call.transfer_mode:
+            raise RuntimeError('A transfer is already in progress')
         session = self._session_for_call(call_id)
         uri = self._target_uri(session.device, target)
         call.transfer_mode = 'blind'
@@ -385,16 +387,18 @@ class MobileSessionManager:
         self,
         transfer_id: str,
         restore_original: bool = True,
+        publish_cancelled: bool = True,
     ):
         transfer = self.transfers.get(transfer_id)
         if not transfer or transfer.closing:
             return
         transfer.closing = True
         call = self.calls.get(transfer.original_call_id)
-        try:
-            await transfer.publish({'type': 'transfer', 'state': 'cancelled'})
-        except Exception:
-            pass
+        if publish_cancelled:
+            try:
+                await transfer.publish({'type': 'transfer', 'state': 'cancelled'})
+            except Exception:
+                pass
         try:
             await transfer.helper.hangup()
         except Exception:
@@ -408,10 +412,11 @@ class MobileSessionManager:
                 await self._session_for_call(call.id).unhold()
             except Exception:
                 pass
-            try:
-                await call.publish({'type': 'transfer', 'state': 'cancelled'})
-            except Exception:
-                pass
+            if publish_cancelled:
+                try:
+                    await call.publish({'type': 'transfer', 'state': 'cancelled'})
+                except Exception:
+                    pass
         self.transfers.pop(transfer_id, None)
         self.device_transfer.pop(transfer.device_id, None)
         if call:
@@ -475,7 +480,10 @@ class MobileSessionManager:
                 })
             except Exception:
                 pass
-            await self.cancel_attended_transfer(transfer.id)
+            await self.cancel_attended_transfer(
+                transfer.id,
+                publish_cancelled=False,
+            )
         else:
             call.transfer_mode = None
             call.transfer_target = None
