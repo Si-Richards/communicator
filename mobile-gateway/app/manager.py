@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from .apns import APNSClient
 from .janus import JanusSipSession
+from .config import settings
 from .models import DeviceRecord
 
 logger = logging.getLogger('uvicorn.error')
@@ -23,7 +24,10 @@ class CallRuntime:
     caller: str
     display_name: str | None
     offer_sdp: str
+    session: JanusSipSession | None = field(default=None, repr=False)
     sip_call_id: str | None = None
+    connected: bool = False
+    held: bool = False
     transfer_mode: str | None = None
     transfer_target: str | None = None
     subscribers: set[asyncio.Queue] = field(default_factory=set)
@@ -63,8 +67,10 @@ class MobileSessionManager:
         self.store = store
         self.apns = apns
         self.sessions: dict[str, JanusSipSession] = {}
+        self.helpers: dict[str, list[JanusSipSession]] = {}
         self.calls: dict[str, CallRuntime] = {}
-        self.device_call: dict[str, str] = {}
+        self.session_call: dict[int, str] = {}
+        self.device_calls: dict[str, set[str]] = {}
         self.transfers: dict[str, TransferRuntime] = {}
         self.device_transfer: dict[str, str] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -77,46 +83,144 @@ class MobileSessionManager:
         lock = self._locks.setdefault(device.device_id, asyncio.Lock())
         async with lock:
             existing = self.sessions.get(device.device_id)
-            if existing and self._same_sip_registration(existing.device, device):
-                reader = getattr(existing, '_reader_task', None)
-                if reader is not None and not reader.done():
-                    # Re-provisioning on app cold start/token refresh must not
-                    # destroy a Janus session that may own an incoming INVITE.
-                    existing.device = device
-                    logger.info(
-                        '[VH-DIAG] event=session_reused device=%s',
-                        _safe_ref(device.device_id),
-                    )
-                    return
+            if (
+                existing
+                and self._same_sip_registration(existing.device, device)
+                and self._session_alive(existing)
+            ):
+                existing.device = device
+                for helper in self.helpers.get(device.device_id, []):
+                    helper.device = device
+                await self._ensure_helpers(device, existing)
+                logger.info(
+                    '[VH-DIAG] event=session_reused device=%s helpers=%s',
+                    _safe_ref(device.device_id),
+                    len(self.helpers.get(device.device_id, [])),
+                )
+                return
 
-            existing = self.sessions.pop(device.device_id, None)
-            if existing:
-                await existing.stop()
+            await self._stop_device_sessions(device.device_id)
 
-            async def plugin(data, jsep):
-                await self._plugin_event(session.device, session, data, jsep)
-
-            async def trickle(candidate):
-                call = self._current_call(session.device.device_id)
-                if call:
-                    logger.info(
-                        '[VH-DIAG] event=janus_candidate call=%s completed=%s',
-                        _safe_ref(call.id),
-                        bool(candidate.get('completed')),
-                    )
-                    await call.publish({'type': 'trickle', 'candidate': candidate})
-
-            session = JanusSipSession(device, plugin, trickle)
-            self.sessions[device.device_id] = session
+            master = await self._create_session(device)
+            self.sessions[device.device_id] = master
             logger.info(
-                '[VH-DIAG] event=session_start device=%s',
+                '[VH-DIAG] event=session_start device=%s master_id=%s',
                 _safe_ref(device.device_id),
+                master.master_id,
             )
+            await self._ensure_helpers(device, master)
+
+    @staticmethod
+    def _session_alive(session: JanusSipSession) -> bool:
+        reader = getattr(session, '_reader_task', None)
+        return reader is not None and not reader.done()
+
+    async def _create_session(
+        self,
+        device: DeviceRecord,
+        helper_master_id: int | None = None,
+    ) -> JanusSipSession:
+        session: JanusSipSession | None = None
+
+        async def plugin(data, jsep):
+            assert session is not None
+            await self._plugin_event(session.device, session, data, jsep)
+
+        async def trickle(candidate):
+            assert session is not None
+            call = self._call_for_session(session)
+            if call:
+                logger.info(
+                    '[VH-DIAG] event=janus_candidate call=%s completed=%s',
+                    _safe_ref(call.id),
+                    bool(candidate.get('completed')),
+                )
+                await call.publish({'type': 'trickle', 'candidate': candidate})
+
+        session = JanusSipSession(
+            device,
+            plugin,
+            trickle,
+            helper_master_id=helper_master_id,
+        )
+        await session.start()
+        await session.wait_registered()
+        return session
+
+    async def _ensure_helpers(
+        self,
+        device: DeviceRecord,
+        master: JanusSipSession,
+    ):
+        if master.master_id is None:
+            await master.wait_registered()
+        if master.master_id is None:
+            raise RuntimeError('Janus SIP master session has no master_id')
+
+        helpers = [
+            helper
+            for helper in self.helpers.get(device.device_id, [])
+            if self._session_alive(helper)
+        ]
+        self.helpers[device.device_id] = helpers
+
+        wanted = max(0, settings.janus_helper_count)
+        while len(helpers) < wanted:
+            helper = await self._create_session(
+                device,
+                helper_master_id=master.master_id,
+            )
+            helpers.append(helper)
+            logger.info(
+                '[VH-DIAG] event=helper_ready device=%s helper=%s total=%s',
+                _safe_ref(device.device_id),
+                helper.handle_id,
+                len(helpers),
+            )
+
+    async def _stop_device_sessions(self, device_id: str):
+        for helper in self.helpers.pop(device_id, []):
             try:
-                await session.start()
+                await helper.stop()
             except Exception:
-                self.sessions.pop(device.device_id, None)
-                raise
+                pass
+            self.session_call.pop(id(helper), None)
+
+        master = self.sessions.pop(device_id, None)
+        if master:
+            try:
+                await master.stop()
+            except Exception:
+                pass
+            self.session_call.pop(id(master), None)
+
+        for call_id in list(self.device_calls.pop(device_id, set())):
+            call = self.calls.get(call_id)
+            if call:
+                call.session = None
+
+    def _call_for_session(self, session: JanusSipSession):
+        call_id = self.session_call.get(id(session))
+        return self.calls.get(call_id) if call_id else None
+
+    def _bind_call_session(
+        self,
+        call: CallRuntime,
+        session: JanusSipSession,
+    ):
+        call.session = session
+        self.session_call[id(session)] = call.id
+        self.device_calls.setdefault(call.device_id, set()).add(call.id)
+
+    def _release_call_session(self, call: CallRuntime):
+        session = call.session
+        if session:
+            self.session_call.pop(id(session), None)
+        calls = self.device_calls.get(call.device_id)
+        if calls:
+            calls.discard(call.id)
+            if not calls:
+                self.device_calls.pop(call.device_id, None)
 
     @staticmethod
     def _same_sip_registration(current: DeviceRecord, updated: DeviceRecord) -> bool:
@@ -132,7 +236,7 @@ class MobileSessionManager:
         event = result.get('event')
         plugin_error = data.get('error')
         if plugin_error:
-            call = self._current_call(device.device_id)
+            call = self._call_for_session(session)
             if call and call.transfer_mode:
                 logger.warning(
                     '[VH-DIAG] event=transfer_plugin_error call=%s',
@@ -162,16 +266,17 @@ class MobileSessionManager:
                 caller,
                 display,
                 offer,
+                session=session,
                 sip_call_id=data.get('call_id'),
             )
             self.calls[call_id] = call
+            self._bind_call_session(call, session)
             logger.info(
                 '[VH-DIAG] event=incoming_call call=%s device=%s offer_sdp=%s',
                 _safe_ref(call_id),
                 _safe_ref(device.device_id),
                 bool(offer),
             )
-            self.device_call[device.device_id] = call_id
             await self.apns.send_voip(device.push_token, {
                 'aps': {'content-available': 1},
                 'id': call_id,
@@ -182,7 +287,7 @@ class MobileSessionManager:
             })
             return
 
-        call = self._current_call(device.device_id)
+        call = self._call_for_session(session)
         if not call:
             return
 
@@ -243,6 +348,9 @@ class MobileSessionManager:
             return
 
         if event in {'ringing', 'progress', 'accepted'}:
+            if event == 'accepted':
+                call.connected = True
+                call.held = False
             logger.info(
                 '[VH-DIAG] event=janus_%s call=%s jsep=%s',
                 event,
@@ -250,18 +358,20 @@ class MobileSessionManager:
                 bool(jsep),
             )
             await call.publish({'type': event, 'jsep': jsep, 'result': result})
+        elif event == 'holding':
+            call.held = True
+            await call.publish({'type': 'hold', 'held': True})
+        elif event == 'resuming':
+            call.held = False
+            await call.publish({'type': 'hold', 'held': False})
         elif event == 'hangup':
             await call.publish({'type': 'hangup', 'reason': result.get('reason')})
-            self.device_call.pop(device.device_id, None)
+            self._release_call_session(call)
             transfer = self._current_transfer(device.device_id)
             if transfer and not transfer.closing:
                 asyncio.create_task(
                     self.cancel_attended_transfer(transfer.id, restore_original=False)
                 )
-
-    def _current_call(self, device_id):
-        call_id = self.device_call.get(device_id)
-        return self.calls.get(call_id) if call_id else None
 
     def _current_transfer(self, device_id: str):
         transfer_id = self.device_transfer.get(device_id)
@@ -561,10 +671,27 @@ class MobileSessionManager:
 
     def _session_for_call(self, call_id: str):
         call = self.get_call(call_id)
-        session = self.sessions.get(call.device_id)
-        if not session:
-            raise RuntimeError('Device Janus session is unavailable')
+        session = call.session
+        if not session or not self._session_alive(session):
+            raise RuntimeError('Call Janus session is unavailable')
         return session
+
+    async def set_hold(self, call_id: str, held: bool):
+        call = self.get_call(call_id)
+        session = self._session_for_call(call_id)
+        if call.held == held:
+            return
+        if held:
+            await session.hold()
+        else:
+            await session.unhold()
+        call.held = held
+        logger.info(
+            '[VH-DIAG] event=call_hold call=%s held=%s',
+            _safe_ref(call_id),
+            held,
+        )
+        await call.publish({'type': 'hold', 'held': held})
 
     async def answer(self, call_id: str, sdp: str):
         logger.info(
