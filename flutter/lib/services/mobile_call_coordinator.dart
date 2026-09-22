@@ -21,6 +21,7 @@ class GatewayCallSummary {
     required this.number,
     required this.connected,
     required this.held,
+    required this.phase,
   });
 
   final String id;
@@ -28,6 +29,7 @@ class GatewayCallSummary {
   final String? number;
   final bool connected;
   final bool held;
+  final String phase;
 }
 
 class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
@@ -115,6 +117,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           number: call.caller,
           connected: call.connected,
           held: call.held,
+          phase: call.phase,
         ),
       )
       .toList(growable: false);
@@ -257,6 +260,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _phoneChanged();
       return;
     }
+    if (event is CallEventActionCallIncoming) {
+      unawaited(_trackIncomingCall(event.callKitParams.id));
+      return;
+    }
     if (event is CallEventActionCallAccept) {
       unawaited(_diag('callkit_accept', callId: event.callKitParams.id));
       await _accept(event.callKitParams.id);
@@ -350,6 +357,23 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         },
       ));
     };
+  }
+
+  Future<void> _trackIncomingCall(String requestedCallId) async {
+    if (_contextFor(requestedCallId) != null) return;
+    try {
+      final call = await gateway.getCall(requestedCallId);
+      final context = _GatewayCallContext(call.id)
+        ..caller = call.caller
+        ..displayName = call.displayName
+        ..phase = 'ringing';
+      _configureGatewayCall(context);
+      _gatewayCalls[context.id] = context;
+      await _listenToGateway(context);
+      notifyListeners();
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] incoming call tracking failed: $error');
+    }
   }
 
   Future<void> _accept(String requestedCallId) async {
