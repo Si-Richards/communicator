@@ -370,8 +370,53 @@ class _CallControls extends StatelessWidget {
                 ),
                 label: const Text('Speaker'),
               ),
+              FilterChip(
+                selected: mobileCalls.hasActiveTransfer,
+                onSelected: mobileCalls.hasActiveTransfer
+                    ? null
+                    : (_) async {
+                        final request = await _showTransferSheet(context);
+                        if (request == null) return;
+                        if (request.attended) {
+                          await mobileCalls.startAttendedTransfer(request.target);
+                        } else {
+                          await mobileCalls.blindTransferActiveCall(request.target);
+                        }
+                      },
+                avatar: const Icon(Icons.swap_horiz),
+                label: const Text('Transfer'),
+              ),
             ],
           ),
+          if (mobileCalls.hasActiveTransfer || mobileCalls.transferStatus.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Text(
+              mobileCalls.transferStatus,
+              style: Theme.of(context).textTheme.titleSmall,
+              textAlign: TextAlign.center,
+            ),
+            if (mobileCalls.attendedTransferActive) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                alignment: WrapAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: mobileCalls.attendedTransferConnected
+                        ? () => mobileCalls.completeAttendedTransfer()
+                        : null,
+                    icon: const Icon(Icons.call_merge),
+                    label: const Text('Complete transfer'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => mobileCalls.cancelAttendedTransfer(),
+                    icon: const Icon(Icons.close),
+                    label: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            ],
+          ],
           const SizedBox(height: 22),
           _RoundAction(
             icon: Icons.call_end,
@@ -472,6 +517,112 @@ class _CallControls extends StatelessWidget {
       onTap: controller.canRegister && controller.dialledNumber.trim().isNotEmpty
           ? () => controller.placeCall()
           : null,
+    );
+  }
+}
+
+
+class _TransferRequest {
+  const _TransferRequest({required this.target, required this.attended});
+
+  final String target;
+  final bool attended;
+}
+
+Future<_TransferRequest?> _showTransferSheet(BuildContext context) {
+  return showModalBottomSheet<_TransferRequest>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => const _TransferSheet(),
+  );
+}
+
+class _TransferSheet extends StatefulWidget {
+  const _TransferSheet();
+
+  @override
+  State<_TransferSheet> createState() => _TransferSheetState();
+}
+
+class _TransferSheetState extends State<_TransferSheet> {
+  String _target = '';
+  bool _attended = false;
+
+  static const _keys = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['*', '0', '#'],
+  ];
+
+  void _digit(String value) => setState(() => _target += value);
+
+  void _backspace() {
+    if (_target.isEmpty) return;
+    setState(() => _target = _target.substring(0, _target.length - 1));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 6, 24, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Transfer call', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.forward),
+                  label: Text('Blind'),
+                ),
+                ButtonSegment(
+                  value: true,
+                  icon: Icon(Icons.phone_in_talk),
+                  label: Text('Attended'),
+                ),
+              ],
+              selected: {_attended},
+              onSelectionChanged: (values) {
+                setState(() => _attended = values.first);
+              },
+            ),
+            const SizedBox(height: 18),
+            Text(
+              _target.isEmpty ? 'Enter destination' : _target,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 8),
+            _DialPad(
+              keys: _keys,
+              onDigit: _digit,
+              onBackspace: _backspace,
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _target.isEmpty
+                    ? null
+                    : () => Navigator.of(context).pop(
+                          _TransferRequest(
+                            target: _target,
+                            attended: _attended,
+                          ),
+                        ),
+                icon: Icon(_attended ? Icons.phone_in_talk : Icons.forward),
+                label: Text(
+                  _attended ? 'Consult then transfer' : 'Transfer now',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
