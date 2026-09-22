@@ -533,7 +533,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
               _transferBusy = false;
             } else if (state == 'failed') {
               _transferWatchdog?.cancel();
-              _transferStatus = 'Transfer failed';
+              final status = event['status']?.toString();
+              _transferStatus = status == null || status.isEmpty
+                  ? 'Transfer failed'
+                  : 'Transfer failed ($status)';
               _transferBusy = false;
               _transferTarget = null;
             } else if (state == 'cancelled') {
@@ -871,7 +874,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
               _transferBusy = false;
               unawaited(_closeTransferMedia(keepStatus: true));
             } else if (state == 'failed') {
-              _transferStatus = 'Transfer failed';
+              final status = event['status']?.toString();
+              _transferStatus = status == null || status.isEmpty
+                  ? 'Transfer failed'
+                  : 'Transfer failed ($status)';
               _transferBusy = false;
               unawaited(_closeTransferMedia(keepStatus: true));
             } else if (state == 'cancelled') {
