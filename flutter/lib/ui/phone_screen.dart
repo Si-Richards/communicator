@@ -408,9 +408,11 @@ class _CallControls extends StatelessWidget {
                   subtitle: Text(
                     other.held
                         ? 'On hold'
-                        : other.connected
-                            ? 'Connected'
-                            : 'Connecting…',
+                        : other.phase == 'ringing'
+                            ? 'Incoming call'
+                            : other.connected
+                                ? 'Connected'
+                                : 'Connecting…',
                   ),
                   trailing: FilledButton(
                     onPressed: other.connected
