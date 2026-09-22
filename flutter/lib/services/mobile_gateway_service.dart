@@ -9,6 +9,7 @@ class GatewayCall {
     this.displayName,
     this.connected = false,
     this.held = false,
+    this.direction = 'incoming',
   });
 
   final String id;
@@ -17,6 +18,7 @@ class GatewayCall {
   final String offerSdp;
   final bool connected;
   final bool held;
+  final String direction;
 
   factory GatewayCall.fromJson(Map<String, dynamic> json) => GatewayCall(
         id: json['id']?.toString() ?? '',
@@ -25,6 +27,7 @@ class GatewayCall {
         offerSdp: json['offer_sdp']?.toString() ?? '',
         connected: json['connected'] == true,
         held: json['held'] == true,
+        direction: json['direction']?.toString() ?? 'incoming',
       );
 }
 
@@ -61,6 +64,19 @@ class MobileGatewayService {
         'dnd': doNotDisturb,
       },
     );
+  }
+
+  Future<String> startCall({
+    required String deviceId,
+    required String target,
+    required String offerSdp,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/v1/devices/$deviceId/calls',
+      body: {'target': target, 'sdp': offerSdp},
+    );
+    return json['call_id']?.toString() ?? '';
   }
 
   Future<GatewayCall> getCall(String callId) async {
