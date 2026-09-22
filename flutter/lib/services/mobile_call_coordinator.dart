@@ -434,7 +434,38 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         if (decoded is! Map) return;
         final event = Map<String, dynamic>.from(decoded);
         switch (event['type']?.toString()) {
+          case 'calling':
+            context.phase = 'calling';
+            if (context.outgoing) unawaited(_ringback.start());
+            notifyListeners();
+            break;
+          case 'ringing':
+            context.phase = 'ringing';
+            if (context.outgoing) unawaited(_ringback.start());
+            notifyListeners();
+            break;
+          case 'progress':
+            context.phase = 'connecting';
+            final progressJsep = event['jsep'];
+            if (context.outgoing && progressJsep is Map) {
+              final sdp = progressJsep['sdp']?.toString();
+              if (sdp != null && sdp.isNotEmpty) {
+                unawaited(_ringback.stop());
+                unawaited(context.webRtc.applyRemoteAnswer(sdp));
+              }
+            }
+            notifyListeners();
+            break;
           case 'accepted':
+            final acceptedJsep = event['jsep'];
+            if (context.outgoing && acceptedJsep is Map) {
+              final sdp = acceptedJsep['sdp']?.toString();
+              if (sdp != null && sdp.isNotEmpty) {
+                unawaited(context.webRtc.applyRemoteAnswer(sdp));
+              }
+            }
+            if (context.outgoing) unawaited(_ringback.stop());
+            context.phase = 'connected';
             context.connected = true;
             context.held = false;
             context.connectedAt ??= DateTime.now();
@@ -447,6 +478,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             break;
           case 'hold':
             context.held = event['held'] == true;
+            context.phase = context.held ? 'held' : 'connected';
             unawaited(
               context.webRtc.setMuted(context.held || context.muted),
             );
@@ -484,6 +516,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             notifyListeners();
             break;
           case 'hangup':
+            if (context.outgoing) unawaited(_ringback.stop());
             unawaited(FlutterCallkitIncoming.endCall(context.id));
             if (context.id == _activeGatewayCallId) {
               unawaited(_closeTransferMedia());
@@ -525,6 +558,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         await gateway.resume(context.id);
       }
       context.held = held;
+      context.phase = held ? 'held' : 'connected';
       await context.webRtc.setMuted(held || context.muted);
 
       if (syncCallKit) {
@@ -562,6 +596,75 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _setGatewayHold(target.id, false);
     } else {
       notifyListeners();
+    }
+  }
+
+  Future<void> placeCall(String number) async {
+    final target = number.trim();
+    if (target.isEmpty) return;
+
+    final deviceId = _deviceId;
+    if (!_gatewayProvisioned || deviceId == null) {
+      await phone.placeCall(target);
+      return;
+    }
+
+    if (_gatewayCalls.length >= 3) {
+      debugPrint('[VoiceHost Mobile] no free mobile call slot');
+      return;
+    }
+
+    final previous = _activeGatewayCall;
+    if (previous != null && previous.connected && !previous.held) {
+      await _setGatewayHold(previous.id, true);
+    }
+
+    final webRtc = WebRtcService();
+    final pendingCandidates = <Map<String, dynamic>>[];
+    webRtc.onLog =
+        (message) => debugPrint('[VoiceHost Mobile] outbound media: $message');
+    webRtc.onLocalCandidate = pendingCandidates.add;
+    webRtc.onIceGatheringComplete = () {
+      pendingCandidates.add({'completed': true});
+    };
+
+    try {
+      await webRtc.preparePeerConnection();
+      final offer = await webRtc.createOffer();
+      final callId = await gateway.startCall(
+        deviceId: deviceId,
+        target: target,
+        offerSdp: offer,
+      );
+      if (callId.isEmpty) {
+        throw StateError('Gateway did not return a call id');
+      }
+
+      final context = _GatewayCallContext(callId, webRtc: webRtc)
+        ..caller = target
+        ..displayName = target
+        ..outgoing = true
+        ..phase = 'calling';
+      _gatewayCalls[callId] = context;
+      _activeGatewayCallId = callId;
+      _configureGatewayCall(context);
+      await _listenToGateway(context);
+
+      for (final candidate in pendingCandidates) {
+        await gateway.candidate(callId, candidate);
+      }
+      pendingCandidates.clear();
+
+      unawaited(_ringback.start());
+      await _diag('outbound_call_started', callId: callId);
+      notifyListeners();
+    } catch (error) {
+      await _ringback.stop();
+      await webRtc.close();
+      debugPrint('[VoiceHost Mobile] outgoing call failed: $error');
+      if (previous != null && previous.held) {
+        await _setGatewayHold(previous.id, false);
+      }
     }
   }
 
@@ -931,10 +1034,13 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
 
 class _GatewayCallContext {
-  _GatewayCallContext(this.id);
+  _GatewayCallContext(this.id, {WebRtcService? webRtc})
+      : webRtc = webRtc ?? WebRtcService();
 
   final String id;
-  final WebRtcService webRtc = WebRtcService();
+  final WebRtcService webRtc;
+  bool outgoing = false;
+  String phase = 'connecting';
   StreamSubscription<dynamic>? subscription;
   WebSocket? socket;
   String? caller;
