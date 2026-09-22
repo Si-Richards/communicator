@@ -120,6 +120,8 @@ async def answer(call_id: str, body: AnswerRequest):
         await manager.answer(call_id, body.sdp)
     except KeyError:
         raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
     return {'ok': True}
 
 
@@ -129,6 +131,8 @@ async def decline(call_id: str):
         await manager.decline(call_id)
     except KeyError:
         raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
     return {'ok': True}
 
 
@@ -138,6 +142,8 @@ async def hangup(call_id: str):
         await manager.hangup(call_id)
     except KeyError:
         raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
     return {'ok': True}
 
 
@@ -169,6 +175,8 @@ async def candidate(call_id: str, body: CandidateRequest):
         await manager.candidate(call_id, body.model_dump(exclude_none=True))
     except KeyError:
         raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
     return {'ok': True}
 
 
