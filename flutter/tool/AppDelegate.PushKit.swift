@@ -18,6 +18,22 @@ import flutter_callkit_incoming
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
 
+        // CallKit owns AVAudioSession activation for incoming VoIP calls.
+        // Keep WebRTC audio manual until CallKit activates the session.
+        let rtcAudioSession = RTCAudioSession.sharedInstance()
+        rtcAudioSession.useManualAudio = true
+        rtcAudioSession.isAudioEnabled = false
+
+        let registry = PKPushRegistry(queue: .main)
+        registry.delegate = self
+        registry.desiredPushTypes = [.voIP]
+        voipRegistry = registry
+
+        let launched = super.application(
+            application,
+            didFinishLaunchingWithOptions: launchOptions
+        )
+
         if let controller = window?.rootViewController as? FlutterViewController {
             let channel = FlutterMethodChannel(
                 name: "voicehost/audio",
@@ -36,20 +52,12 @@ import flutter_callkit_incoming
                 }
             }
             audioChannel = channel
+            print("[VoiceHost Audio] native audio channel ready")
+        } else {
+            print("[VoiceHost Audio] native audio channel unavailable")
         }
 
-        // CallKit owns AVAudioSession activation for incoming VoIP calls.
-        // Keep WebRTC audio manual until CallKit activates the session.
-        let rtcAudioSession = RTCAudioSession.sharedInstance()
-        rtcAudioSession.useManualAudio = true
-        rtcAudioSession.isAudioEnabled = false
-
-        let registry = PKPushRegistry(queue: .main)
-        registry.delegate = self
-        registry.desiredPushTypes = [.voIP]
-        voipRegistry = registry
-
-        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+        return launched
     }
 
     func pushRegistry(
