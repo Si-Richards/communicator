@@ -1197,6 +1197,7 @@ class PhoneController extends ChangeNotifier {
     if (clean.startsWith('sip:') || clean.startsWith('sips:')) return clean;
     return 'sip:${_transferUser(clean)}@$sipRealm';
   }
+
   static int? _sipStatus(String? content) {
     if (content == null || content.isEmpty) return null;
     final match = RegExp(r'SIP/2\.0\s+(\d{3})').firstMatch(content);
