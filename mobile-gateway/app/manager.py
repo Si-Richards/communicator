@@ -26,6 +26,7 @@ class CallRuntime:
     offer_sdp: str
     session: JanusSipSession | None = field(default=None, repr=False)
     sip_call_id: str | None = None
+    direction: str = 'incoming'
     connected: bool = False
     held: bool = False
     transfer_mode: str | None = None
@@ -390,6 +391,61 @@ class MobileSessionManager:
         if value.startswith('sip:') or value.startswith('sips:'):
             return value
         return f'sip:{value}@{device.sip_realm}'
+
+    def _idle_session(self, device_id: str):
+        candidates = []
+        master = self.sessions.get(device_id)
+        if master:
+            candidates.append(master)
+        candidates.extend(self.helpers.get(device_id, []))
+        for session in candidates:
+            if self._session_alive(session) and id(session) not in self.session_call:
+                return session
+        return None
+
+    async def start_outbound_call(
+        self,
+        device_id: str,
+        target: str,
+        offer_sdp: str,
+    ) -> CallRuntime:
+        device = self.store.get(device_id)
+        if device_id not in self.sessions:
+            await self.ensure_session(device)
+
+        session = self._idle_session(device_id)
+        if session is None:
+            raise RuntimeError('No free SIP call slot is available')
+
+        call_id = str(uuid.uuid4())
+        call = CallRuntime(
+            id=call_id,
+            device_id=device_id,
+            caller=target.strip(),
+            display_name=None,
+            offer_sdp='',
+            session=session,
+            direction='outgoing',
+        )
+        self.calls[call_id] = call
+        self._bind_call_session(call, session)
+
+        try:
+            await session.call(
+                self._target_uri(device, target),
+                offer_sdp,
+            )
+        except Exception:
+            self._release_call_session(call)
+            self.calls.pop(call_id, None)
+            raise
+
+        logger.info(
+            '[VH-DIAG] event=outbound_call_started call=%s device=%s',
+            _safe_ref(call_id),
+            _safe_ref(device_id),
+        )
+        return call
 
     async def blind_transfer(self, call_id: str, target: str):
         call = self.get_call(call_id)
