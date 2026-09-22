@@ -18,6 +18,11 @@ class AnswerRequest(BaseModel):
     sdp: str = Field(min_length=1)
 
 
+class OutboundCallRequest(BaseModel):
+    target: str = Field(min_length=1, max_length=200)
+    sdp: str = Field(min_length=1)
+
+
 class CandidateRequest(BaseModel):
     candidate: str | None = None
     sdpMid: str | None = None
