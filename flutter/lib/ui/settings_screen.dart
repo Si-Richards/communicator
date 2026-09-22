@@ -185,6 +185,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 label: const Text('Save Settings'),
               ),
               const SizedBox(height: 10),
+              Text(
+                'Incoming calls are handled by the VoiceHost mobile gateway. '
+                'A direct handset SIP registration is created automatically '
+                'only when placing an outgoing call.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 10),
               if (model.isRegistered)
                 OutlinedButton.icon(
                   onPressed: () => model.disconnect(),
@@ -195,11 +203,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 FilledButton.tonalIcon(
                   onPressed: _saving ? null : () => _saveAndRegister(),
                   icon: const Icon(Icons.login),
-                  label: const Text('Save, Connect & Register'),
+                  label: const Text('Test Direct Registration'),
                 ),
               const SizedBox(height: 12),
               Text(
-                'Status: ${model.registrationStatus}',
+                'Direct SIP: ${model.registrationStatus}',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
