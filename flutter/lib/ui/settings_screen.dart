@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
+import 'about_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.controller});
@@ -175,6 +176,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       labelText: 'Voicemail number / feature code',
                       hintText: 'e.g. platform-specific code',
                     ),
+                  ),
+                ],
+              ),
+              _SectionCard(
+                title: 'Application',
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.info_outline),
+                    title: const Text('About VoiceHost'),
+                    subtitle: const Text('Version, app information and licences'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const AboutScreen(),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
