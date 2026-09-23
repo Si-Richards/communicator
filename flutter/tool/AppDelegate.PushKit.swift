@@ -41,101 +41,157 @@ import flutter_callkit_incoming
             didFinishLaunchingWithOptions: launchOptions
         )
 
-        if let controller = window?.rootViewController as? FlutterViewController {
-            let channel = FlutterMethodChannel(
-                name: "voicehost/audio",
-                binaryMessenger: controller.binaryMessenger
-            )
-            channel.setMethodCallHandler { [weak self] call, result in
-                switch call.method {
-                case "startRingback":
-                    self?.startRingback()
-                    result(nil)
-                case "stopRingback":
-                    self?.stopRingback()
-                    result(nil)
-                default:
-                    result(FlutterMethodNotImplemented)
-                }
-            }
-            audioChannel = channel
-
-            let callKitChannel = FlutterMethodChannel(
-                name: "voicehost/callkit",
-                binaryMessenger: controller.binaryMessenger
-            )
-            callKitChannel.setMethodCallHandler { [weak self] call, result in
-                guard let self else {
-                    result([])
-                    return
-                }
-                switch call.method {
-                case "drainPendingActions":
-                    result(self.drainPendingCallKitActions())
-                default:
-                    result(FlutterMethodNotImplemented)
-                }
-            }
-            self.callKitChannel = callKitChannel
-
-            let contactsChannel = FlutterMethodChannel(
-                name: "voicehost/contacts",
-                binaryMessenger: controller.binaryMessenger
-            )
-            contactsChannel.setMethodCallHandler { [weak self] call, result in
-                guard let self else {
-                    result(
-                        FlutterError(
-                            code: "CONTACTS_UNAVAILABLE",
-                            message: "Contacts service unavailable",
-                            details: nil
-                        )
-                    )
-                    return
-                }
-                switch call.method {
-                case "getContacts":
-                    self.loadContacts(result: result)
-                case "openSettings":
-                    self.openAppSettings(result: result)
-                default:
-                    result(FlutterMethodNotImplemented)
-                }
-            }
-            self.contactsChannel = contactsChannel
-
-            let appChannel = FlutterMethodChannel(
-                name: "voicehost/app",
-                binaryMessenger: controller.binaryMessenger
-            )
-            appChannel.setMethodCallHandler { [weak self] call, result in
-                guard let self else {
-                    result(FlutterMethodNotImplemented)
-                    return
-                }
-                switch call.method {
-                case "getBuildInfo":
-                    result(self.buildInfo())
-                case "getNativeLogs":
-                    result(self.nativeLogs())
-                case "clearNativeLogs":
-                    self.clearNativeLogs()
-                    result(nil)
-                default:
-                    result(FlutterMethodNotImplemented)
-                }
-            }
-            self.appChannel = appChannel
-
-            self.recordNativeLog("Application bridge ready")
-            print("[VoiceHost Audio] native audio channel ready")
-            print("[VoiceHost CallKit] native recovery channel ready")
-            print("[VoiceHost Contacts] native contacts channel ready")
-        } else {
-            print("[VoiceHost Audio] native audio channel unavailable")
-        }
+        registerVoiceHostChannels(retry: 0)
 
         return launched
+    }
+
+    private func flutterViewController(
+        from controller: UIViewController?
+    ) -> FlutterViewController? {
+        guard let controller else { return nil }
+        if let flutter = controller as? FlutterViewController {
+            return flutter
+        }
+        if let navigation = controller as? UINavigationController {
+            for child in navigation.viewControllers {
+                if let flutter = flutterViewController(from: child) {
+                    return flutter
+                }
+            }
+        }
+        if let tab = controller as? UITabBarController {
+            for child in tab.viewControllers ?? [] {
+                if let flutter = flutterViewController(from: child) {
+                    return flutter
+                }
+            }
+        }
+        for child in controller.children {
+            if let flutter = flutterViewController(from: child) {
+                return flutter
+            }
+        }
+        if let presented = controller.presentedViewController {
+            return flutterViewController(from: presented)
+        }
+        return nil
+    }
+
+    private func registerVoiceHostChannels(retry: Int) {
+        if audioChannel != nil &&
+            callKitChannel != nil &&
+            contactsChannel != nil &&
+            appChannel != nil {
+            return
+        }
+
+        guard let controller = flutterViewController(
+            from: window?.rootViewController
+        ) else {
+            if retry < 20 {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.15
+                ) { [weak self] in
+                    self?.registerVoiceHostChannels(retry: retry + 1)
+                }
+            } else {
+                recordNativeLog("Native channels unavailable after startup retries")
+            }
+            return
+        }
+
+        let messenger = controller.binaryMessenger
+
+        let audio = FlutterMethodChannel(
+            name: "voicehost/audio",
+            binaryMessenger: messenger
+        )
+        audio.setMethodCallHandler { [weak self] call, result in
+            switch call.method {
+            case "startRingback":
+                self?.startRingback()
+                result(nil)
+            case "stopRingback":
+                self?.stopRingback()
+                result(nil)
+            default:
+                result(FlutterMethodNotImplemented)
+            }
+        }
+        audioChannel = audio
+
+        let callKit = FlutterMethodChannel(
+            name: "voicehost/callkit",
+            binaryMessenger: messenger
+        )
+        callKit.setMethodCallHandler { [weak self] call, result in
+            guard let self else {
+                result([])
+                return
+            }
+            switch call.method {
+            case "drainPendingActions":
+                result(self.drainPendingCallKitActions())
+            default:
+                result(FlutterMethodNotImplemented)
+            }
+        }
+        callKitChannel = callKit
+
+        let contacts = FlutterMethodChannel(
+            name: "voicehost/contacts",
+            binaryMessenger: messenger
+        )
+        contacts.setMethodCallHandler { [weak self] call, result in
+            guard let self else {
+                result(
+                    FlutterError(
+                        code: "CONTACTS_UNAVAILABLE",
+                        message: "Contacts service unavailable",
+                        details: nil
+                    )
+                )
+                return
+            }
+            switch call.method {
+            case "getContacts":
+                self.loadContacts(result: result)
+            case "openSettings":
+                self.openAppSettings(result: result)
+            default:
+                result(FlutterMethodNotImplemented)
+            }
+        }
+        contactsChannel = contacts
+
+        let app = FlutterMethodChannel(
+            name: "voicehost/app",
+            binaryMessenger: messenger
+        )
+        app.setMethodCallHandler { [weak self] call, result in
+            guard let self else {
+                result(FlutterMethodNotImplemented)
+                return
+            }
+            switch call.method {
+            case "getBuildInfo":
+                result(self.buildInfo())
+            case "getNativeLogs":
+                result(self.nativeLogs())
+            case "clearNativeLogs":
+                self.clearNativeLogs()
+                result(nil)
+            default:
+                result(FlutterMethodNotImplemented)
+            }
+        }
+        appChannel = app
+
+        recordNativeLog("Application bridge ready")
+        recordNativeLog("Native audio channel ready")
+        recordNativeLog("Native CallKit recovery channel ready")
+        recordNativeLog("Native contacts channel ready")
     }
 
     func pushRegistry(
