@@ -80,7 +80,11 @@ class _MainShellState extends State<MainShell> {
     final controller = widget.controller;
     final screens = [
       PhoneScreen(controller: controller, mobileCalls: widget.mobileCalls),
-      CallHistoryScreen(controller: controller, onGoToPhone: _goToPhone),
+      CallHistoryScreen(
+        controller: controller,
+        mobileCalls: widget.mobileCalls,
+        onGoToPhone: _goToPhone,
+      ),
       ContactsScreen(controller: controller, onGoToPhone: _goToPhone),
       VoicemailScreen(controller: controller, onGoToPhone: _goToPhone),
       SettingsScreen(
