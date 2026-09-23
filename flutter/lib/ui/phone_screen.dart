@@ -157,7 +157,12 @@ class _PhoneScreenState extends State<PhoneScreen> {
                           onBackspace: controller.backspaceDigit,
                           showDeleteButton: false,
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 16),
+                        _VoicemailButton(
+                          controller: controller,
+                          mobileCalls: widget.mobileCalls,
+                        ),
+                        const SizedBox(height: 20),
                         _CallControls(
                           controller: controller,
                           mobileCalls: widget.mobileCalls,
@@ -328,6 +333,35 @@ class _DialPad extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _VoicemailButton extends StatelessWidget {
+  const _VoicemailButton({
+    required this.controller,
+    required this.mobileCalls,
+  });
+
+  final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
+
+  @override
+  Widget build(BuildContext context) {
+    final number = controller.voicemailNumber.trim();
+    final count = controller.voicemail.newMessages;
+    final enabled = number.isNotEmpty &&
+        !controller.callState.isInCall &&
+        !mobileCalls.hasActiveGatewayCall;
+
+    return Badge(
+      isLabelVisible: count > 0,
+      label: Text('$count'),
+      child: FilledButton.tonalIcon(
+        onPressed: enabled ? () => mobileCalls.placeCall(number) : null,
+        icon: const Icon(Icons.voicemail),
+        label: const Text('Voicemail'),
+      ),
     );
   }
 }
