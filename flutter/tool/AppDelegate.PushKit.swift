@@ -41,44 +41,12 @@ import flutter_callkit_incoming
             didFinishLaunchingWithOptions: launchOptions
         )
 
-        registerVoiceHostChannels(retry: 0)
+        registerVoiceHostChannels()
 
         return launched
     }
 
-    private func flutterViewController(
-        from controller: UIViewController?
-    ) -> FlutterViewController? {
-        guard let controller else { return nil }
-        if let flutter = controller as? FlutterViewController {
-            return flutter
-        }
-        if let navigation = controller as? UINavigationController {
-            for child in navigation.viewControllers {
-                if let flutter = flutterViewController(from: child) {
-                    return flutter
-                }
-            }
-        }
-        if let tab = controller as? UITabBarController {
-            for child in tab.viewControllers ?? [] {
-                if let flutter = flutterViewController(from: child) {
-                    return flutter
-                }
-            }
-        }
-        for child in controller.children {
-            if let flutter = flutterViewController(from: child) {
-                return flutter
-            }
-        }
-        if let presented = controller.presentedViewController {
-            return flutterViewController(from: presented)
-        }
-        return nil
-    }
-
-    private func registerVoiceHostChannels(retry: Int) {
+    private func registerVoiceHostChannels() {
         if audioChannel != nil &&
             callKitChannel != nil &&
             contactsChannel != nil &&
@@ -86,22 +54,14 @@ import flutter_callkit_incoming
             return
         }
 
-        guard let controller = flutterViewController(
-            from: window?.rootViewController
+        guard let registrar = self.registrar(
+            forPlugin: "VoiceHostNativeBridge"
         ) else {
-            if retry < 20 {
-                DispatchQueue.main.asyncAfter(
-                    deadline: .now() + 0.15
-                ) { [weak self] in
-                    self?.registerVoiceHostChannels(retry: retry + 1)
-                }
-            } else {
-                recordNativeLog("Native channels unavailable after startup retries")
-            }
+            recordNativeLog("Native registrar unavailable")
             return
         }
 
-        let messenger = controller.binaryMessenger
+        let messenger = registrar.messenger()
 
         let audio = FlutterMethodChannel(
             name: "voicehost/audio",
