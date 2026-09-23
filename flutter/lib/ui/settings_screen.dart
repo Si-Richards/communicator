@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
+import '../services/mobile_call_coordinator.dart';
 import 'about_screen.dart';
+import 'diagnostics_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.controller});
+  const SettingsScreen({
+    super.key,
+    required this.controller,
+    required this.mobileCalls,
+  });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -184,9 +191,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   ListTile(
                     contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.monitor_heart_outlined),
+                    title: const Text('Diagnostics'),
+                    subtitle: const Text(
+                      'PushKit, CallKit, gateway status and recent logs',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => DiagnosticsScreen(
+                            controller: widget.controller,
+                            mobileCalls: widget.mobileCalls,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.info_outline),
                     title: const Text('About VoiceHost'),
-                    subtitle: const Text('Version, app information and licences'),
+                    subtitle: const Text(
+                      'Version, build information and licences',
+                    ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () {
                       Navigator.of(context).push(
