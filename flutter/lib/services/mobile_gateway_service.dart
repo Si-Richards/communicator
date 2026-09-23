@@ -66,6 +66,14 @@ class MobileGatewayService {
     );
   }
 
+  Future<String> testPush(String deviceId) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/v1/devices/$deviceId/test-push',
+    );
+    return json['environment']?.toString() ?? '';
+  }
+
   Future<String> startCall({
     required String deviceId,
     required String target,
