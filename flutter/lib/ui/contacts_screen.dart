@@ -92,6 +92,14 @@ class _ContactsScreenState extends State<ContactsScreen>
         _contacts = contacts;
         _loading = false;
       });
+    } on MissingPluginException {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error =
+            'The native contacts bridge is not available in this installed '
+            'build. Install the latest VoiceHost build and try again.';
+      });
     } on PlatformException catch (error) {
       if (!mounted) return;
       setState(() {
