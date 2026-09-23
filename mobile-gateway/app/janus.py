@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import secrets
 from collections.abc import Awaitable, Callable
 
@@ -10,6 +11,8 @@ from .models import DeviceRecord
 
 PluginCallback = Callable[[dict, dict | None], Awaitable[None]]
 TrickleCallback = Callable[[dict], Awaitable[None]]
+
+logger = logging.getLogger('uvicorn.error')
 
 
 class JanusSipSession:
@@ -160,11 +163,21 @@ class JanusSipSession:
                     if value is not None:
                         self.master_id = int(value)
                     self._registered.set()
-                await self.on_plugin(data, message.get('jsep'))
+                try:
+                    await self.on_plugin(data, message.get('jsep'))
+                except Exception:
+                    logger.exception(
+                        '[VH-DIAG] event=janus_plugin_callback_failed'
+                    )
                 continue
             if message.get('janus') == 'trickle':
                 candidate = message.get('candidate') or {}
-                await self.on_trickle(candidate)
+                try:
+                    await self.on_trickle(candidate)
+                except Exception:
+                    logger.exception(
+                        '[VH-DIAG] event=janus_trickle_callback_failed'
+                    )
 
     async def _keepalive(self):
         while True:
