@@ -423,12 +423,17 @@ import flutter_callkit_incoming
 
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetooth, .defaultToSpeaker]
+            )
             try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
 
             let player = try AVAudioPlayer(data: makeUKRingbackWav())
             player.numberOfLoops = -1
-            player.volume = 0.32
+            player.volume = 0.72
             player.prepareToPlay()
             player.play()
             ringbackPlayer = player
@@ -443,6 +448,11 @@ import flutter_callkit_incoming
         guard let player = ringbackPlayer else { return }
         player.stop()
         ringbackPlayer = nil
+        do {
+            try AVAudioSession.sharedInstance().overrideOutputAudioPort(.none)
+        } catch {
+            recordNativeLog("Unable to restore audio route after ringback")
+        }
         recordNativeLog("Local ringback stopped")
     }
 
