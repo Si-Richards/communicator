@@ -35,6 +35,33 @@ class VoiceHostApp extends StatelessWidget {
           onPrimaryContainer: Colors.white,
           secondary: navy,
         ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: orange,
+          foregroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          iconTheme: IconThemeData(color: Colors.white),
+          actionsIconTheme: IconThemeData(color: Colors.white),
+          titleTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: orange,
+          indicatorColor: Colors.white.withValues(alpha: 0.20),
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => const IconThemeData(color: Colors.white),
+          ),
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => TextStyle(
+              color: Colors.white,
+              fontWeight: states.contains(WidgetState.selected)
+                  ? FontWeight.w700
+                  : FontWeight.w500,
+            ),
+          ),
+        ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: orange,
