@@ -778,6 +778,42 @@ class PhoneController extends ChangeNotifier {
     }
   }
 
+  Future<void> recordExternalCall({
+    required CallDirection direction,
+    required String number,
+    String? displayName,
+    required DateTime startedAt,
+    DateTime? connectedAt,
+    required CallResult result,
+  }) async {
+    final duration = connectedAt == null
+        ? 0
+        : DateTime.now()
+            .difference(connectedAt)
+            .inSeconds
+            .clamp(0, 86400)
+            .toInt();
+
+    callHistory.insert(
+      0,
+      CallRecord(
+        direction: direction,
+        number: number,
+        displayName: displayName,
+        startedAt: startedAt,
+        durationSeconds: duration,
+        result: result,
+      ),
+    );
+    if (callHistory.length > CallHistoryRepository.maximumRecords) {
+      callHistory = callHistory
+          .take(CallHistoryRepository.maximumRecords)
+          .toList(growable: true);
+    }
+    await _historyRepository.save(callHistory);
+    notifyListeners();
+  }
+
   Future<void> deleteCallRecord(String id) async {
     callHistory.removeWhere((record) => record.id == id);
     await _historyRepository.save(callHistory);
