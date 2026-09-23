@@ -67,7 +67,10 @@ class _MainShellState extends State<MainShell> {
       CallHistoryScreen(controller: controller, onGoToPhone: _goToPhone),
       ContactsScreen(controller: controller, onGoToPhone: _goToPhone),
       VoicemailScreen(controller: controller, onGoToPhone: _goToPhone),
-      SettingsScreen(controller: controller),
+      SettingsScreen(
+        controller: controller,
+        mobileCalls: widget.mobileCalls,
+      ),
     ];
 
     return AnimatedBuilder(
