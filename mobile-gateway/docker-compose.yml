@@ -27,9 +27,11 @@ services:
         condition: service_healthy
     environment:
       GATEWAY_HOSTNAME: ${GATEWAY_HOSTNAME:-randy.voicehost.io}
+      ADMIN_ALLOWED_IP: ${ADMIN_ALLOWED_IP:-127.0.0.1}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./secrets/admin.htpasswd:/etc/nginx/admin.htpasswd:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
