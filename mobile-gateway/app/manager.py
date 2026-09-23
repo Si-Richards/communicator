@@ -201,6 +201,25 @@ class MobileSessionManager:
             if call:
                 call.session = None
 
+    async def remove_device(self, device_id: str):
+        lock = self._locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            transfer_id = self.device_transfer.pop(device_id, None)
+            if transfer_id:
+                transfer = self.transfers.pop(transfer_id, None)
+                if transfer:
+                    try:
+                        await transfer.helper.stop()
+                    except Exception:
+                        pass
+
+            await self._stop_device_sessions(device_id)
+            self._locks.pop(device_id, None)
+            logger.info(
+                '[VH-DIAG] event=device_removed device=%s',
+                _safe_ref(device_id),
+            )
+
     def _call_for_session(self, session: JanusSipSession):
         call_id = self.session_call.get(id(session))
         return self.calls.get(call_id) if call_id else None
