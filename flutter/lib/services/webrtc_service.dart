@@ -1,3 +1,4 @@
+import '../core/app_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -48,10 +49,31 @@ class WebRtcService {
     // an attached MediaStream.
     _remoteRenderer = renderer;
 
+    final iceServers = <Map<String, dynamic>>[];
+    if (AppConfig.stunUrl.trim().isNotEmpty) {
+      iceServers.add({
+        'urls': [AppConfig.stunUrl.trim()],
+      });
+    }
+    if (AppConfig.turnUrl.trim().isNotEmpty &&
+        AppConfig.turnUsername.trim().isNotEmpty &&
+        AppConfig.turnCredential.isNotEmpty) {
+      iceServers.add({
+        'urls': [AppConfig.turnUrl.trim()],
+        'username': AppConfig.turnUsername.trim(),
+        'credential': AppConfig.turnCredential,
+      });
+    }
+
+    onLog?.call(
+      'ICE servers configured: STUN=${AppConfig.stunUrl.trim().isNotEmpty} '
+      'TURN=${AppConfig.turnUrl.trim().isNotEmpty}',
+    );
+
     _peerConnection = await createPeerConnection(
       {
         'sdpSemantics': 'unified-plan',
-        'iceServers': <Map<String, dynamic>>[],
+        'iceServers': iceServers,
       },
       {
         'optional': [
