@@ -2,15 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
 import '../models/call_record.dart';
+import '../services/mobile_call_coordinator.dart';
 
 class CallHistoryScreen extends StatelessWidget {
   const CallHistoryScreen({
     super.key,
     required this.controller,
+    required this.mobileCalls,
     required this.onGoToPhone,
   });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
   final VoidCallback onGoToPhone;
 
   @override
@@ -79,12 +82,12 @@ class CallHistoryScreen extends StatelessWidget {
                             ),
                             IconButton(
                               tooltip: 'Call ${record.number}',
-                              onPressed: controller.isRegistered &&
-                                      !controller.callState.isInCall
+                              onPressed: !controller.callState.isInCall &&
+                                      !mobileCalls.hasActiveGatewayCall
                                   ? () {
                                       controller.setDialledNumber(record.number);
                                       onGoToPhone();
-                                      controller.placeCall(record.number);
+                                      mobileCalls.placeCall(record.number);
                                     }
                                   : null,
                               icon: const Icon(Icons.phone),
