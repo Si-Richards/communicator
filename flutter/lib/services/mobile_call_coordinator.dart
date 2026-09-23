@@ -46,6 +46,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final WebRtcService _transferWebRtc = WebRtcService();
   final RingbackService _ringback = RingbackService();
   final Map<String, _GatewayCallContext> _gatewayCalls = {};
+  final List<String> _diagnosticLogs = [];
   static const MethodChannel _nativeCallKitChannel =
       MethodChannel('voicehost/callkit');
 
@@ -96,6 +97,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool get attendedTransferConnected => _transferConnected;
   String get transferStatus => _transferStatus;
   String? get transferTarget => _transferTarget;
+  bool get hasPushToken => _pushToken?.isNotEmpty == true;
+  List<String> get diagnosticLogs =>
+      List<String>.unmodifiable(_diagnosticLogs.reversed);
 
   String get gatewayCallerDisplay {
     final active = _activeGatewayCall;
@@ -125,9 +129,51 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       )
       .toList(growable: false);
 
+  void _appendDiagnostic(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    _diagnosticLogs.add('$timestamp  $message');
+    if (_diagnosticLogs.length > 250) {
+      _diagnosticLogs.removeRange(0, _diagnosticLogs.length - 250);
+    }
+    debugPrint('[VoiceHost Mobile] $message');
+    notifyListeners();
+  }
+
+  void clearDiagnosticLogs() {
+    _diagnosticLogs.clear();
+    notifyListeners();
+  }
+
+  Future<String> sendTestPush() async {
+    final deviceId = _deviceId;
+    if (!gateway.enabled) {
+      throw StateError('Mobile gateway is not configured in this build.');
+    }
+    if (deviceId == null || !_gatewayProvisioned) {
+      throw StateError('This device is not provisioned with the mobile gateway.');
+    }
+    if (!hasPushToken) {
+      throw StateError('No PushKit token is available on this device.');
+    }
+
+    _appendDiagnostic('Push test requested');
+    try {
+      final environment = await gateway.testPush(deviceId);
+      _appendDiagnostic(
+        environment.isEmpty
+            ? 'Push test accepted by gateway'
+            : 'Push test sent via APNs $environment',
+      );
+      return environment;
+    } catch (error) {
+      _appendDiagnostic('Push test failed: $error');
+      rethrow;
+    }
+  }
+
   Future<void> initialize() async {
     if (!gateway.enabled || !Platform.isIOS) {
-      debugPrint('[VoiceHost Mobile] gateway disabled for this build');
+      _appendDiagnostic('Mobile gateway disabled for this build');
       return;
     }
 
@@ -157,9 +203,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
     phone.addListener(_phoneChanged);
     _phoneChanged();
-    debugPrint(
-      '[VoiceHost Mobile] device=ready '
-      'pushToken=${_pushToken?.isNotEmpty == true ? 'ready' : 'waiting'}',
+    _appendDiagnostic(
+      'Device ready · PushKit token '
+      '${_pushToken?.isNotEmpty == true ? 'available' : 'waiting'}',
     );
     unawaited(_recoverCallKitState());
   }
@@ -202,12 +248,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       );
       _gatewayProvisioned = true;
       notifyListeners();
-      debugPrint('[VoiceHost Mobile] gateway registration active');
+      _appendDiagnostic('Mobile gateway registration active');
     } catch (error) {
       _gatewayProvisioned = false;
       notifyListeners();
       _lastProvisionSignature = null;
-      debugPrint('[VoiceHost Mobile] provisioning failed: $error');
+      _appendDiagnostic('Gateway provisioning failed: $error');
     } finally {
       _provisioning = false;
     }
@@ -273,7 +319,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     } on MissingPluginException {
       // Native recovery bridge is not present on older/local builds.
     } catch (error) {
-      debugPrint('[VoiceHost Mobile] native CallKit recovery failed: $error');
+      _appendDiagnostic('Native CallKit recovery failed: $error');
     }
   }
 
@@ -293,7 +339,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     } catch (error) {
-      debugPrint('[VoiceHost Mobile] CallKit state recovery failed: $error');
+      _appendDiagnostic('CallKit state recovery failed: $error');
     } finally {
       _recoveringCallKitState = false;
     }
@@ -303,25 +349,33 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     if (event == null) return;
     if (event is CallEventActionDidUpdateDevicePushTokenVoip) {
       _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+      _appendDiagnostic(
+        'PushKit token updated · '
+        '${_pushToken?.isNotEmpty == true ? 'available' : 'empty'}',
+      );
       _lastProvisionSignature = null;
       _phoneChanged();
       return;
     }
     if (event is CallEventActionCallIncoming) {
+      _appendDiagnostic('CallKit incoming event received');
       unawaited(_trackIncomingCall(event.callKitParams.id));
       return;
     }
     if (event is CallEventActionCallAccept) {
+      _appendDiagnostic('CallKit accept event received');
       unawaited(_diag('callkit_accept', callId: event.callKitParams.id));
       await _accept(event.callKitParams.id);
       return;
     }
     if (event is CallEventActionCallDecline) {
+      _appendDiagnostic('CallKit decline event received');
       unawaited(_diag('callkit_decline', callId: event.callKitParams.id));
       await _decline(event.callKitParams.id);
       return;
     }
     if (event is CallEventActionCallEnded) {
+      _appendDiagnostic('CallKit end event received');
       unawaited(_diag('callkit_end', callId: event.callKitParams.id));
       await _end(event.callKitParams.id);
       return;
@@ -417,9 +471,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _configureGatewayCall(context);
       _gatewayCalls[context.id] = context;
       await _listenToGateway(context);
+      _appendDiagnostic('Incoming gateway call tracked');
       notifyListeners();
     } catch (error) {
-      debugPrint('[VoiceHost Mobile] incoming call tracking failed: $error');
+      _appendDiagnostic('Incoming call tracking failed: $error');
     }
   }
 
@@ -482,9 +537,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         callId: context.id,
         details: {'sdp_length': answer.length},
       );
-      debugPrint('[VoiceHost Mobile] answered gateway call');
+      _appendDiagnostic('Gateway call answer sent');
     } catch (error) {
-      debugPrint('[VoiceHost Mobile] answer failed: $error');
+      _appendDiagnostic('Gateway call answer failed: $error');
       final id = context?.id ?? requestedCallId;
       try {
         await FlutterCallkitIncoming.endCall(id);
@@ -1115,10 +1170,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     String? callId,
     Map<String, Object> details = const {},
   }) async {
+    final detailText = details.isEmpty
+        ? ''
+        : ' · ${details.entries.map((entry) => '${entry.key}=${entry.value}').join(', ')}';
+    _appendDiagnostic('$event$detailText');
     try {
       await gateway.diagnostic(event, callId: callId, details: details);
     } catch (error) {
-      debugPrint('[VoiceHost Mobile] diagnostic send failed: $error');
+      _appendDiagnostic('Diagnostic upload failed: $error');
     }
   }
 
