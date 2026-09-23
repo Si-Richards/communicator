@@ -167,15 +167,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionCard(
                 title: 'Calling',
                 children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Do Not Disturb'),
-                    subtitle: const Text(
-                      'Incoming calls are declined with SIP 486 on this device.',
-                    ),
-                    value: model.doNotDisturb,
-                    onChanged: model.setDoNotDisturb,
-                  ),
                   TextField(
                     controller: _voicemailNumber,
                     keyboardType: TextInputType.phone,
