@@ -136,7 +136,7 @@ async def admin_devices(request: Request):
             <td>
               <div class="actions">
                 <button class="secondary" onclick="testPush({js_device_id}, this)">Test push</button>
-                <button class="danger" onclick="deleteDevice({js_device_id}, {js_nickname})">Delete</button>
+                <button class="danger" {'disabled title="Cannot delete while calls are active"' if active_calls else ''} onclick="deleteDevice({js_device_id}, {js_nickname})">Delete</button>
               </div>
             </td>
           </tr>
@@ -306,6 +306,17 @@ async def admin_delete_device(device_id: str):
         store.get(device_id)
     except KeyError:
         raise HTTPException(404, 'device not found')
+
+    if manager.device_calls.get(device_id):
+        raise HTTPException(
+            status_code=409,
+            detail='device has active calls; end them before deleting',
+        )
+    if device_id in manager.device_transfer:
+        raise HTTPException(
+            status_code=409,
+            detail='device has an active transfer; end it before deleting',
+        )
 
     await manager.remove_device(device_id)
     deleted = store.delete(device_id)
