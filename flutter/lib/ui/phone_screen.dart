@@ -90,18 +90,45 @@ class _PhoneScreenState extends State<PhoneScreen> {
           appBar: AppBar(
             title: Text(controller.extensionDisplayName),
             actions: [
-              IconButton(
-                tooltip: controller.doNotDisturb
-                    ? 'Disable Do Not Disturb'
-                    : 'Enable Do Not Disturb',
-                onPressed: () => controller.setDoNotDisturb(!controller.doNotDisturb),
-                icon: Icon(
-                  controller.doNotDisturb ? Icons.bedtime : Icons.bedtime_outlined,
-                  color: controller.doNotDisturb
-                      ? Theme.of(context).colorScheme.primary
+              Badge(
+                isLabelVisible: controller.voicemail.newMessages > 0,
+                label: Text('${controller.voicemail.newMessages}'),
+                child: IconButton(
+                  tooltip: 'Voicemail',
+                  onPressed: controller.voicemailNumber.trim().isNotEmpty &&
+                          !controller.callState.isInCall &&
+                          !widget.mobileCalls.hasActiveGatewayCall
+                      ? () => widget.mobileCalls.placeCall(
+                            controller.voicemailNumber.trim(),
+                          )
                       : null,
+                  icon: const Icon(Icons.voicemail),
                 ),
               ),
+              const SizedBox(width: 4),
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: controller.doNotDisturb
+                      ? const Color(0xFF113B53)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: IconButton(
+                  tooltip: controller.doNotDisturb
+                      ? 'Disable Do Not Disturb'
+                      : 'Enable Do Not Disturb',
+                  onPressed: () =>
+                      controller.setDoNotDisturb(!controller.doNotDisturb),
+                  icon: Icon(
+                    controller.doNotDisturb
+                        ? Icons.bedtime
+                        : Icons.bedtime_outlined,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
             ],
           ),
           body: SafeArea(
@@ -157,12 +184,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
                           onBackspace: controller.backspaceDigit,
                           showDeleteButton: false,
                         ),
-                        const SizedBox(height: 16),
-                        _VoicemailButton(
-                          controller: controller,
-                          mobileCalls: widget.mobileCalls,
-                        ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 24),
                         _CallControls(
                           controller: controller,
                           mobileCalls: widget.mobileCalls,
@@ -333,35 +355,6 @@ class _DialPad extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _VoicemailButton extends StatelessWidget {
-  const _VoicemailButton({
-    required this.controller,
-    required this.mobileCalls,
-  });
-
-  final PhoneController controller;
-  final MobileCallCoordinator mobileCalls;
-
-  @override
-  Widget build(BuildContext context) {
-    final number = controller.voicemailNumber.trim();
-    final count = controller.voicemail.newMessages;
-    final enabled = number.isNotEmpty &&
-        !controller.callState.isInCall &&
-        !mobileCalls.hasActiveGatewayCall;
-
-    return Badge(
-      isLabelVisible: count > 0,
-      label: Text('$count'),
-      child: FilledButton.tonalIcon(
-        onPressed: enabled ? () => mobileCalls.placeCall(number) : null,
-        icon: const Icon(Icons.voicemail),
-        label: const Text('Voicemail'),
-      ),
     );
   }
 }
