@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import html
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -114,19 +116,27 @@ async def admin_devices(request: Request):
         dnd = 'On' if item['dnd'] else 'Off'
         status_class = 'ok' if session_online else 'bad'
         status_text = 'Online' if session_online else 'Offline'
+
+        safe_nickname = html.escape(nickname)
+        safe_username = html.escape(item['sip_username'])
+        safe_platform = html.escape(item['platform'])
+        safe_updated = html.escape(item['updated_at'])
+        js_device_id = html.escape(json.dumps(device_id), quote=True)
+        js_nickname = html.escape(json.dumps(nickname), quote=True)
+
         rows.append(f"""
           <tr>
-            <td><strong>{nickname}</strong><div class="muted">{item['sip_username']}</div></td>
-            <td>{item['platform']}</td>
+            <td><strong>{safe_nickname}</strong><div class="muted">{safe_username}</div></td>
+            <td>{safe_platform}</td>
             <td><span class="status {status_class}">{status_text}</span></td>
             <td>{helper_count}</td>
             <td>{active_calls}</td>
             <td>{dnd}</td>
-            <td><span class="muted">{item['updated_at']}</span></td>
+            <td><span class="muted">{safe_updated}</span></td>
             <td>
               <div class="actions">
-                <button class="secondary" onclick="testPush('{device_id}', this)">Test push</button>
-                <button class="danger" onclick="deleteDevice('{device_id}', '{nickname}')">Delete</button>
+                <button class="secondary" onclick="testPush({js_device_id}, this)">Test push</button>
+                <button class="danger" onclick="deleteDevice({js_device_id}, {js_nickname})">Delete</button>
               </div>
             </td>
           </tr>
