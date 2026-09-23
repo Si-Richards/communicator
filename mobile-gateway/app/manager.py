@@ -280,14 +280,34 @@ class MobileSessionManager:
                 _safe_ref(device.device_id),
                 bool(offer),
             )
-            await self.apns.send_voip(device.push_token, {
-                'aps': {'content-available': 1},
-                'id': call_id,
-                'nameCaller': display or caller,
-                'handle': caller,
-                'isVideo': False,
-                'extra': {'call_id': call_id},
-            })
+            try:
+                environment = await self.apns.send_voip(device.push_token, {
+                    'aps': {'content-available': 1},
+                    'id': call_id,
+                    'nameCaller': display or caller,
+                    'handle': caller,
+                    'isVideo': False,
+                    'extra': {'call_id': call_id},
+                })
+                logger.info(
+                    '[VH-DIAG] event=incoming_push_sent call=%s environment=%s',
+                    _safe_ref(call_id),
+                    environment,
+                )
+            except Exception as error:
+                logger.error(
+                    '[VH-DIAG] event=incoming_push_failed call=%s reason=%s',
+                    _safe_ref(call_id),
+                    str(error),
+                )
+                try:
+                    await session.decline(480)
+                except Exception:
+                    logger.exception(
+                        '[VH-DIAG] event=incoming_push_decline_failed call=%s',
+                        _safe_ref(call_id),
+                    )
+                self._release_call_session(call)
             return
 
         call = self._call_for_session(session)
