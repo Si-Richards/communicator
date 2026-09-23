@@ -15,4 +15,22 @@ class AppConfig {
     'VOICEHOST_GATEWAY_KEY',
     defaultValue: '',
   );
+
+  static const stunUrl = String.fromEnvironment(
+    'VOICEHOST_STUN_URL',
+    defaultValue: 'stun:stun.voicehost.co.uk:3478',
+  );
+
+  static const turnUrl = String.fromEnvironment(
+    'VOICEHOST_TURN_URL',
+    defaultValue: '',
+  );
+  static const turnUsername = String.fromEnvironment(
+    'VOICEHOST_TURN_USERNAME',
+    defaultValue: '',
+  );
+  static const turnCredential = String.fromEnvironment(
+    'VOICEHOST_TURN_CREDENTIAL',
+    defaultValue: '',
+  );
 }
