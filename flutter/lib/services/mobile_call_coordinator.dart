@@ -575,12 +575,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             notifyListeners();
             break;
           case 'progress':
-            context.phase = 'connecting';
+            context.phase = 'ringing';
             final progressJsep = event['jsep'];
             if (context.outgoing && progressJsep is Map) {
               final sdp = progressJsep['sdp']?.toString();
               if (sdp != null && sdp.isNotEmpty) {
-                unawaited(_ringback.stop());
                 unawaited(context.webRtc.applyRemoteAnswer(sdp));
               }
             }
@@ -768,6 +767,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     };
 
     try {
+      await _ringback.start();
+      _appendDiagnostic('Local ringback requested');
       await webRtc.preparePeerConnection();
       final offer = await webRtc.createOffer();
       final callId = await gateway.startCall(
@@ -820,7 +821,6 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       }
       pendingCandidates.clear();
 
-      unawaited(_ringback.start());
       await _diag('outbound_call_started', callId: callId);
       notifyListeners();
     } catch (error) {
