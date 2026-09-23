@@ -6,7 +6,6 @@ import 'ui/call_history_screen.dart';
 import 'ui/contacts_screen.dart';
 import 'ui/phone_screen.dart';
 import 'ui/settings_screen.dart';
-import 'ui/voicemail_screen.dart';
 
 class VoiceHostApp extends StatelessWidget {
   const VoiceHostApp({
@@ -113,7 +112,6 @@ class _MainShellState extends State<MainShell> {
         onGoToPhone: _goToPhone,
       ),
       ContactsScreen(controller: controller, onGoToPhone: _goToPhone),
-      VoicemailScreen(controller: controller, onGoToPhone: _goToPhone),
       SettingsScreen(
         controller: controller,
         mobileCalls: widget.mobileCalls,
@@ -123,7 +121,6 @@ class _MainShellState extends State<MainShell> {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
-        final newMessages = controller.voicemail.newMessages;
         return Scaffold(
           body: IndexedStack(index: _selectedIndex, children: screens),
           bottomNavigationBar: NavigationBar(
@@ -146,19 +143,6 @@ class _MainShellState extends State<MainShell> {
                 icon: Icon(Icons.contacts_outlined),
                 selectedIcon: Icon(Icons.contacts),
                 label: 'Contacts',
-              ),
-              NavigationDestination(
-                icon: Badge(
-                  isLabelVisible: newMessages > 0,
-                  label: Text('$newMessages'),
-                  child: const Icon(Icons.voicemail_outlined),
-                ),
-                selectedIcon: Badge(
-                  isLabelVisible: newMessages > 0,
-                  label: Text('$newMessages'),
-                  child: const Icon(Icons.voicemail),
-                ),
-                label: 'Voicemail',
               ),
               const NavigationDestination(
                 icon: Icon(Icons.settings_outlined),
