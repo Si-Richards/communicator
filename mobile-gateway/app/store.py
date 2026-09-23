@@ -67,6 +67,38 @@ class DeviceStore:
             rows = db.execute('SELECT * FROM devices').fetchall()
         return [self._row(row) for row in rows]
 
+    def admin_list(self) -> list[dict]:
+        with self.lock, self._connect() as db:
+            rows = db.execute(
+                '''
+                SELECT device_id, platform, sip_username, sip_realm, nickname,
+                       dnd, updated_at
+                FROM devices
+                ORDER BY updated_at DESC, sip_username ASC
+                '''
+            ).fetchall()
+        return [
+            {
+                'device_id': row['device_id'],
+                'platform': row['platform'],
+                'sip_username': row['sip_username'],
+                'sip_realm': row['sip_realm'],
+                'nickname': row['nickname'],
+                'dnd': bool(row['dnd']),
+                'updated_at': row['updated_at'],
+            }
+            for row in rows
+        ]
+
+    def delete(self, device_id: str) -> bool:
+        with self.lock, self._connect() as db:
+            cursor = db.execute(
+                'DELETE FROM devices WHERE device_id=?',
+                (device_id,),
+            )
+            db.commit()
+            return cursor.rowcount > 0
+
     def _row(self, row) -> DeviceRecord:
         return DeviceRecord(
             device_id=row['device_id'], platform=row['platform'], push_token=row['push_token'],
