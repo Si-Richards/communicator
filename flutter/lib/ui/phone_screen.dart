@@ -121,23 +121,41 @@ class _PhoneScreenState extends State<PhoneScreen> {
                     padding: const EdgeInsets.fromLTRB(24, 18, 24, 28),
                     child: Column(
                       children: [
-                        TextField(
-                          controller: _numberController,
-                          readOnly: true,
-                          showCursor: false,
-                          enableInteractiveSelection: false,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineLarge,
-                          decoration: const InputDecoration(
-                            hintText: 'Number',
-                            border: InputBorder.none,
-                          ),
+                        Row(
+                          children: [
+                            const SizedBox(width: 48),
+                            Expanded(
+                              child: TextField(
+                                controller: _numberController,
+                                readOnly: true,
+                                showCursor: false,
+                                enableInteractiveSelection: false,
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.headlineLarge,
+                                decoration: const InputDecoration(
+                                  hintText: 'Number',
+                                  border: InputBorder.none,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 48,
+                              child: IconButton(
+                                tooltip: 'Delete',
+                                onPressed: controller.dialledNumber.isEmpty
+                                    ? null
+                                    : controller.backspaceDigit,
+                                icon: const Icon(Icons.backspace_outlined),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         _DialPad(
                           keys: _keys,
                           onDigit: controller.appendDigit,
                           onBackspace: controller.backspaceDigit,
+                          showDeleteButton: false,
                         ),
                         const SizedBox(height: 24),
                         _CallControls(
@@ -257,11 +275,13 @@ class _DialPad extends StatelessWidget {
     required this.keys,
     required this.onDigit,
     required this.onBackspace,
+    this.showDeleteButton = true,
   });
 
   final List<List<String>> keys;
   final ValueChanged<String> onDigit;
   final VoidCallback onBackspace;
+  final bool showDeleteButton;
 
   @override
   Widget build(BuildContext context) {
@@ -299,12 +319,14 @@ class _DialPad extends StatelessWidget {
               ],
             ),
           ),
-        const SizedBox(height: 2),
-        TextButton.icon(
-          onPressed: onBackspace,
-          icon: const Icon(Icons.backspace_outlined),
-          label: const Text('Delete'),
-        ),
+        if (showDeleteButton) ...[
+          const SizedBox(height: 2),
+          TextButton.icon(
+            onPressed: onBackspace,
+            icon: const Icon(Icons.backspace_outlined),
+            label: const Text('Delete'),
+          ),
+        ],
       ],
     );
   }
