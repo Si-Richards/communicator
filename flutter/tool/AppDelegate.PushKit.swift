@@ -11,6 +11,8 @@ import flutter_callkit_incoming
 @objc class AppDelegate: FlutterAppDelegate, PKPushRegistryDelegate, CallkitIncomingAppDelegate {
     private var voipRegistry: PKPushRegistry?
     private var ringbackPlayer: AVAudioPlayer?
+    private var ringbackTimer: Timer?
+    private var ringbackRequested = false
     private var audioChannel: FlutterMethodChannel?
     private var callKitChannel: FlutterMethodChannel?
     private var contactsChannel: FlutterMethodChannel?
@@ -203,6 +205,10 @@ import flutter_callkit_incoming
         let rtcAudioSession = RTCAudioSession.sharedInstance()
         rtcAudioSession.audioSessionDidActivate(audioSession)
         rtcAudioSession.isAudioEnabled = true
+        if ringbackRequested && ringbackPlayer?.isPlaying != true {
+            ringbackPlayer?.play()
+            recordNativeLog("Local ringback resumed after audio activation")
+        }
         recordNativeLog("CallKit WebRTC audio session activated")
     }
 
@@ -435,7 +441,7 @@ import flutter_callkit_incoming
     }
 
     private func startRingback() {
-        if ringbackPlayer?.isPlaying == true { return }
+        ringbackRequested = true
 
         do {
             let session = AVAudioSession.sharedInstance()
@@ -447,23 +453,52 @@ import flutter_callkit_incoming
             try session.setActive(true)
             try session.overrideOutputAudioPort(.speaker)
 
-            let player = try AVAudioPlayer(data: makeUKRingbackWav())
-            player.numberOfLoops = -1
-            player.volume = 0.72
-            player.prepareToPlay()
-            player.play()
-            ringbackPlayer = player
+            if ringbackPlayer == nil {
+                let player = try AVAudioPlayer(data: makeUKRingbackWav())
+                player.numberOfLoops = -1
+                player.volume = 0.72
+                player.prepareToPlay()
+                ringbackPlayer = player
+            }
+
+            if ringbackPlayer?.isPlaying != true {
+                ringbackPlayer?.currentTime = 0
+                ringbackPlayer?.play()
+            }
+
+            ringbackTimer?.invalidate()
+            ringbackTimer = Timer.scheduledTimer(
+                withTimeInterval: 1.0,
+                repeats: true
+            ) { [weak self] _ in
+                guard let self, self.ringbackRequested else { return }
+                if self.ringbackPlayer?.isPlaying != true {
+                    self.ringbackPlayer?.currentTime = 0
+                    self.ringbackPlayer?.play()
+                    self.recordNativeLog("Local ringback restarted")
+                }
+            }
+
             recordNativeLog("Local ringback started")
         } catch {
+            ringbackRequested = false
+            ringbackTimer?.invalidate()
+            ringbackTimer = nil
             ringbackPlayer = nil
             recordNativeLog("Local ringback failed")
         }
     }
 
     private func stopRingback() {
-        guard let player = ringbackPlayer else { return }
-        player.stop()
-        ringbackPlayer = nil
+        ringbackRequested = false
+        ringbackTimer?.invalidate()
+        ringbackTimer = nil
+
+        if let player = ringbackPlayer {
+            player.stop()
+            ringbackPlayer = nil
+        }
+
         do {
             try AVAudioSession.sharedInstance().overrideOutputAudioPort(.none)
         } catch {
