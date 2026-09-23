@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     apns_bundle_id: str = ''
     apns_key_path: Path = Path('/run/secrets/AuthKey.p8')
     apns_sandbox: bool = True
+    apns_fallback_environment: bool = True
 
 
 settings = Settings()
