@@ -3,7 +3,8 @@ import hashlib
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 
 from .apns import APNSClient
 from .config import settings
@@ -36,6 +37,44 @@ def auth(x_gateway_key: str = Header(default='')):
         raise HTTPException(status_code=401, detail='invalid gateway key')
 
 
+def admin_action(x_admin_action: str = Header(default='')):
+    if x_admin_action != '1':
+        raise HTTPException(status_code=403, detail='admin action header required')
+
+
+async def _send_test_push(device_id: str) -> str:
+    try:
+        device = store.get(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+
+    import uuid
+    call_id = str(uuid.uuid4())
+    try:
+        environment = await apns.send_voip(device.push_token, {
+            'aps': {'content-available': 1},
+            'id': call_id,
+            'nameCaller': 'VoiceHost Push Test',
+            'handle': 'TEST',
+            'isVideo': False,
+            'extra': {'call_id': call_id, 'test': True},
+        })
+    except RuntimeError as error:
+        diag_logger.warning(
+            '[VH-DIAG] event=test_push_failed device=%s reason=%s',
+            _safe_ref(device_id),
+            str(error),
+        )
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    diag_logger.info(
+        '[VH-DIAG] event=test_push_sent device=%s environment=%s',
+        _safe_ref(device_id),
+        environment,
+    )
+    return environment
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await manager.restore()
@@ -61,6 +100,215 @@ async def health():
     }
 
 
+@app.get('/admin', response_class=HTMLResponse)
+async def admin_devices(request: Request):
+    devices = store.admin_list()
+    rows = []
+    for item in devices:
+        device_id = item['device_id']
+        session = manager.sessions.get(device_id)
+        session_online = bool(session and manager._session_alive(session))
+        helper_count = len(manager.helpers.get(device_id, []))
+        active_calls = len(manager.device_calls.get(device_id, set()))
+        nickname = item['nickname'] or '—'
+        dnd = 'On' if item['dnd'] else 'Off'
+        status_class = 'ok' if session_online else 'bad'
+        status_text = 'Online' if session_online else 'Offline'
+        rows.append(f"""
+          <tr>
+            <td><strong>{nickname}</strong><div class="muted">{item['sip_username']}</div></td>
+            <td>{item['platform']}</td>
+            <td><span class="status {status_class}">{status_text}</span></td>
+            <td>{helper_count}</td>
+            <td>{active_calls}</td>
+            <td>{dnd}</td>
+            <td><span class="muted">{item['updated_at']}</span></td>
+            <td>
+              <div class="actions">
+                <button class="secondary" onclick="testPush('{device_id}', this)">Test push</button>
+                <button class="danger" onclick="deleteDevice('{device_id}', '{nickname}')">Delete</button>
+              </div>
+            </td>
+          </tr>
+        """)
+
+    table_rows = ''.join(rows) or """
+      <tr><td colspan="8" class="empty">No devices are currently provisioned.</td></tr>
+    """
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Randy Devices · VoiceHost</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --orange:#ff6600;
+      --navy:#113b53;
+      --bg:#f6f7f9;
+      --card:#ffffff;
+      --border:#e5e7eb;
+      --muted:#6b7280;
+      --danger:#b42318;
+      --success:#157347;
+    }}
+    * {{ box-sizing:border-box; }}
+    body {{
+      margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg); color:#17212b;
+    }}
+    header {{
+      background:var(--navy); color:white; padding:18px 28px;
+      display:flex; align-items:center; justify-content:space-between; gap:20px;
+    }}
+    header h1 {{ margin:0; font-size:20px; font-weight:700; }}
+    header .badge {{ background:var(--orange); color:white; padding:6px 10px; border-radius:999px; font-size:12px; }}
+    main {{ max-width:1400px; margin:28px auto; padding:0 20px; }}
+    .summary {{ display:flex; gap:12px; margin-bottom:18px; flex-wrap:wrap; }}
+    .metric {{
+      background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-width:150px;
+      box-shadow:0 1px 2px rgba(0,0,0,.03);
+    }}
+    .metric strong {{ display:block; font-size:24px; color:var(--navy); }}
+    .metric span {{ color:var(--muted); font-size:13px; }}
+    .panel {{
+      background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden;
+      box-shadow:0 1px 3px rgba(0,0,0,.04);
+    }}
+    .panel-head {{ padding:16px 18px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); }}
+    .panel-head h2 {{ margin:0; font-size:17px; }}
+    .panel-head button {{ background:var(--orange); color:white; }}
+    .table-wrap {{ overflow-x:auto; }}
+    table {{ width:100%; border-collapse:collapse; min-width:980px; }}
+    th, td {{ text-align:left; padding:13px 14px; border-bottom:1px solid var(--border); vertical-align:middle; }}
+    th {{ background:#fafafa; color:#475467; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
+    tbody tr:last-child td {{ border-bottom:0; }}
+    .muted {{ color:var(--muted); font-size:12px; margin-top:3px; }}
+    .status {{ display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:700; }}
+    .status.ok {{ color:var(--success); background:#e8f5ee; }}
+    .status.bad {{ color:#8a1c13; background:#fdecea; }}
+    .actions {{ display:flex; gap:8px; white-space:nowrap; }}
+    button {{
+      border:0; border-radius:8px; padding:8px 11px; cursor:pointer; font-weight:650;
+    }}
+    button:disabled {{ opacity:.55; cursor:wait; }}
+    button.secondary {{ background:#eef2f5; color:var(--navy); }}
+    button.danger {{ background:#fff0ee; color:var(--danger); }}
+    .empty {{ text-align:center; color:var(--muted); padding:36px; }}
+    #toast {{
+      position:fixed; right:18px; bottom:18px; max-width:440px; background:var(--navy); color:white;
+      padding:12px 14px; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,.18);
+      display:none;
+    }}
+    @media (max-width:700px) {{ header {{ padding:16px 18px; }} main {{ margin-top:18px; }} }}
+  </style>
+</head>
+<body>
+<header>
+  <h1>VoiceHost · Randy Device Manager</h1>
+  <span class="badge">Restricted admin</span>
+</header>
+<main>
+  <div class="summary">
+    <div class="metric"><strong>{len(devices)}</strong><span>Provisioned devices</span></div>
+    <div class="metric"><strong>{len(manager.sessions)}</strong><span>Master sessions</span></div>
+    <div class="metric"><strong>{sum(len(v) for v in manager.helpers.values())}</strong><span>Helper sessions</span></div>
+    <div class="metric"><strong>{sum(len(v) for v in manager.device_calls.values())}</strong><span>Active calls</span></div>
+  </div>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Devices</h2>
+      <button onclick="location.reload()">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Device</th><th>Platform</th><th>Session</th><th>Helpers</th>
+            <th>Calls</th><th>DND</th><th>Last updated</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>{table_rows}</tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<script>
+  function toast(message, error=false) {{
+    const el = document.getElementById('toast');
+    el.textContent = message;
+    el.style.background = error ? '#8a1c13' : '#113b53';
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4200);
+  }}
+
+  async function adminPost(url) {{
+    const response = await fetch(url, {{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{{'X-Admin-Action':'1'}}
+    }});
+    let data = {{}};
+    try {{ data = await response.json(); }} catch (_) {{}}
+    if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
+    return data;
+  }}
+
+  async function testPush(deviceId, button) {{
+    button.disabled = true;
+    try {{
+      const data = await adminPost('/admin/devices/' + encodeURIComponent(deviceId) + '/test-push');
+      toast('Test push sent via ' + (data.environment || 'APNs'));
+    }} catch (error) {{
+      toast('Test push failed: ' + error.message, true);
+    }} finally {{
+      button.disabled = false;
+    }}
+  }}
+
+  async function deleteDevice(deviceId, label) {{
+    if (!confirm('Delete ' + label + '? This removes the device and stops its Randy SIP sessions.')) return;
+    try {{
+      await adminPost('/admin/devices/' + encodeURIComponent(deviceId) + '/delete');
+      toast('Device deleted');
+      setTimeout(() => location.reload(), 500);
+    }} catch (error) {{
+      toast('Delete failed: ' + error.message, true);
+    }}
+  }}
+</script>
+</body>
+</html>""")
+
+
+@app.post('/admin/devices/{device_id}/test-push', dependencies=[Depends(admin_action)])
+async def admin_test_push(device_id: str):
+    environment = await _send_test_push(device_id)
+    return {'ok': True, 'environment': environment}
+
+
+@app.post('/admin/devices/{device_id}/delete', dependencies=[Depends(admin_action)])
+async def admin_delete_device(device_id: str):
+    try:
+        store.get(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+
+    await manager.remove_device(device_id)
+    deleted = store.delete(device_id)
+    if not deleted:
+        raise HTTPException(404, 'device not found')
+
+    diag_logger.info(
+        '[VH-DIAG] event=admin_device_deleted device=%s',
+        _safe_ref(device_id),
+    )
+    return {'ok': True}
+
+
 @app.post('/v1/devices/register', dependencies=[Depends(auth)])
 async def register_device(body: DeviceRegistration):
     device = store.upsert(body)
@@ -70,34 +318,8 @@ async def register_device(body: DeviceRegistration):
 
 @app.post('/v1/devices/{device_id}/test-push', dependencies=[Depends(auth)])
 async def test_push(device_id: str):
-    try:
-        device = store.get(device_id)
-    except KeyError:
-        raise HTTPException(404, 'device not found')
-    import uuid
-    call_id = str(uuid.uuid4())
-    try:
-        environment = await apns.send_voip(device.push_token, {
-            'aps': {'content-available': 1},
-            'id': call_id,
-            'nameCaller': 'VoiceHost Push Test',
-            'handle': 'TEST',
-            'isVideo': False,
-            'extra': {'call_id': call_id, 'test': True},
-        })
-    except RuntimeError as error:
-        diag_logger.warning(
-            '[VH-DIAG] event=test_push_failed device=%s reason=%s',
-            _safe_ref(device_id),
-            str(error),
-        )
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    diag_logger.info(
-        '[VH-DIAG] event=test_push_sent device=%s environment=%s',
-        _safe_ref(device_id),
-        environment,
-    )
-    return {'ok': True, 'call_id': call_id, 'environment': environment}
+    environment = await _send_test_push(device_id)
+    return {'ok': True, 'environment': environment}
 
 
 @app.post('/v1/devices/{device_id}/calls', dependencies=[Depends(auth)])
