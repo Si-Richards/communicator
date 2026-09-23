@@ -74,6 +74,9 @@ class WebRtcService {
       {
         'sdpSemantics': 'unified-plan',
         'iceServers': iceServers,
+        'iceTransportPolicy': AppConfig.iceTransportPolicy.trim().isEmpty
+            ? 'all'
+            : AppConfig.iceTransportPolicy.trim(),
       },
       {
         'optional': [
@@ -86,6 +89,7 @@ class WebRtcService {
     pc.onIceCandidate = (candidate) {
       final value = candidate.candidate;
       if (value == null || value.isEmpty) return;
+      onLog?.call('Local ICE candidate type: ${_candidateType(value)}');
       onLocalCandidate?.call({
         'candidate': value,
         'sdpMid': candidate.sdpMid,
@@ -171,6 +175,7 @@ class WebRtcService {
     if (object['completed'] == true) return;
     final candidateSdp = object['candidate']?.toString();
     if (candidateSdp == null || candidateSdp.isEmpty) return;
+    onLog?.call('Remote ICE candidate type: ${_candidateType(candidateSdp)}');
     final candidate = RTCIceCandidate(
       candidateSdp,
       object['sdpMid']?.toString(),
@@ -253,6 +258,12 @@ class WebRtcService {
     final pc = _peerConnection;
     if (pc == null) throw StateError('WebRTC peer connection is unavailable');
     return pc;
+  }
+
+  static String _candidateType(String candidate) {
+    final match = RegExp(r'\btyp\s+(host|srflx|prflx|relay)\b')
+        .firstMatch(candidate);
+    return match?.group(1) ?? 'unknown';
   }
 
   static int? _intValue(dynamic value) {
