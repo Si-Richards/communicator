@@ -1,11 +1,40 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
-class AboutScreen extends StatelessWidget {
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
+  static const MethodChannel _appChannel = MethodChannel('voicehost/app');
   static const appName = 'VoiceHost Softphone';
-  static const version = '0.2.0';
-  static const buildNumber = '2';
+
+  String _version = '0.2.0';
+  String _buildNumber = '4';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadBuildInfo());
+  }
+
+  Future<void> _loadBuildInfo() async {
+    try {
+      final raw = await _appChannel.invokeMethod<dynamic>('getBuildInfo');
+      if (!mounted || raw is! Map) return;
+      setState(() {
+        _version = raw['version']?.toString() ?? _version;
+        _buildNumber = raw['build']?.toString() ?? _buildNumber;
+      });
+    } on MissingPluginException {
+      // Local builds created before the native app bridge use the fallback.
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,9 +66,9 @@ class AboutScreen extends StatelessWidget {
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
-            'Version $version ($buildNumber)',
+            'Version $_version · Build $_buildNumber',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
@@ -58,8 +87,8 @@ class AboutScreen extends StatelessWidget {
                   const Text(
                     'VoiceHost Softphone provides mobile calling for the '
                     'VoiceHost hosted telephony platform, with native iOS '
-                    'calling integration, call waiting, hold, transfers and '
-                    'voicemail access.',
+                    'calling integration, call waiting, hold, transfers, '
+                    'contacts and voicemail access.',
                   ),
                 ],
               ),
@@ -75,6 +104,18 @@ class AboutScreen extends StatelessWidget {
                 ),
                 const Divider(height: 1),
                 ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Version'),
+                  trailing: Text(_version),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.build_outlined),
+                  title: const Text('Build'),
+                  trailing: Text(_buildNumber),
+                ),
+                const Divider(height: 1),
+                ListTile(
                   leading: const Icon(Icons.description_outlined),
                   title: const Text('Open-source licences'),
                   subtitle: const Text('View licences used by this app'),
@@ -82,7 +123,7 @@ class AboutScreen extends StatelessWidget {
                   onTap: () => showLicensePage(
                     context: context,
                     applicationName: appName,
-                    applicationVersion: '$version ($buildNumber)',
+                    applicationVersion: '$_version ($_buildNumber)',
                     applicationLegalese: '© 2026 VoiceHost Limited',
                   ),
                 ),
