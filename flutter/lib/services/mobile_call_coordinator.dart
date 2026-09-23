@@ -11,6 +11,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
+import '../models/call_record.dart';
 import 'mobile_gateway_service.dart';
 import 'ringback_service.dart';
 import 'webrtc_service.dart';
@@ -467,6 +468,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       final context = _GatewayCallContext(call.id)
         ..caller = call.caller
         ..displayName = call.displayName
+        ..startedAt = DateTime.now()
         ..phase = 'ringing';
       _configureGatewayCall(context);
       _gatewayCalls[context.id] = context;
@@ -497,7 +499,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _GatewayCallContext? context = existing;
     try {
       final call = await gateway.getCall(requestedCallId);
-      context ??= _GatewayCallContext(call.id);
+      context ??= _GatewayCallContext(call.id)..startedAt = DateTime.now();
       if (!_gatewayCalls.containsKey(context.id)) {
         _configureGatewayCall(context);
         _gatewayCalls[context.id] = context;
@@ -653,7 +655,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             if (context.id == _activeGatewayCallId) {
               unawaited(_closeTransferMedia());
             }
-            unawaited(_closeGatewayCall(context.id));
+            final result = context.connected
+                ? CallResult.completed
+                : context.outgoing
+                    ? CallResult.failed
+                    : CallResult.missed;
+            unawaited(_closeGatewayCall(context.id, result: result));
             break;
         }
       } catch (error) {
@@ -775,6 +782,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       final context = _GatewayCallContext(callId, webRtc: webRtc)
         ..caller = target
         ..displayName = target
+        ..startedAt = DateTime.now()
         ..outgoing = true
         ..phase = 'calling';
       _gatewayCalls[callId] = context;
@@ -823,7 +831,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         try {
           await FlutterCallkitIncoming.endCall(active.id);
         } catch (_) {}
-        _gatewayCalls.remove(active.id);
+        await _closeGatewayCall(
+          active.id,
+          result: CallResult.failed,
+          resumeAnother: false,
+        );
         _activeGatewayCallId = null;
       }
       debugPrint('[VoiceHost Mobile] outgoing call failed: $error');
@@ -1098,7 +1110,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       debugPrint('[VoiceHost Mobile] decline failed: $error');
     }
     if (context != null) {
-      await _closeGatewayCall(context.id);
+      await _closeGatewayCall(
+        context.id,
+        result: context.connected
+            ? CallResult.completed
+            : CallResult.declined,
+      );
     }
   }
 
@@ -1111,13 +1128,21 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       debugPrint('[VoiceHost Mobile] hangup failed: $error');
     }
     if (context != null) {
-      await _closeGatewayCall(context.id);
+      await _closeGatewayCall(
+        context.id,
+        result: context.connected
+            ? CallResult.completed
+            : context.outgoing
+                ? CallResult.cancelled
+                : CallResult.declined,
+      );
     }
   }
 
   Future<void> _closeGatewayCall(
     String requestedCallId, {
     bool resumeAnother = true,
+    CallResult? result,
   }) async {
     final context = _contextFor(requestedCallId);
     if (context == null) return;
@@ -1132,6 +1157,24 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     await context.socket?.close();
     context.socket = null;
     await context.webRtc.close();
+
+    if (!context.historyRecorded && result != null) {
+      context.historyRecorded = true;
+      await phone.recordExternalCall(
+        direction: context.outgoing
+            ? CallDirection.outgoing
+            : CallDirection.incoming,
+        number: context.caller?.trim().isNotEmpty == true
+            ? context.caller!.trim()
+            : 'Unknown',
+        displayName: context.displayName,
+        startedAt: context.startedAt ?? DateTime.now(),
+        connectedAt: context.connectedAt,
+        result: result,
+      );
+      _appendDiagnostic('Call history updated · result=${result.name}');
+    }
+
     _gatewayCalls.remove(context.id);
 
     if (wasActive) {
@@ -1217,6 +1260,8 @@ class _GatewayCallContext {
   WebSocket? socket;
   String? caller;
   String? displayName;
+  DateTime? startedAt;
+  bool historyRecorded = false;
   bool answering = false;
   bool connected = false;
   bool mediaConnected = false;
