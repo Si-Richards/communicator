@@ -74,35 +74,8 @@ class _AboutScreenState extends State<AboutScreen> {
           ),
           const SizedBox(height: 28),
           Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'VoiceHost',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'VoiceHost Softphone provides mobile calling for the '
-                    'VoiceHost hosted telephony platform, with native iOS '
-                    'calling integration, call waiting, hold, transfers, '
-                    'contacts and voicemail access.',
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Card(
             child: Column(
               children: [
-                const ListTile(
-                  leading: Icon(Icons.business_outlined),
-                  title: Text('VoiceHost Limited'),
-                  subtitle: Text('United Kingdom'),
-                ),
-                const Divider(height: 1),
                 ListTile(
                   leading: const Icon(Icons.info_outline),
                   title: const Text('Version'),
