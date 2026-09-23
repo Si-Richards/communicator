@@ -53,6 +53,11 @@ async def health():
         'helpers': sum(len(items) for items in manager.helpers.values()),
         'active_calls': sum(len(items) for items in manager.device_calls.values()),
         'calls': len(manager.calls),
+        'apns_configured': apns.configured,
+        'apns_primary_environment': (
+            'sandbox' if settings.apns_sandbox else 'production'
+        ),
+        'apns_fallback_environment': settings.apns_fallback_environment,
     }
 
 
@@ -71,15 +76,28 @@ async def test_push(device_id: str):
         raise HTTPException(404, 'device not found')
     import uuid
     call_id = str(uuid.uuid4())
-    await apns.send_voip(device.push_token, {
-        'aps': {'content-available': 1},
-        'id': call_id,
-        'nameCaller': 'VoiceHost Push Test',
-        'handle': 'TEST',
-        'isVideo': False,
-        'extra': {'call_id': call_id, 'test': True},
-    })
-    return {'ok': True, 'call_id': call_id}
+    try:
+        environment = await apns.send_voip(device.push_token, {
+            'aps': {'content-available': 1},
+            'id': call_id,
+            'nameCaller': 'VoiceHost Push Test',
+            'handle': 'TEST',
+            'isVideo': False,
+            'extra': {'call_id': call_id, 'test': True},
+        })
+    except RuntimeError as error:
+        diag_logger.warning(
+            '[VH-DIAG] event=test_push_failed device=%s reason=%s',
+            _safe_ref(device_id),
+            str(error),
+        )
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    diag_logger.info(
+        '[VH-DIAG] event=test_push_sent device=%s environment=%s',
+        _safe_ref(device_id),
+        environment,
+    )
+    return {'ok': True, 'call_id': call_id, 'environment': environment}
 
 
 @app.post('/v1/devices/{device_id}/calls', dependencies=[Depends(auth)])
