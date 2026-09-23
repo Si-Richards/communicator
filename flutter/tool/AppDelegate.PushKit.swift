@@ -14,8 +14,10 @@ import flutter_callkit_incoming
     private var audioChannel: FlutterMethodChannel?
     private var callKitChannel: FlutterMethodChannel?
     private var contactsChannel: FlutterMethodChannel?
+    private var appChannel: FlutterMethodChannel?
     private let callController = CXCallController()
     private let pendingCallKitActionsKey = "voicehost.pendingCallKitActions"
+    private let nativeLogsKey = "voicehost.nativeLogs"
 
     override func application(
         _ application: UIApplication,
@@ -102,6 +104,30 @@ import flutter_callkit_incoming
             }
             self.contactsChannel = contactsChannel
 
+            let appChannel = FlutterMethodChannel(
+                name: "voicehost/app",
+                binaryMessenger: controller.binaryMessenger
+            )
+            appChannel.setMethodCallHandler { [weak self] call, result in
+                guard let self else {
+                    result(FlutterMethodNotImplemented)
+                    return
+                }
+                switch call.method {
+                case "getBuildInfo":
+                    result(self.buildInfo())
+                case "getNativeLogs":
+                    result(self.nativeLogs())
+                case "clearNativeLogs":
+                    self.clearNativeLogs()
+                    result(nil)
+                default:
+                    result(FlutterMethodNotImplemented)
+                }
+            }
+            self.appChannel = appChannel
+
+            self.recordNativeLog("Application bridge ready")
             print("[VoiceHost Audio] native audio channel ready")
             print("[VoiceHost CallKit] native recovery channel ready")
             print("[VoiceHost Contacts] native contacts channel ready")
@@ -119,12 +145,13 @@ import flutter_callkit_incoming
     ) {
         guard type == .voIP else { return }
         let token = credentials.token.map { String(format: "%02x", $0) }.joined()
-        print("[VoiceHost PushKit] VoIP token ready (\(credentials.token.count) bytes)")
+        recordNativeLog("PushKit token updated (\(credentials.token.count) bytes)")
         SwiftFlutterCallkitIncomingPlugin.sharedInstance?.setDevicePushTokenVoIP(token)
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
         guard type == .voIP else { return }
+        recordNativeLog("PushKit token invalidated")
         SwiftFlutterCallkitIncomingPlugin.sharedInstance?.setDevicePushTokenVoIP("")
     }
 
@@ -133,7 +160,7 @@ import flutter_callkit_incoming
     func onAccept(_ call: Call, _ action: CXAnswerCallAction) {
         stopRingback()
         persistPendingCallKitAction(type: "accept", id: call.uuid.uuidString)
-        print("[VoiceHost CallKit] answer accepted")
+        recordNativeLog("CallKit answer accepted")
         action.fulfill()
         foregroundAppForCall(id: call.uuid.uuidString)
     }
@@ -141,39 +168,70 @@ import flutter_callkit_incoming
     func onDecline(_ call: Call, _ action: CXEndCallAction) {
         stopRingback()
         persistPendingCallKitAction(type: "decline", id: call.uuid.uuidString)
-        print("[VoiceHost CallKit] call declined")
+        recordNativeLog("CallKit call declined")
         action.fulfill()
     }
 
     func onEnd(_ call: Call, _ action: CXEndCallAction) {
         stopRingback()
         persistPendingCallKitAction(type: "end", id: call.uuid.uuidString)
-        print("[VoiceHost CallKit] call ended")
+        recordNativeLog("CallKit call ended")
         action.fulfill()
     }
 
     func onTimeOut(_ call: Call) {
-        print("[VoiceHost CallKit] call timed out")
+        recordNativeLog("CallKit call timed out")
     }
 
     func didActivateAudioSession(_ audioSession: AVAudioSession) {
         let rtcAudioSession = RTCAudioSession.sharedInstance()
         rtcAudioSession.audioSessionDidActivate(audioSession)
         rtcAudioSession.isAudioEnabled = true
-        print("[VoiceHost CallKit] WebRTC audio session activated")
+        recordNativeLog("CallKit WebRTC audio session activated")
     }
 
     func didDeactivateAudioSession(_ audioSession: AVAudioSession) {
         let rtcAudioSession = RTCAudioSession.sharedInstance()
         rtcAudioSession.audioSessionDidDeactivate(audioSession)
         rtcAudioSession.isAudioEnabled = false
-        print("[VoiceHost CallKit] WebRTC audio session deactivated")
+        recordNativeLog("CallKit WebRTC audio session deactivated")
     }
 
     func providerDidReset() {
-        print("[VoiceHost CallKit] provider reset")
+        recordNativeLog("CallKit provider reset")
     }
 
+
+    private func buildInfo() -> [String: String] {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return [
+            "version": info["CFBundleShortVersionString"] as? String ?? "Unknown",
+            "build": info["CFBundleVersion"] as? String ?? "Unknown",
+        ]
+    }
+
+    private func recordNativeLog(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        var logs = UserDefaults.standard.stringArray(forKey: nativeLogsKey) ?? []
+        logs.append("\(timestamp)  \(message)")
+        if logs.count > 250 {
+            logs.removeFirst(logs.count - 250)
+        }
+        UserDefaults.standard.set(logs, forKey: nativeLogsKey)
+        print("[VoiceHost Native] \(message)")
+    }
+
+    private func nativeLogs() -> [String] {
+        return Array(
+            (UserDefaults.standard.stringArray(forKey: nativeLogsKey) ?? [])
+                .reversed()
+        )
+    }
+
+    private func clearNativeLogs() {
+        UserDefaults.standard.removeObject(forKey: nativeLogsKey)
+        recordNativeLog("Native diagnostics cleared")
+    }
 
     private func loadContacts(result: @escaping FlutterResult) {
         let store = CNContactStore()
@@ -310,7 +368,7 @@ import flutter_callkit_incoming
         ) as? [[String: String]] ?? []
         UserDefaults.standard.removeObject(forKey: pendingCallKitActionsKey)
         if !actions.isEmpty {
-            print("[VoiceHost CallKit] recovered \(actions.count) native action(s)")
+            recordNativeLog("Recovered \(actions.count) pending CallKit action(s)")
         }
         return actions
     }
@@ -327,10 +385,10 @@ import flutter_callkit_incoming
 
         DispatchQueue.main.async {
             UIApplication.shared.open(url, options: [:]) { opened in
-                print(
+                self.recordNativeLog(
                     opened
-                        ? "[VoiceHost CallKit] foreground request accepted"
-                        : "[VoiceHost CallKit] foreground request unavailable"
+                        ? "CallKit foreground request accepted"
+                        : "CallKit foreground request unavailable"
                 )
             }
         }
@@ -341,7 +399,7 @@ import flutter_callkit_incoming
         completion: @escaping () -> Void
     ) {
         guard let uuid = UUID(uuidString: id) else {
-            print("[VoiceHost CallKit] invalid end-call UUID")
+            recordNativeLog("CallKit invalid end-call UUID")
             completion()
             return
         }
@@ -350,9 +408,9 @@ import flutter_callkit_incoming
         transaction.addAction(CXEndCallAction(call: uuid))
         callController.request(transaction) { error in
             if error != nil {
-                print("[VoiceHost CallKit] remote end request was not needed")
+                self.recordNativeLog("CallKit remote end request was not needed")
             } else {
-                print("[VoiceHost CallKit] remote ringing call dismissed")
+                self.recordNativeLog("CallKit remote ringing call dismissed")
             }
             DispatchQueue.main.async {
                 completion()
@@ -374,10 +432,10 @@ import flutter_callkit_incoming
             player.prepareToPlay()
             player.play()
             ringbackPlayer = player
-            print("[VoiceHost Audio] local ringback started")
+            recordNativeLog("Local ringback started")
         } catch {
             ringbackPlayer = nil
-            print("[VoiceHost Audio] local ringback failed")
+            recordNativeLog("Local ringback failed")
         }
     }
 
@@ -385,7 +443,7 @@ import flutter_callkit_incoming
         guard let player = ringbackPlayer else { return }
         player.stop()
         ringbackPlayer = nil
-        print("[VoiceHost Audio] local ringback stopped")
+        recordNativeLog("Local ringback stopped")
     }
 
     private func makeUKRingbackWav() -> Foundation.Data {
@@ -470,11 +528,12 @@ import flutter_callkit_incoming
         // e.g. the call was answered on another registered endpoint. Handle it
         // natively because Flutter may still be suspended while CallKit rings.
         if body["action"] as? String == "end" {
-            print("[VoiceHost PushKit] received remote ringing-end")
+            recordNativeLog("PushKit received remote ringing-end")
             endCallKitCall(id: id, completion: completion)
             return
         }
 
+        recordNativeLog("PushKit incoming VoIP push received")
         let caller = body["handle"] as? String ?? "Unknown"
         let callerName = body["nameCaller"] as? String ?? caller
 
@@ -512,7 +571,7 @@ import flutter_callkit_incoming
             try audioSession.setPreferredSampleRate(48_000)
             try audioSession.setPreferredIOBufferDuration(0.01)
         } catch {
-            print("[VoiceHost CallKit] audio session preconfiguration failed")
+            recordNativeLog("CallKit audio session preconfiguration failed")
         }
 
         SwiftFlutterCallkitIncomingPlugin.sharedInstance?.showCallkitIncoming(
