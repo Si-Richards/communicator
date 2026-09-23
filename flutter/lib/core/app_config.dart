@@ -33,4 +33,9 @@ class AppConfig {
     'VOICEHOST_TURN_CREDENTIAL',
     defaultValue: '',
   );
+
+  static const iceTransportPolicy = String.fromEnvironment(
+    'VOICEHOST_ICE_TRANSPORT_POLICY',
+    defaultValue: 'all',
+  );
 }
