@@ -30,7 +30,23 @@ class VoiceHostApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(
           seedColor: orange,
           primary: orange,
+          onPrimary: Colors.white,
+          primaryContainer: orange,
+          onPrimaryContainer: Colors.white,
           secondary: navy,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: orange,
+            foregroundColor: Colors.white,
+          ),
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: orange,
+          foregroundColor: Colors.white,
+        ),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: orange,
         ),
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF8F9FB),
