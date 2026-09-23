@@ -46,7 +46,50 @@ server {
         proxy_buffering off;
     }
 
+    # Mobile application/API traffic must remain public. Authentication for
+    # these endpoints is handled by the gateway API key, not source IP.
+    location ^~ /v1/ {
+        auth_basic off;
+
+        proxy_pass http://mobile-gateway:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location = /health {
+        auth_basic off;
+
+        proxy_pass http://mobile-gateway:8080/health;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_buffering off;
+    }
+
+    # Catch-all remains unrestricted. Only /admin is protected by source IP
+    # and HTTP Basic Auth.
     location / {
+        auth_basic off;
+
         proxy_pass http://mobile-gateway:8080;
         proxy_http_version 1.1;
 
