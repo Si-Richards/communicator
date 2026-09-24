@@ -752,6 +752,20 @@ class PhoneController extends ChangeNotifier {
     }
   }
 
+  void updateVoicemailSummary({
+    required bool waiting,
+    required int newMessages,
+    required int oldMessages,
+  }) {
+    voicemail = VoicemailSummary(
+      waiting: waiting || newMessages > 0,
+      newMessages: newMessages,
+      oldMessages: oldMessages,
+    );
+    voicemailSubscriptionStatus = 'Gateway MWI';
+    notifyListeners();
+  }
+
   Future<void> callVoicemail() async {
     await placeCall(voicemailNumber);
   }
