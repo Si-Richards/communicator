@@ -89,6 +89,14 @@ class JanusSipSession:
     async def accept(self, sdp: str):
         await self._message({'request': 'accept'}, {'type': 'answer', 'sdp': sdp, 'trickle': True})
 
+    async def update(self, sdp: str, jsep_type: str):
+        if jsep_type not in {'offer', 'answer'}:
+            raise ValueError('jsep_type must be offer or answer')
+        await self._message(
+            {'request': 'update'},
+            {'type': jsep_type, 'sdp': sdp, 'trickle': True},
+        )
+
     async def decline(self, code: int = 486):
         await self._message({'request': 'decline', 'code': code})
 
