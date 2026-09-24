@@ -905,7 +905,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           id: callId,
           nameCaller: target,
           handle: target,
-          type: 0,
+          type: video ? 1 : 0,
           extra: const {'source': 'voicehost-mobile-gateway'},
           ios: const IOSParams(
             handleType: 'number',
