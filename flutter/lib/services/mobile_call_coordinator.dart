@@ -67,6 +67,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool _transferConnected = false;
   bool _transferBusy = false;
   Timer? _transferWatchdog;
+  Timer? _voicemailPollTimer;
   final List<Map<String, dynamic>> _pendingTransferCandidates = [];
 
   _GatewayCallContext? get _activeGatewayCall {
@@ -210,6 +211,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     );
     unawaited(_recoverCallKitState());
     _scheduleCallKitRecoveryRetries();
+    _voicemailPollTimer?.cancel();
+    _voicemailPollTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(_refreshGatewayVoicemail()),
+    );
+    unawaited(_refreshGatewayVoicemail());
   }
 
   void _scheduleCallKitRecoveryRetries() {
@@ -266,6 +273,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _gatewayProvisioned = true;
       notifyListeners();
       _appendDiagnostic('Mobile gateway registration active');
+      unawaited(
+        Future<void>.delayed(
+          const Duration(milliseconds: 500),
+          _refreshGatewayVoicemail,
+        ),
+      );
     } catch (error) {
       _gatewayProvisioned = false;
       notifyListeners();
@@ -298,6 +311,27 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_recoverCallKitState());
       _scheduleCallKitRecoveryRetries();
+      unawaited(_refreshGatewayVoicemail());
+    }
+  }
+
+  Future<void> _refreshGatewayVoicemail() async {
+    final deviceId = _deviceId;
+    if (!gateway.enabled || deviceId == null || !_gatewayProvisioned) return;
+    try {
+      final summary = await gateway.getVoicemail(deviceId);
+      final waiting = summary['waiting'] == true;
+      final newMessages =
+          int.tryParse(summary['new_messages']?.toString() ?? '') ?? 0;
+      final oldMessages =
+          int.tryParse(summary['old_messages']?.toString() ?? '') ?? 0;
+      phone.updateVoicemailFromGateway(
+        waiting: waiting,
+        newMessages: newMessages,
+        oldMessages: oldMessages,
+      );
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] voicemail refresh failed: $error');
     }
   }
 
@@ -1270,6 +1304,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _transferWatchdog?.cancel();
+    _voicemailPollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
     unawaited(_callKitSubscription?.cancel());
