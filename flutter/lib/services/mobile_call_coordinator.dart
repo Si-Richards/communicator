@@ -273,6 +273,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _gatewayProvisioned = true;
       notifyListeners();
       _appendDiagnostic('Mobile gateway registration active');
+      unawaited(_refreshVoicemail());
       unawaited(
         Future<void>.delayed(
           const Duration(milliseconds: 500),
@@ -332,6 +333,21 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       );
     } catch (error) {
       debugPrint('[VoiceHost Mobile] voicemail refresh failed: $error');
+    }
+  }
+
+  Future<void> _refreshVoicemail() async {
+    final deviceId = _deviceId;
+    if (!gateway.enabled || deviceId == null || !_gatewayProvisioned) return;
+    try {
+      final summary = await gateway.getVoicemail(deviceId);
+      phone.updateVoicemailSummary(
+        waiting: summary.waiting,
+        newMessages: summary.newMessages,
+        oldMessages: summary.oldMessages,
+      );
+    } catch (error) {
+      _appendDiagnostic('Voicemail MWI refresh failed: $error');
     }
   }
 
@@ -1304,6 +1320,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _transferWatchdog?.cancel();
+    _voicemailRefreshTimer?.cancel();
     _voicemailPollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
