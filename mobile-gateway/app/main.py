@@ -218,7 +218,10 @@ async def admin_devices(request: Request):
 <body>
 <header>
   <h1>VoiceHost · Randy Device Manager</h1>
-  <span class="badge">Restricted admin</span>
+  <div class="header-actions">
+    <a class="admin-link" href="/admin/calls">Calls / Media</a>
+    <span class="badge">Restricted admin</span>
+  </div>
 </header>
 <main>
   <div class="summary">
@@ -292,6 +295,237 @@ async def admin_devices(request: Request):
 </script>
 </body>
 </html>""")
+
+
+@app.get('/admin/calls', response_class=HTMLResponse)
+async def admin_calls(request: Request):
+    params = request.query_params
+    selected_node = (params.get('janus') or '').strip()
+    selected_ice = (params.get('ice') or '').strip()
+    failed_only = (params.get('failed') or '') == '1'
+    calls = store.admin_calls(
+        limit=250,
+        janus_peer_ip=selected_node or None,
+        ice_state=selected_ice or None,
+        failed_only=failed_only,
+    )
+    nodes = store.janus_nodes()
+
+    node_options = ['<option value="">All Janus nodes</option>']
+    for node in nodes:
+        selected = ' selected' if node == selected_node else ''
+        safe_node = html.escape(node, quote=True)
+        node_options.append(
+            f'<option value="{safe_node}"{selected}>{safe_node}</option>'
+        )
+
+    rows = []
+    for item in calls:
+        call_id = item['call_id']
+        call_ref = _safe_ref(call_id)
+        nickname = item.get('nickname') or item.get('sip_username') or 'Unknown device'
+        peer = item.get('janus_peer_ip') or '—'
+        peer_port = item.get('janus_peer_port')
+        peer_text = f'{peer}:{peer_port}' if peer_port else peer
+        media_ip = item.get('janus_media_ip') or '—'
+        media_port = item.get('janus_media_port')
+        media_text = f'{media_ip}:{media_port}' if media_port else media_ip
+        ice_state = item.get('ice_state') or '—'
+        media_status = item.get('media_status') or 'unknown'
+        status_class = (
+            'ok' if media_status == 'connected'
+            else 'bad' if media_status in {'failed', 'disconnected'}
+            else 'neutral'
+        )
+        rows.append(f"""
+          <tr>
+            <td><strong>{html.escape(item.get('started_at') or '—')}</strong>
+                <div class="muted">{html.escape(item.get('direction') or '—')}</div></td>
+            <td>{html.escape(str(nickname))}<div class="muted">{call_ref}</div></td>
+            <td><strong>{html.escape(peer_text)}</strong>
+                <div class="muted">session {html.escape(str(item.get('janus_session_id') or '—'))}
+                · handle {html.escape(str(item.get('janus_handle_id') or '—'))}</div></td>
+            <td>{html.escape(media_text)}
+                <div class="muted">{html.escape(item.get('janus_candidate_type') or '—')}</div></td>
+            <td><span class="status {status_class}">{html.escape(media_status)}</span>
+                <div class="muted">{html.escape(ice_state)}</div></td>
+            <td>{html.escape(item.get('call_status') or '—')}</td>
+            <td><a class="detail-link" href="/admin/calls/{html.escape(call_id, quote=True)}">View timeline</a></td>
+          </tr>
+        """)
+
+    table_rows = ''.join(rows) or """
+      <tr><td colspan="7" class="empty">No calls match the selected filters.</td></tr>
+    """
+    failed_checked = ' checked' if failed_only else ''
+    ice_value = html.escape(selected_ice, quote=True)
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Randy Calls · VoiceHost</title>
+  <style>
+    :root {{ color-scheme:light; --orange:#ff6600; --navy:#113b53; --bg:#f6f7f9;
+      --card:#fff; --border:#e5e7eb; --muted:#6b7280; --danger:#b42318; --success:#157347; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg); color:#17212b; }}
+    header {{ background:var(--navy); color:white; padding:18px 28px; display:flex; align-items:center;
+      justify-content:space-between; gap:20px; }}
+    header h1 {{ margin:0; font-size:20px; }}
+    header a {{ color:white; text-decoration:none; background:rgba(255,255,255,.14); padding:7px 10px;
+      border-radius:8px; font-size:13px; font-weight:650; }}
+    main {{ max-width:1500px; margin:28px auto; padding:0 20px; }}
+    .filters {{ display:flex; flex-wrap:wrap; gap:10px; align-items:end; background:var(--card);
+      border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:16px; }}
+    label {{ display:flex; flex-direction:column; gap:5px; color:var(--muted); font-size:12px; }}
+    .check {{ flex-direction:row; align-items:center; padding-bottom:8px; }}
+    select,input[type=text] {{ min-width:190px; border:1px solid var(--border); border-radius:8px; padding:9px 10px; background:white; }}
+    button {{ border:0; border-radius:8px; padding:9px 13px; cursor:pointer; font-weight:700; background:var(--orange); color:white; }}
+    .panel {{ background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; }}
+    .panel-head {{ padding:16px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; }}
+    .panel-head h2 {{ margin:0; font-size:17px; }}
+    .table-wrap {{ overflow-x:auto; }}
+    table {{ width:100%; border-collapse:collapse; min-width:1120px; }}
+    th,td {{ text-align:left; padding:12px 14px; border-bottom:1px solid var(--border); vertical-align:top; }}
+    th {{ background:#fafafa; color:#475467; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
+    .muted {{ color:var(--muted); font-size:12px; margin-top:3px; }}
+    .status {{ display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:700; }}
+    .status.ok {{ color:var(--success); background:#e8f5ee; }}
+    .status.bad {{ color:#8a1c13; background:#fdecea; }}
+    .status.neutral {{ color:#475467; background:#eef2f5; }}
+    .detail-link {{ color:var(--navy); font-weight:700; text-decoration:none; }}
+    .empty {{ text-align:center; color:var(--muted); padding:36px; }}
+  </style>
+</head>
+<body>
+<header>
+  <h1>VoiceHost · Randy Calls / Media Diagnostics</h1>
+  <a href="/admin">Device Manager</a>
+</header>
+<main>
+  <form class="filters" method="get">
+    <label>Janus node
+      <select name="janus">{''.join(node_options)}</select>
+    </label>
+    <label>ICE state contains
+      <input type="text" name="ice" value="{ice_value}" placeholder="failed, connected, checking">
+    </label>
+    <label class="check"><input type="checkbox" name="failed" value="1"{failed_checked}> Failed media only</label>
+    <button type="submit">Filter</button>
+  </form>
+  <section class="panel">
+    <div class="panel-head"><h2>Recent calls</h2><span class="muted">{len(calls)} shown · max 250</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Started</th><th>Device</th><th>Janus</th><th>Media candidate</th>
+          <th>ICE / media</th><th>Call</th><th>Details</th>
+        </tr></thead>
+        <tbody>{table_rows}</tbody>
+      </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>""")
+
+
+@app.get('/admin/calls/{call_id}', response_class=HTMLResponse)
+async def admin_call_detail(call_id: str):
+    try:
+        call, events = store.admin_call_detail(call_id)
+    except KeyError:
+        raise HTTPException(404, 'call diagnostic not found')
+
+    nickname = call.get('nickname') or call.get('sip_username') or 'Unknown device'
+    peer = call.get('janus_peer_ip') or '—'
+    peer_port = call.get('janus_peer_port')
+    peer_text = f'{peer}:{peer_port}' if peer_port else peer
+    media_ip = call.get('janus_media_ip') or '—'
+    media_port = call.get('janus_media_port')
+    media_text = f'{media_ip}:{media_port}' if media_port else media_ip
+
+    timeline = []
+    for event in events:
+        details = event.get('details') or {}
+        detail_text = ' · '.join(
+            f'{html.escape(str(key))}={html.escape(str(value))}'
+            for key, value in details.items()
+            if value not in ('', None, 0)
+        )
+        timeline.append(f"""
+          <div class="event">
+            <div class="time">{html.escape(event.get('created_at') or '—')}</div>
+            <div><strong>{html.escape(event.get('event') or 'event')}</strong>
+            {'<div class="muted">' + detail_text + '</div>' if detail_text else ''}</div>
+          </div>
+        """)
+    timeline_html = ''.join(timeline) or '<div class="empty">No timeline events recorded.</div>'
+
+    fields = [
+        ('Call reference', _safe_ref(call_id)),
+        ('Device', str(nickname)),
+        ('Direction', call.get('direction') or '—'),
+        ('Janus peer', peer_text),
+        ('Janus session', str(call.get('janus_session_id') or '—')),
+        ('Janus handle', str(call.get('janus_handle_id') or '—')),
+        ('Janus media candidate', media_text),
+        ('Candidate type', call.get('janus_candidate_type') or '—'),
+        ('ICE state', call.get('ice_state') or '—'),
+        ('Peer state', call.get('peer_state') or '—'),
+        ('Media status', call.get('media_status') or '—'),
+        ('Call status', call.get('call_status') or '—'),
+        ('Local candidates', str(call.get('local_candidates') if call.get('local_candidates') is not None else '—')),
+        ('Remote candidates', str(call.get('remote_candidates') if call.get('remote_candidates') is not None else '—')),
+        ('Local audio tracks', str(call.get('local_audio_tracks') if call.get('local_audio_tracks') is not None else '—')),
+        ('Remote audio tracks', str(call.get('remote_audio_tracks') if call.get('remote_audio_tracks') is not None else '—')),
+        ('Started', call.get('started_at') or '—'),
+        ('Connected', call.get('connected_at') or '—'),
+        ('Ended', call.get('ended_at') or '—'),
+    ]
+    field_html = ''.join(
+        f'<div class="field"><span>{html.escape(label)}</span><strong>{html.escape(str(value))}</strong></div>'
+        for label, value in fields
+    )
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Randy Call {_safe_ref(call_id)} · VoiceHost</title>
+  <style>
+    :root {{ color-scheme:light; --orange:#ff6600; --navy:#113b53; --bg:#f6f7f9; --card:#fff;
+      --border:#e5e7eb; --muted:#6b7280; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg); color:#17212b; }}
+    header {{ background:var(--navy); color:white; padding:18px 28px; display:flex; justify-content:space-between; align-items:center; }}
+    header h1 {{ margin:0; font-size:20px; }} header a {{ color:white; text-decoration:none; }}
+    main {{ max-width:1150px; margin:28px auto; padding:0 20px; display:grid; grid-template-columns:1fr 1.3fr; gap:18px; }}
+    .panel {{ background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; }}
+    .panel h2 {{ margin:0; padding:16px 18px; font-size:17px; border-bottom:1px solid var(--border); }}
+    .fields {{ padding:8px 18px 16px; }}
+    .field {{ display:flex; justify-content:space-between; gap:20px; padding:9px 0; border-bottom:1px solid #f0f1f3; }}
+    .field span,.muted,.time {{ color:var(--muted); font-size:12px; }}
+    .field strong {{ text-align:right; font-size:13px; word-break:break-word; }}
+    .timeline {{ padding:8px 18px 18px; }}
+    .event {{ display:grid; grid-template-columns:145px 1fr; gap:14px; padding:11px 0; border-bottom:1px solid #f0f1f3; }}
+    .empty {{ padding:24px 0; color:var(--muted); }}
+    @media(max-width:850px) {{ main {{ grid-template-columns:1fr; }} }}
+  </style>
+</head>
+<body>
+<header><h1>Call {_safe_ref(call_id)}</h1><a href="/admin/calls">← Calls / Media</a></header>
+<main>
+  <section class="panel"><h2>Call / media state</h2><div class="fields">{field_html}</div></section>
+  <section class="panel"><h2>Diagnostic timeline</h2><div class="timeline">{timeline_html}</div></section>
+</main>
+</body>
+</html>""")
+
 
 
 @app.post('/admin/devices/{device_id}/test-push', dependencies=[Depends(admin_action)])
@@ -544,6 +778,7 @@ async def diagnostics(body: DiagnosticEvent):
         _safe_ref(body.call_id),
         safe_details,
     )
+    store.add_call_event(body.call_id, body.event, safe_details)
     return {'ok': True}
 
 
