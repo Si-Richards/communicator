@@ -17,6 +17,29 @@ def _safe_ref(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:10]
 
 
+def _candidate_metadata(candidate: dict) -> dict:
+    value = str(candidate.get('candidate') or '').strip()
+    if not value:
+        return {}
+    parts = value.split()
+    if len(parts) < 8:
+        return {}
+    try:
+        typ_index = parts.index('typ')
+    except ValueError:
+        return {}
+    result = {
+        'candidate_type': parts[typ_index + 1] if typ_index + 1 < len(parts) else 'unknown',
+    }
+    if len(parts) > 5:
+        result['ip'] = parts[4]
+        try:
+            result['port'] = int(parts[5])
+        except (TypeError, ValueError):
+            pass
+    return result
+
+
 @dataclass
 class CallRuntime:
     id: str
@@ -106,9 +129,12 @@ class MobileSessionManager:
             master = await self._create_session(device)
             self.sessions[device.device_id] = master
             logger.info(
-                '[VH-DIAG] event=session_start device=%s master_id=%s',
+                '[VH-DIAG] event=session_start device=%s master_id=%s peer=%s session=%s handle=%s',
                 _safe_ref(device.device_id),
                 master.master_id,
+                master.peer_ip or '-',
+                master.session_id or '-',
+                master.handle_id or '-',
             )
             await self._ensure_helpers(device, master)
 
@@ -132,11 +158,27 @@ class MobileSessionManager:
             assert session is not None
             call = self._call_for_session(session)
             if call:
+                meta = _candidate_metadata(candidate)
                 logger.info(
-                    '[VH-DIAG] event=janus_candidate call=%s completed=%s',
+                    '[VH-DIAG] event=janus_candidate call=%s completed=%s type=%s media=%s:%s',
                     _safe_ref(call.id),
                     bool(candidate.get('completed')),
+                    meta.get('candidate_type', '-'),
+                    meta.get('ip', '-'),
+                    meta.get('port', '-'),
                 )
+                if meta:
+                    self.store.update_call(
+                        call.id,
+                        janus_candidate_type=meta.get('candidate_type'),
+                        janus_media_ip=meta.get('ip'),
+                        janus_media_port=meta.get('port'),
+                    )
+                    self.store.add_call_event(call.id, 'janus_candidate', {
+                        'candidate_type': meta.get('candidate_type', ''),
+                        'janus_media_ip': meta.get('ip', ''),
+                        'janus_media_port': meta.get('port', 0),
+                    })
                 await call.publish({'type': 'trickle', 'candidate': candidate})
 
         session = JanusSipSession(
@@ -232,6 +274,16 @@ class MobileSessionManager:
         call.session = session
         self.session_call[id(session)] = call.id
         self.device_calls.setdefault(call.device_id, set()).add(call.id)
+        self.store.begin_call(
+            call.id,
+            call.device_id,
+            call.direction,
+            janus_peer_ip=session.peer_ip,
+            janus_peer_port=session.peer_port,
+            janus_session_id=session.session_id,
+            janus_handle_id=session.handle_id,
+            sip_call_id=call.sip_call_id,
+        )
 
     def _release_call_session(self, call: CallRuntime):
         session = call.session
@@ -333,6 +385,11 @@ class MobileSessionManager:
         if not call:
             return
 
+        sip_call_id = data.get('call_id')
+        if sip_call_id:
+            call.sip_call_id = str(sip_call_id)
+            self.store.update_call(call.id, sip_call_id=call.sip_call_id)
+
         if event == 'transferring':
             await call.publish({'type': 'transfer', 'state': 'transferring'})
             transfer = self._current_transfer(device.device_id)
@@ -393,6 +450,7 @@ class MobileSessionManager:
             if event == 'accepted':
                 call.connected = True
                 call.held = False
+                self.store.mark_call_connected(call.id)
             logger.info(
                 '[VH-DIAG] event=janus_%s call=%s jsep=%s',
                 event,
@@ -407,6 +465,14 @@ class MobileSessionManager:
             call.held = False
             await call.publish({'type': 'hold', 'held': False})
         elif event == 'hangup':
+            self.store.end_call(
+                call.id,
+                status='ended' if call.connected else 'failed',
+                details={
+                    'code': result.get('code') or 0,
+                    'reason_header_cause': result.get('reason_header_cause') or 0,
+                },
+            )
             await call.publish({
                 'type': 'hangup',
                 'reason': result.get('reason'),
