@@ -390,105 +390,134 @@ class _CallControls extends StatelessWidget {
 
     if (mobileCalls.hasActiveGatewayCall) {
       final number = mobileCalls.gatewayCallerNumber;
+      final connected = mobileCalls.gatewayCallConnected;
+      final mediaConnected = mobileCalls.gatewayMediaConnected;
+
       return Column(
         children: [
           Text(
             mobileCalls.gatewayCallerDisplay,
             style: Theme.of(context).textTheme.headlineSmall,
+            textAlign: TextAlign.center,
           ),
           if (number != null &&
               number.isNotEmpty &&
               number != mobileCalls.gatewayCallerDisplay)
-            Text(number, style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                number,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+          const SizedBox(height: 10),
           Text(
-            !mobileCalls.gatewayCallConnected
-                ? 'Connecting…'
-                : mobileCalls.gatewayMediaConnected
-                    ? 'Connected · ${_formatCallDuration(mobileCalls.gatewayConnectedAt)}'
-                    : 'Connected · Media connecting…',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 16,
-            runSpacing: 12,
-            alignment: WrapAlignment.center,
-            children: [
-              FilterChip(
-                selected: mobileCalls.gatewayMuted,
-                onSelected: (_) => mobileCalls.toggleGatewayMute(),
-                avatar: Icon(
-                  mobileCalls.gatewayMuted ? Icons.mic_off : Icons.mic,
-                ),
-                label: Text(
-                  mobileCalls.gatewayMuted ? 'Muted' : 'Mute',
-                ),
-              ),
-              FilterChip(
-                selected: mobileCalls.gatewaySpeakerphoneOn,
-                onSelected: (_) => mobileCalls.toggleGatewaySpeakerphone(),
-                avatar: Icon(
-                  mobileCalls.gatewaySpeakerphoneOn
-                      ? Icons.volume_up
-                      : Icons.hearing,
-                ),
-                label: const Text('Speaker'),
-              ),
-              FilterChip(
-                selected: mobileCalls.gatewayHeld,
-                onSelected: mobileCalls.gatewayCallConnected
-                    ? (_) => mobileCalls.toggleGatewayHold()
-                    : null,
-                avatar: const Icon(Icons.pause),
-                label: Text(mobileCalls.gatewayHeld ? 'Held' : 'Hold'),
-              ),
-              FilterChip(
-                selected: mobileCalls.hasActiveTransfer,
-                onSelected: mobileCalls.hasActiveTransfer
-                    ? null
-                    : (_) async {
-                        final request = await _showTransferSheet(context);
-                        if (request == null) return;
-                        if (request.attended) {
-                          await mobileCalls.startAttendedTransfer(request.target);
-                        } else {
-                          await mobileCalls.blindTransferActiveCall(request.target);
-                        }
-                      },
-                avatar: const Icon(Icons.swap_horiz),
-                label: const Text('Transfer'),
-              ),
-            ],
+            !connected
+                ? 'Ringing…'
+                : mediaConnected
+                    ? _formatCallDuration(mobileCalls.gatewayConnectedAt)
+                    : 'Media connecting…',
+            style: Theme.of(context).textTheme.titleMedium,
           ),
           if (mobileCalls.otherGatewayCalls.isNotEmpty) ...[
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             for (final other in mobileCalls.otherGatewayCalls)
-              Card(
-                child: ListTile(
-                  leading: Icon(
-                    other.held ? Icons.pause_circle : Icons.call,
-                  ),
-                  title: Text(other.displayName),
-                  subtitle: Text(
-                    other.held
-                        ? 'On hold'
-                        : other.phase == 'ringing'
-                            ? 'Incoming call'
-                            : other.connected
-                                ? 'Connected'
-                                : 'Connecting…',
-                  ),
-                  trailing: FilledButton(
-                    onPressed: other.connected
-                        ? () => mobileCalls.switchToGatewayCall(other.id)
-                        : null,
-                    child: const Text('Switch'),
-                  ),
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      other.held ? Icons.pause_circle : Icons.call,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        '${other.displayName} · '
+                        '${other.held ? 'On hold' : other.connected ? 'Connected' : 'Ringing'}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: other.connected
+                          ? () => mobileCalls.switchToGatewayCall(other.id)
+                          : null,
+                      child: const Text('Switch'),
+                    ),
+                  ],
                 ),
               ),
           ],
-          if (mobileCalls.hasActiveTransfer || mobileCalls.transferStatus.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 20,
+            runSpacing: 18,
+            alignment: WrapAlignment.center,
+            children: [
+              _InCallAction(
+                icon: mobileCalls.gatewayMuted ? Icons.mic_off : Icons.mic,
+                label: mobileCalls.gatewayMuted ? 'Muted' : 'Mute',
+                active: mobileCalls.gatewayMuted,
+                onTap: mobileCalls.toggleGatewayMute,
+              ),
+              _InCallAction(
+                icon: Icons.dialpad,
+                label: 'Keypad',
+                onTap: connected
+                    ? () => _showDtmfKeypad(
+                          context,
+                          onDigit: mobileCalls.sendGatewayDtmf,
+                        )
+                    : null,
+              ),
+              _InCallAction(
+                icon: mobileCalls.gatewaySpeakerphoneOn
+                    ? Icons.volume_up
+                    : Icons.hearing,
+                label: 'Speaker',
+                active: mobileCalls.gatewaySpeakerphoneOn,
+                onTap: mobileCalls.toggleGatewaySpeakerphone,
+              ),
+              _InCallAction(
+                icon: Icons.pause,
+                label: mobileCalls.gatewayHeld ? 'Held' : 'Hold',
+                active: mobileCalls.gatewayHeld,
+                onTap: connected ? mobileCalls.toggleGatewayHold : null,
+              ),
+              _InCallAction(
+                icon: Icons.swap_horiz,
+                label: 'Transfer',
+                active: mobileCalls.hasActiveTransfer,
+                onTap: mobileCalls.hasActiveTransfer
+                    ? null
+                    : () async {
+                        final request = await _showTransferSheet(context);
+                        if (request == null) return;
+                        if (request.attended) {
+                          await mobileCalls.startAttendedTransfer(
+                            request.target,
+                          );
+                        } else {
+                          await mobileCalls.blindTransferActiveCall(
+                            request.target,
+                          );
+                        }
+                      },
+              ),
+            ],
+          ),
+          if (mobileCalls.hasActiveTransfer ||
+              mobileCalls.transferStatus.isNotEmpty) ...[
             const SizedBox(height: 18),
             Text(
               mobileCalls.transferStatus,
@@ -517,7 +546,7 @@ class _CallControls extends StatelessWidget {
               ),
             ],
           ],
-          const SizedBox(height: 22),
+          const SizedBox(height: 28),
           _RoundAction(
             icon: Icons.call_end,
             color: Colors.red,
@@ -667,6 +696,148 @@ class _CallControls extends StatelessWidget {
   }
 }
 
+
+class _InCallAction extends StatelessWidget {
+  const _InCallAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final Future<void> Function()? onTap;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    const navy = Color(0xFF113B53);
+    final enabled = onTap != null;
+    final background = active
+        ? navy
+        : Theme.of(context).colorScheme.surfaceContainerHighest;
+    final foreground = active
+        ? Colors.white
+        : enabled
+            ? Theme.of(context).colorScheme.onSurface
+            : Theme.of(context).disabledColor;
+
+    return SizedBox(
+      width: 86,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            color: enabled ? background : background.withValues(alpha: 0.55),
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: enabled ? () => onTap!() : null,
+              child: SizedBox(
+                width: 68,
+                height: 68,
+                child: Icon(icon, size: 28, color: foreground),
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: enabled ? null : Theme.of(context).disabledColor,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showDtmfKeypad(
+  BuildContext context, {
+  required Future<void> Function(String digit) onDigit,
+}) async {
+  const keys = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['*', '0', '#'],
+  ];
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheetContext) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Keypad',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    icon: const Icon(Icons.keyboard_arrow_down),
+                    label: const Text('Back to call'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              for (final row in keys)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (final digit in row)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Material(
+                            color: Theme.of(sheetContext)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            shape: const CircleBorder(),
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: () => onDigit(digit),
+                              child: SizedBox(
+                                width: 70,
+                                height: 70,
+                                child: Center(
+                                  child: Text(
+                                    digit,
+                                    style: Theme.of(sheetContext)
+                                        .textTheme
+                                        .headlineMedium,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
 
 class _TransferRequest {
   const _TransferRequest({required this.target, required this.attended});
