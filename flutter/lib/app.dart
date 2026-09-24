@@ -4,8 +4,8 @@ import 'controllers/phone_controller.dart';
 import 'services/mobile_call_coordinator.dart';
 import 'ui/call_history_screen.dart';
 import 'ui/contacts_screen.dart';
+import 'ui/messages_screen.dart';
 import 'ui/phone_screen.dart';
-import 'ui/settings_screen.dart';
 
 class VoiceHostApp extends StatelessWidget {
   const VoiceHostApp({
@@ -112,10 +112,7 @@ class _MainShellState extends State<MainShell> {
         onGoToPhone: _goToPhone,
       ),
       ContactsScreen(controller: controller, onGoToPhone: _goToPhone),
-      SettingsScreen(
-        controller: controller,
-        mobileCalls: widget.mobileCalls,
-      ),
+      const MessagesScreen(),
     ];
 
     return AnimatedBuilder(
@@ -145,9 +142,9 @@ class _MainShellState extends State<MainShell> {
                 label: 'Contacts',
               ),
               const NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: 'Settings',
+                icon: Icon(Icons.message_outlined),
+                selectedIcon: Icon(Icons.message),
+                label: 'Messages',
               ),
             ],
           ),
