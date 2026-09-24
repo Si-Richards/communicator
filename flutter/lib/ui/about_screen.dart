@@ -38,29 +38,11 @@ class _AboutScreenState extends State<AboutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
     return Scaffold(
       appBar: AppBar(title: const Text('About')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(18, 20, 18, 32),
         children: [
-          Center(
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: scheme.primary,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: const Icon(
-                Icons.phone_in_talk,
-                color: Colors.white,
-                size: 48,
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
           Text(
             appName,
             textAlign: TextAlign.center,
