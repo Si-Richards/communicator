@@ -667,7 +667,7 @@ class _CallControls extends StatelessWidget {
                 label: controller.incomingVideoOffered
                     ? 'Audio'
                     : 'Answer',
-                onTap: controller.answerIncomingCall,
+                onTap: () => controller.answerIncomingCall(),
               ),
               if (controller.incomingVideoOffered)
                 _RoundAction(
