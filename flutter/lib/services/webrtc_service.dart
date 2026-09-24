@@ -202,6 +202,11 @@ class WebRtcService {
     });
     await pc.setLocalDescription(answer);
     if (answer.sdp == null) throw StateError('WebRTC answer contained no SDP');
+    final acceptedVideo = hasVideoInSdp(answer.sdp!);
+    if (_remoteVideoAvailable != acceptedVideo) {
+      _remoteVideoAvailable = acceptedVideo;
+      onRemoteVideoChanged?.call(acceptedVideo);
+    }
     onLog?.call('Local SDP answer: ${summarizeSdp(answer.sdp!)}');
     return answer.sdp!;
   }
