@@ -556,7 +556,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _accept(
     String requestedCallId, {
-    bool video = false,
+    bool? video,
   }) async {
     final existing = _contextFor(requestedCallId);
     if (existing?.answering == true || existing?.connected == true) {
@@ -607,10 +607,22 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       if (context.socket == null) {
         await _listenToGateway(context);
       }
-      await context.webRtc.preparePeerConnection(
-        preservePendingRemoteCandidates: true,
-        video: video && context.incomingVideoOffered,
-      );
+      final useVideo = video ?? context.incomingVideoOffered;
+      try {
+        await context.webRtc.preparePeerConnection(
+          preservePendingRemoteCandidates: true,
+          video: useVideo && context.incomingVideoOffered,
+        );
+      } catch (error) {
+        if (!useVideo) rethrow;
+        _appendDiagnostic(
+          'Camera unavailable while answering video call; falling back to audio',
+        );
+        await context.webRtc.preparePeerConnection(
+          preservePendingRemoteCandidates: true,
+          video: false,
+        );
+      }
       final answer = await context.webRtc.createAnswer(call.offerSdp);
       await gateway.answer(context.id, answer);
       await _diag(
