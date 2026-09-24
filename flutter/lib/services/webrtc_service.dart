@@ -49,33 +49,15 @@ class WebRtcService {
     // an attached MediaStream.
     _remoteRenderer = renderer;
 
-    final icePolicy = AppConfig.iceTransportPolicy.trim().isEmpty
-        ? 'relay'
-        : AppConfig.iceTransportPolicy.trim().toLowerCase();
-    final relayOnly = icePolicy == 'relay';
-
-    final turnConfigured = AppConfig.turnUrl.trim().isNotEmpty &&
-        AppConfig.turnUsername.trim().isNotEmpty &&
-        AppConfig.turnCredential.isNotEmpty;
-
-    if (relayOnly && !turnConfigured) {
-      throw StateError(
-        'TURN relay-only media is enabled but TURN is not fully configured',
-      );
-    }
-
     final iceServers = <Map<String, dynamic>>[];
-
-    // In relay-only mode, deliberately omit the standalone STUN server so
-    // the handset cannot select a direct host/srflx path. Coturn remains the
-    // only eligible media path for this diagnostic build.
-    if (!relayOnly && AppConfig.stunUrl.trim().isNotEmpty) {
+    if (AppConfig.stunUrl.trim().isNotEmpty) {
       iceServers.add({
         'urls': [AppConfig.stunUrl.trim()],
       });
     }
-
-    if (turnConfigured) {
+    if (AppConfig.turnUrl.trim().isNotEmpty &&
+        AppConfig.turnUsername.trim().isNotEmpty &&
+        AppConfig.turnCredential.isNotEmpty) {
       iceServers.add({
         'urls': [AppConfig.turnUrl.trim()],
         'username': AppConfig.turnUsername.trim(),
@@ -84,16 +66,17 @@ class WebRtcService {
     }
 
     onLog?.call(
-      'ICE policy: $icePolicy · '
-      'STUN=${!relayOnly && AppConfig.stunUrl.trim().isNotEmpty} '
-      'TURN=$turnConfigured',
+      'ICE servers configured: STUN=${AppConfig.stunUrl.trim().isNotEmpty} '
+      'TURN=${AppConfig.turnUrl.trim().isNotEmpty}',
     );
 
     _peerConnection = await createPeerConnection(
       {
         'sdpSemantics': 'unified-plan',
         'iceServers': iceServers,
-        'iceTransportPolicy': icePolicy,
+        'iceTransportPolicy': AppConfig.iceTransportPolicy.trim().isEmpty
+            ? 'all'
+            : AppConfig.iceTransportPolicy.trim(),
       },
       {
         'optional': [
