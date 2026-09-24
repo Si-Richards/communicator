@@ -940,3 +940,14 @@ class MobileSessionManager:
             bool(candidate.get('completed')),
         )
         await self._session_for_call(call_id).trickle(candidate)
+
+    async def dtmf(self, call_id: str, digit: str, duration: int = 160):
+        call = self.get_call(call_id)
+        if not call.connected:
+            raise RuntimeError('Call is not connected')
+        await self._session_for_call(call_id).dtmf(digit, duration)
+        logger.info(
+            '[VH-DIAG] event=dtmf_sent call=%s digit=%s',
+            _safe_ref(call_id),
+            digit,
+        )
