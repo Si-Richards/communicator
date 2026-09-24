@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../core/app_config.dart';
 import '../models/call_record.dart';
@@ -75,7 +76,13 @@ class PhoneController extends ChangeNotifier {
   String dialledNumber = '';
   bool isMuted = false;
   bool speakerphoneOn = false;
+  bool incomingVideoOffered = false;
   String connectionDiagnostic = '';
+
+  bool get videoEnabled => _webRtc.videoEnabled;
+  bool get remoteVideoAvailable => _webRtc.remoteVideoAvailable;
+  RTCVideoRenderer? get localVideoRenderer => _webRtc.localRenderer;
+  RTCVideoRenderer? get remoteVideoRenderer => _webRtc.remoteRenderer;
   List<CallRecord> callHistory = [];
 
   String? _incomingOfferSdp;
@@ -295,6 +302,7 @@ class PhoneController extends ChangeNotifier {
     _masterId = null;
     isMuted = false;
     speakerphoneOn = false;
+    incomingVideoOffered = false;
     callState = const PhoneCallState.idle();
     voicemailSubscriptionStatus = 'Not subscribed';
     if (clearRegistrationState) {
@@ -304,7 +312,7 @@ class PhoneController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> placeCall([String? requestedNumber]) async {
+  Future<void> placeCall([String? requestedNumber, bool video = false]) async {
     _endedResetTimer?.cancel();
     _directDisconnectTimer?.cancel();
     _transferWatchdog?.cancel();
@@ -341,8 +349,12 @@ class PhoneController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _webRtc.preparePeerConnection();
+      await _webRtc.preparePeerConnection(video: video);
       final offer = await _webRtc.createOffer();
+      _log(
+        'Outgoing media requested: audio=true video=$video '
+        '${WebRtcService.summarizeSdp(offer)}',
+      );
       await sip.call(number: number, realm: sipRealm, offerSdp: offer);
       // Start local ringback as soon as the INVITE is handed to Janus.
       // 183 + SDP, answer, failure or hangup will stop it.
@@ -359,7 +371,10 @@ class PhoneController extends ChangeNotifier {
     }
   }
 
-  Future<void> answerIncomingCall() async {
+  Future<void> placeVideoCall([String? requestedNumber]) =>
+      placeCall(requestedNumber, true);
+
+  Future<void> answerIncomingCall({bool video = false}) async {
     final offer = _incomingOfferSdp;
     final sip = _sip;
     if (offer == null || sip == null) {
@@ -372,8 +387,15 @@ class PhoneController extends ChangeNotifier {
     _canSendTrickle = false;
     _pendingLocalCandidates.clear();
     try {
-      await _webRtc.preparePeerConnection(preservePendingRemoteCandidates: true);
+      await _webRtc.preparePeerConnection(
+        preservePendingRemoteCandidates: true,
+        video: video && incomingVideoOffered,
+      );
       final answer = await _webRtc.createAnswer(offer);
+      _log(
+        'Incoming media answered: localVideo=${video && incomingVideoOffered} '
+        '${WebRtcService.summarizeSdp(answer)}',
+      );
       await sip.accept(answer);
       _canSendTrickle = true;
       await _flushLocalCandidates();
@@ -384,6 +406,9 @@ class PhoneController extends ChangeNotifier {
       _setError(error.toString());
     }
   }
+
+  Future<void> answerIncomingVideoCall() =>
+      answerIncomingCall(video: true);
 
   Future<void> rejectIncomingCall() async {
     try {
@@ -709,6 +734,31 @@ class PhoneController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> toggleVideo() async {
+    final sip = _sip;
+    if (sip == null || !callState.isConnected) return;
+    final target = !_webRtc.videoEnabled;
+    try {
+      final offer = await _webRtc.setVideoEnabled(target);
+      _log(
+        'Video ${target ? 'enable' : 'disable'} renegotiation requested: '
+        '${WebRtcService.summarizeSdp(offer)}',
+      );
+      await sip.updateOffer(offer);
+      notifyListeners();
+    } catch (error) {
+      _setError('Unable to ${target ? 'enable' : 'disable'} video: $error');
+    }
+  }
+
+  Future<void> switchCamera() async {
+    try {
+      await _webRtc.switchCamera();
+    } catch (error) {
+      _setError('Unable to switch camera: $error');
+    }
+  }
+
   Future<void> toggleSpeakerphone() async {
     speakerphoneOn = !speakerphoneOn;
     try {
@@ -983,6 +1033,23 @@ class PhoneController extends ChangeNotifier {
         );
         notifyListeners();
         break;
+      case 'updated':
+        final updatedSdp = jsep?['sdp']?.toString();
+        if (updatedSdp != null && updatedSdp.isNotEmpty) {
+          await _webRtc.applyRemoteAnswer(updatedSdp);
+        }
+        _log('SIP media update completed');
+        notifyListeners();
+        break;
+      case 'updatingcall':
+        final updateOffer = jsep?['sdp']?.toString();
+        if (updateOffer != null && updateOffer.isNotEmpty) {
+          final answer = await _webRtc.applyRemoteOfferAndCreateAnswer(updateOffer);
+          await _sip?.updateAnswer(answer);
+          _log('Remote SIP media update answered');
+        }
+        notifyListeners();
+        break;
       case 'incomingcall':
         await _handleIncomingCall(result ?? const {}, jsep);
         break;
@@ -1033,6 +1100,9 @@ class PhoneController extends ChangeNotifier {
     _endedResetTimer?.cancel();
     _currentNumber = caller;
     _incomingOfferSdp = jsep?['sdp']?.toString();
+    incomingVideoOffered = _incomingOfferSdp != null &&
+        WebRtcService.hasVideoInSdp(_incomingOfferSdp!);
+    _log('Incoming call media: videoOffered=$incomingVideoOffered');
     _activeCall = _ActiveCallContext(
       direction: CallDirection.incoming,
       number: caller,
@@ -1159,6 +1229,7 @@ class PhoneController extends ChangeNotifier {
     _canSendTrickle = false;
     isMuted = false;
     speakerphoneOn = false;
+    incomingVideoOffered = false;
     callState = PhoneCallState(phase: CallPhase.ended, reason: reason);
     notifyListeners();
 
