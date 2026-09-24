@@ -125,6 +125,17 @@ class MobileGatewayService {
         body: {'sdp': sdp},
       );
 
+  Future<void> updateMedia(
+    String callId,
+    String sdp, {
+    required String type,
+  }) =>
+      _jsonRequest(
+        'POST',
+        '/v1/calls/$callId/update',
+        body: {'sdp': sdp, 'type': type},
+      );
+
   Future<void> decline(String callId) =>
       _jsonRequest('POST', '/v1/calls/$callId/decline');
 
