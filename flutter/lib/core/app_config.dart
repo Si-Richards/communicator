@@ -36,6 +36,6 @@ class AppConfig {
 
   static const iceTransportPolicy = String.fromEnvironment(
     'VOICEHOST_ICE_TRANSPORT_POLICY',
-    defaultValue: 'relay',
+    defaultValue: 'all',
   );
 }
