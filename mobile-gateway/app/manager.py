@@ -373,6 +373,7 @@ class MobileSessionManager:
             caller = caller_uri.replace('sip:', '').split('@', 1)[0]
             display = result.get('displayname')
             offer = (jsep or {}).get('sdp') or ''
+            is_video = bool(re.search(r'(?m)^m=video\s+\d+', offer))
             call_id = str(uuid.uuid4())
             call = CallRuntime(
                 call_id,
@@ -386,10 +387,11 @@ class MobileSessionManager:
             self.calls[call_id] = call
             self._bind_call_session(call, session)
             logger.info(
-                '[VH-DIAG] event=incoming_call call=%s device=%s offer_sdp=%s',
+                '[VH-DIAG] event=incoming_call call=%s device=%s offer_sdp=%s video=%s',
                 _safe_ref(call_id),
                 _safe_ref(device.device_id),
                 bool(offer),
+                is_video,
             )
             try:
                 environment = await self.apns.send_voip(device.push_token, {
@@ -397,8 +399,8 @@ class MobileSessionManager:
                     'id': call_id,
                     'nameCaller': display or caller,
                     'handle': caller,
-                    'isVideo': False,
-                    'extra': {'call_id': call_id},
+                    'isVideo': is_video,
+                    'extra': {'call_id': call_id, 'is_video': is_video},
                 })
                 logger.info(
                     '[VH-DIAG] event=incoming_push_sent call=%s environment=%s',
