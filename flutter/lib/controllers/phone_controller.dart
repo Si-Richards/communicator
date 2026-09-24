@@ -387,10 +387,19 @@ class PhoneController extends ChangeNotifier {
     _canSendTrickle = false;
     _pendingLocalCandidates.clear();
     try {
-      await _webRtc.preparePeerConnection(
-        preservePendingRemoteCandidates: true,
-        video: video && incomingVideoOffered,
-      );
+      try {
+        await _webRtc.preparePeerConnection(
+          preservePendingRemoteCandidates: true,
+          video: video && incomingVideoOffered,
+        );
+      } catch (error) {
+        if (!video) rethrow;
+        _log('Camera unavailable while answering video call; using audio: $error');
+        await _webRtc.preparePeerConnection(
+          preservePendingRemoteCandidates: true,
+          video: false,
+        );
+      }
       final answer = await _webRtc.createAnswer(offer);
       _log(
         'Incoming media answered: localVideo=${video && incomingVideoOffered} '
