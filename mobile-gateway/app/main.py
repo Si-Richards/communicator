@@ -18,6 +18,7 @@ from .models import (
     DeviceRegistration,
     DtmfRequest,
     DiagnosticEvent,
+    MediaUpdateRequest,
     OutboundCallRequest,
     TransferRequest,
 )
@@ -623,6 +624,17 @@ async def get_call(call_id: str):
 async def answer(call_id: str, body: AnswerRequest):
     try:
         await manager.answer(call_id, body.sdp)
+    except KeyError:
+        raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True}
+
+
+@app.post('/v1/calls/{call_id}/update', dependencies=[Depends(auth)])
+async def update_call_media(call_id: str, body: MediaUpdateRequest):
+    try:
+        await manager.update_call_media(call_id, body.sdp, body.type)
     except KeyError:
         raise HTTPException(404, 'call not found')
     except RuntimeError as error:
