@@ -181,7 +181,7 @@ class WebRtcService {
     final pc = _requirePeerConnection();
     final offer = await pc.createOffer({
       'offerToReceiveAudio': true,
-      'offerToReceiveVideo': true,
+      'offerToReceiveVideo': _videoEnabled || _remoteVideoAvailable,
     });
     await pc.setLocalDescription(offer);
     if (offer.sdp == null) throw StateError('WebRTC offer contained no SDP');
@@ -195,7 +195,7 @@ class WebRtcService {
     await _setRemoteDescription(RTCSessionDescription(remoteOfferSdp, 'offer'));
     final answer = await pc.createAnswer({
       'offerToReceiveAudio': true,
-      'offerToReceiveVideo': true,
+      'offerToReceiveVideo': _videoEnabled,
     });
     await pc.setLocalDescription(answer);
     if (answer.sdp == null) throw StateError('WebRTC answer contained no SDP');
@@ -204,6 +204,12 @@ class WebRtcService {
   }
 
   Future<void> applyRemoteAnswer(String sdp) async {
+    final pc = _requirePeerConnection();
+    final signaling = pc.signalingState.toString().toLowerCase();
+    if (_remoteDescriptionSet && signaling.contains('stable')) {
+      onLog?.call('Ignoring duplicate remote SDP answer while signalling is stable');
+      return;
+    }
     onLog?.call('Remote SDP answer: ${summarizeSdp(sdp)}');
     await _setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
   }
