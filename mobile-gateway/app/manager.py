@@ -499,7 +499,7 @@ class MobileSessionManager:
                 asyncio.create_task(self._finish_transfer_failure(call.id, status))
             return
 
-        if event in {'ringing', 'progress', 'accepted'}:
+        if event in {'ringing', 'progress', 'accepted', 'updated', 'updatingcall'}:
             if event == 'accepted':
                 call.connected = True
                 call.held = False
@@ -697,6 +697,24 @@ class MobileSessionManager:
             _safe_ref(device_id),
         )
         return call
+
+    async def update_call_media(
+        self,
+        call_id: str,
+        sdp: str,
+        jsep_type: str,
+    ):
+        call = self.get_call(call_id)
+        session = self._session_for_call(call_id)
+        if not call.connected:
+            raise RuntimeError('Call is not connected')
+        logger.info(
+            '[VH-DIAG] event=media_update_requested call=%s type=%s video=%s',
+            _safe_ref(call_id),
+            jsep_type,
+            bool(re.search(r'(?m)^m=video\\s+\\d+', sdp)),
+        )
+        await session.update(sdp, jsep_type)
 
     async def blind_transfer(self, call_id: str, target: str):
         call = self.get_call(call_id)
