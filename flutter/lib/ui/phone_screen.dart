@@ -25,6 +25,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
   late final TextEditingController _numberController;
   Timer? _callTimer;
   bool _syncingNumber = false;
+  bool _showInCallKeypad = false;
 
   static const _keys = [
     ['1', '2', '3'],
@@ -162,50 +163,97 @@ class _PhoneScreenState extends State<PhoneScreen> {
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(24, 18, 24, 28),
-                    child: Column(
-                      children: [
-                        Row(
+                    child: Builder(
+                      builder: (context) {
+                        final inCall = controller.callState.isInCall ||
+                            widget.mobileCalls.hasActiveGatewayCall;
+
+                        if (inCall) {
+                          if (_showInCallKeypad) {
+                            final canSendDtmf =
+                                widget.mobileCalls.hasActiveGatewayCall
+                                    ? widget.mobileCalls.gatewayCallConnected
+                                    : controller.callState.isConnected;
+                            return _InlineInCallKeypad(
+                              enabled: canSendDtmf,
+                              onDigit: widget.mobileCalls.hasActiveGatewayCall
+                                  ? widget.mobileCalls.sendGatewayDtmf
+                                  : controller.sendDtmf,
+                              onBackToCall: () {
+                                setState(() => _showInCallKeypad = false);
+                              },
+                            );
+                          }
+
+                          return _CallControls(
+                            controller: controller,
+                            mobileCalls: widget.mobileCalls,
+                            onShowKeypad: () {
+                              setState(() => _showInCallKeypad = true);
+                            },
+                          );
+                        }
+
+                        if (_showInCallKeypad) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted && _showInCallKeypad) {
+                              setState(() => _showInCallKeypad = false);
+                            }
+                          });
+                        }
+
+                        return Column(
                           children: [
-                            const SizedBox(width: 48),
-                            Expanded(
-                              child: TextField(
-                                controller: _numberController,
-                                readOnly: true,
-                                showCursor: false,
-                                enableInteractiveSelection: false,
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.headlineLarge,
-                                decoration: const InputDecoration(
-                                  hintText: 'Number',
-                                  border: InputBorder.none,
+                            Row(
+                              children: [
+                                const SizedBox(width: 48),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _numberController,
+                                    readOnly: true,
+                                    showCursor: false,
+                                    enableInteractiveSelection: false,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineLarge,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Number',
+                                      border: InputBorder.none,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                SizedBox(
+                                  width: 48,
+                                  child: IconButton(
+                                    tooltip: 'Delete',
+                                    onPressed: controller.dialledNumber.isEmpty
+                                        ? null
+                                        : controller.backspaceDigit,
+                                    icon:
+                                        const Icon(Icons.backspace_outlined),
+                                  ),
+                                ),
+                              ],
                             ),
-                            SizedBox(
-                              width: 48,
-                              child: IconButton(
-                                tooltip: 'Delete',
-                                onPressed: controller.dialledNumber.isEmpty
-                                    ? null
-                                    : controller.backspaceDigit,
-                                icon: const Icon(Icons.backspace_outlined),
-                              ),
+                            const SizedBox(height: 8),
+                            _DialPad(
+                              keys: _keys,
+                              onDigit: controller.appendDigit,
+                              onBackspace: controller.backspaceDigit,
+                              showDeleteButton: false,
+                            ),
+                            const SizedBox(height: 24),
+                            _CallControls(
+                              controller: controller,
+                              mobileCalls: widget.mobileCalls,
+                              onShowKeypad: () {
+                                setState(() => _showInCallKeypad = true);
+                              },
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 8),
-                        _DialPad(
-                          keys: _keys,
-                          onDigit: controller.appendDigit,
-                          onBackspace: controller.backspaceDigit,
-                          showDeleteButton: false,
-                        ),
-                        const SizedBox(height: 24),
-                        _CallControls(
-                          controller: controller,
-                          mobileCalls: widget.mobileCalls,
-                        ),
-                      ],
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -379,10 +427,12 @@ class _CallControls extends StatelessWidget {
   const _CallControls({
     required this.controller,
     required this.mobileCalls,
+    required this.onShowKeypad,
   });
 
   final PhoneController controller;
   final MobileCallCoordinator mobileCalls;
+  final VoidCallback onShowKeypad;
 
   @override
   Widget build(BuildContext context) {
@@ -474,10 +524,9 @@ class _CallControls extends StatelessWidget {
                 icon: Icons.dialpad,
                 label: 'Keypad',
                 onTap: connected
-                    ? () => _showDtmfKeypad(
-                          context,
-                          onDigit: mobileCalls.sendGatewayDtmf,
-                        )
+                    ? () async {
+                        onShowKeypad();
+                      }
                     : null,
               ),
               _InCallAction(
@@ -611,6 +660,15 @@ class _CallControls extends StatelessWidget {
                 onSelected: (_) => controller.toggleMute(),
                 avatar: Icon(controller.isMuted ? Icons.mic_off : Icons.mic),
                 label: Text(controller.isMuted ? 'Muted' : 'Mute'),
+              ),
+              _InCallAction(
+                icon: Icons.dialpad,
+                label: 'Keypad',
+                onTap: state.isConnected
+                    ? () async {
+                        onShowKeypad();
+                      }
+                    : null,
               ),
               FilterChip(
                 selected: state.phase == CallPhase.held,
@@ -755,88 +813,88 @@ class _InCallAction extends StatelessWidget {
   }
 }
 
-Future<void> _showDtmfKeypad(
-  BuildContext context, {
-  required Future<void> Function(String digit) onDigit,
-}) async {
-  const keys = [
+class _InlineInCallKeypad extends StatelessWidget {
+  const _InlineInCallKeypad({
+    required this.enabled,
+    required this.onDigit,
+    required this.onBackToCall,
+  });
+
+  final bool enabled;
+  final Future<void> Function(String digit) onDigit;
+  final VoidCallback onBackToCall;
+
+  static const _keys = [
     ['1', '2', '3'],
     ['4', '5', '6'],
     ['7', '8', '9'],
     ['*', '0', '#'],
   ];
 
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (sheetContext) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Keypad',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => Navigator.of(sheetContext).pop(),
-                    icon: const Icon(Icons.keyboard_arrow_down),
-                    label: const Text('Back to call'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              for (final row in keys)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (final digit in row)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Material(
-                            color: Theme.of(sheetContext)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            shape: const CircleBorder(),
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: () => onDigit(digit),
-                              child: SizedBox(
-                                width: 70,
-                                height: 70,
-                                child: Center(
-                                  child: Text(
-                                    digit,
-                                    style: Theme.of(sheetContext)
-                                        .textTheme
-                                        .headlineMedium,
-                                  ),
-                                ),
-                              ),
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Text(
+              'Keypad',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: onBackToCall,
+              icon: const Icon(Icons.keyboard_arrow_down),
+              label: const Text('Back to call'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        for (final row in _keys)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (final digit in row)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Material(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: enabled ? () => onDigit(digit) : null,
+                        child: SizedBox(
+                          width: 72,
+                          height: 72,
+                          child: Center(
+                            child: Text(
+                              digit,
+                              style:
+                                  Theme.of(context).textTheme.headlineMedium,
                             ),
                           ),
                         ),
-                    ],
+                      ),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-        ),
-      );
-    },
-  );
+        if (!enabled) ...[
+          const SizedBox(height: 8),
+          Text(
+            'DTMF is available once the call is connected.',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 class _TransferRequest {
