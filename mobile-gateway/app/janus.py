@@ -102,6 +102,14 @@ class JanusSipSession:
             'duration': duration,
         })
 
+    async def subscribe_message_summary(self):
+        await self._message({
+            'request': 'subscribe',
+            'event': 'message-summary',
+            'accept': 'application/simple-message-summary',
+            'subscribe_ttl': 3600,
+        })
+
     async def hold(self):
         await self._message({'request': 'hold', 'direction': 'sendonly'})
 
