@@ -770,25 +770,6 @@ class PhoneController extends ChangeNotifier {
     await placeCall(voicemailNumber);
   }
 
-  void updateVoicemailFromGateway({
-    required bool waiting,
-    required int newMessages,
-    required int oldMessages,
-  }) {
-    final next = VoicemailSummary(
-      waiting: waiting,
-      newMessages: newMessages,
-      oldMessages: oldMessages,
-    );
-    if (voicemail.waiting == next.waiting &&
-        voicemail.newMessages == next.newMessages &&
-        voicemail.oldMessages == next.oldMessages) {
-      return;
-    }
-    voicemail = next;
-    notifyListeners();
-  }
-
   Future<void> refreshVoicemailStatus() async {
     final sip = _sip;
     if (!isRegistered || sip == null) return;
