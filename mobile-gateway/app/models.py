@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 
 
@@ -31,46 +32,17 @@ class CandidateRequest(BaseModel):
 
 
 class DtmfRequest(BaseModel):
-    digit: str = Field(pattern=r'^[0-9*#A-D]
-
-
-
-class TransferRequest(BaseModel):
-    target: str = Field(min_length=1, max_length=200)
-
-
-class AttendedTransferStartRequest(TransferRequest):
-    sdp: str = Field(min_length=1)
-
-class DiagnosticEvent(BaseModel):
-    event: str = Field(min_length=1, max_length=80)
-    call_id: str | None = Field(default=None, max_length=200)
-    details: dict[str, str | int | bool] = Field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class DeviceRecord:
-    device_id: str
-    platform: str
-    push_token: str
-    sip_username: str
-    sip_password: str
-    sip_realm: str
-    sip_proxy: str | None
-    nickname: str
-    dnd: bool
-)
+    digit: str = Field(pattern=r'^[0-9*#A-D]$')
     duration: int = Field(default=160, ge=40, le=2000)
 
 
-
-
 class TransferRequest(BaseModel):
     target: str = Field(min_length=1, max_length=200)
 
 
 class AttendedTransferStartRequest(TransferRequest):
     sdp: str = Field(min_length=1)
+
 
 class DiagnosticEvent(BaseModel):
     event: str = Field(min_length=1, max_length=80)
