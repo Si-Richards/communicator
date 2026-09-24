@@ -110,6 +110,17 @@ class MobileGatewayService {
   Future<void> resume(String callId) =>
       _jsonRequest('POST', '/v1/calls/$callId/resume');
 
+  Future<void> sendDtmf(
+    String callId,
+    String digit, {
+    int duration = 160,
+  }) =>
+      _jsonRequest(
+        'POST',
+        '/v1/calls/$callId/dtmf',
+        body: {'digit': digit, 'duration': duration},
+      );
+
   Future<void> candidate(String callId, Map<String, dynamic> candidate) =>
       _jsonRequest(
         'POST',
