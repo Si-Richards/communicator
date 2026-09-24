@@ -214,9 +214,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _voicemailPollTimer?.cancel();
     _voicemailPollTimer = Timer.periodic(
       const Duration(seconds: 30),
-      (_) => unawaited(_refreshGatewayVoicemail()),
+      (_) => unawaited(_refreshVoicemail()),
     );
-    unawaited(_refreshGatewayVoicemail());
+    unawaited(_refreshVoicemail());
   }
 
   void _scheduleCallKitRecoveryRetries() {
@@ -277,7 +277,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       unawaited(
         Future<void>.delayed(
           const Duration(milliseconds: 500),
-          _refreshGatewayVoicemail,
+          _refreshVoicemail,
         ),
       );
     } catch (error) {
@@ -312,11 +312,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_recoverCallKitState());
       _scheduleCallKitRecoveryRetries();
-      unawaited(_refreshGatewayVoicemail());
+      unawaited(_refreshVoicemail());
     }
   }
 
-  Future<void> _refreshGatewayVoicemail() async {
+  Future<void> _refreshVoicemail() async {
     final deviceId = _deviceId;
     if (!gateway.enabled || deviceId == null || !_gatewayProvisioned) return;
     try {
