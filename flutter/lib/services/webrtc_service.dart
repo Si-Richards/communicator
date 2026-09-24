@@ -215,6 +215,11 @@ class WebRtcService {
     }
     onLog?.call('Remote SDP answer: ${summarizeSdp(sdp)}');
     await _setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+    if (_videoEnabled && !hasVideoInSdp(sdp)) {
+      onLog?.call('Remote side rejected video; stopping local camera');
+      await _stopLocalVideo();
+      onLocalVideoChanged?.call(false);
+    }
   }
 
   Future<String> applyRemoteOfferAndCreateAnswer(String sdp) async {
@@ -263,26 +268,36 @@ class WebRtcService {
       _videoEnabled = true;
       onLog?.call('Camera enabled: local video track ${track.id}');
     } else {
-      final sender = _videoSender;
-      _videoSender = null;
-      if (sender != null) {
-        try {
-          await pc.removeTrack(sender);
-        } catch (_) {}
-      }
-      for (final track in List<MediaStreamTrack>.from(local.getVideoTracks())) {
-        try {
-          await local.removeTrack(track);
-        } catch (_) {}
-        await track.stop();
-      }
-      _localRenderer?.srcObject = local;
-      _videoEnabled = false;
+      await _stopLocalVideo();
       onLog?.call('Camera disabled');
     }
 
     onLocalVideoChanged?.call(_videoEnabled);
     return createOffer();
+  }
+
+  Future<void> _stopLocalVideo() async {
+    final pc = _peerConnection;
+    final local = _localStream;
+    if (local == null) {
+      _videoEnabled = false;
+      return;
+    }
+    final sender = _videoSender;
+    _videoSender = null;
+    if (sender != null && pc != null) {
+      try {
+        await pc.removeTrack(sender);
+      } catch (_) {}
+    }
+    for (final track in List<MediaStreamTrack>.from(local.getVideoTracks())) {
+      try {
+        await local.removeTrack(track);
+      } catch (_) {}
+      await track.stop();
+    }
+    _localRenderer?.srcObject = local;
+    _videoEnabled = false;
   }
 
   Future<void> switchCamera() async {
@@ -497,8 +512,15 @@ class WebRtcService {
     return pc;
   }
 
-  static bool hasVideoInSdp(String sdp) =>
-      RegExp(r'(?m)^m=video\s+\d+').hasMatch(sdp);
+  static bool hasVideoInSdp(String sdp) {
+    for (final line in sdp.split(RegExp(r'\r?\n'))) {
+      if (!line.startsWith('m=video ')) continue;
+      final parts = line.split(RegExp(r'\s+'));
+      if (parts.length < 2) return false;
+      return (int.tryParse(parts[1]) ?? 0) > 0;
+    }
+    return false;
+  }
 
   static String summarizeSdp(String sdp) {
     final audio = _codecsForMedia(sdp, 'audio');
