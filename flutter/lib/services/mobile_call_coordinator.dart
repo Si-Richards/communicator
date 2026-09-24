@@ -677,6 +677,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             context.connected = true;
             context.held = false;
             context.connectedAt ??= DateTime.now();
+            _startGatewayStats(context);
             unawaited(FlutterCallkitIncoming.setCallConnected(context.id));
             notifyListeners();
             unawaited(_diag(
@@ -952,6 +953,29 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       if (previous != null && previous.held) {
         await _setGatewayHold(previous.id, false);
       }
+    }
+  }
+
+  void _startGatewayStats(_GatewayCallContext context) {
+    context.statsTimer?.cancel();
+    unawaited(_publishGatewayStats(context));
+    context.statsTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!context.connected) return;
+      unawaited(_publishGatewayStats(context));
+    });
+  }
+
+  Future<void> _publishGatewayStats(_GatewayCallContext context) async {
+    try {
+      final stats = await context.webRtc.collectSanitizedStats();
+      if (stats.isEmpty) return;
+      await _diag(
+        'media_stats',
+        callId: context.id,
+        details: stats,
+      );
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] media stats failed: $error');
     }
   }
 
@@ -1339,6 +1363,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _closeTransferMedia();
     }
 
+    context.statsTimer?.cancel();
+    context.statsTimer = null;
     await context.subscription?.cancel();
     context.subscription = null;
     await context.socket?.close();
@@ -1460,4 +1486,5 @@ class _GatewayCallContext {
   DateTime? connectedAt;
   int localCandidateCount = 0;
   int remoteCandidateCount = 0;
+  Timer? statsTimer;
 }
