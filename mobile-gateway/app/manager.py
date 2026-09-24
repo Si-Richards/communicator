@@ -201,6 +201,18 @@ class MobileSessionManager:
         )
         await session.start()
         await session.wait_registered()
+        if helper_master_id is None:
+            try:
+                await session.subscribe_message_summary()
+                logger.info(
+                    '[VH-DIAG] event=mwi_subscribe device=%s',
+                    _safe_ref(device.device_id),
+                )
+            except Exception:
+                logger.exception(
+                    '[VH-DIAG] event=mwi_subscribe_failed device=%s',
+                    _safe_ref(device.device_id),
+                )
         return session
 
     async def _ensure_helpers(
@@ -336,6 +348,22 @@ class MobileSessionManager:
                 call.transfer_mode = None
                 call.transfer_target = None
             return
+
+        if event == 'notify':
+            notify_type = str(result.get('notify') or '').lower()
+            if notify_type == 'message-summary':
+                summary = self._parse_message_summary(
+                    str(result.get('content') or '')
+                )
+                self.voicemail[device.device_id] = summary
+                logger.info(
+                    '[VH-DIAG] event=mwi_update device=%s waiting=%s new=%s old=%s',
+                    _safe_ref(device.device_id),
+                    summary['waiting'],
+                    summary['new_messages'],
+                    summary['old_messages'],
+                )
+                return
 
         if event == 'incomingcall':
             if device.dnd:
@@ -545,6 +573,38 @@ class MobileSessionManager:
     def _current_transfer(self, device_id: str):
         transfer_id = self.device_transfer.get(device_id)
         return self.transfers.get(transfer_id) if transfer_id else None
+
+    def get_voicemail(self, device_id: str) -> dict[str, int | bool]:
+        if device_id not in self.sessions and device_id not in self.voicemail:
+            self.store.get(device_id)
+        return self.voicemail.get(
+            device_id,
+            {'waiting': False, 'new_messages': 0, 'old_messages': 0},
+        )
+
+    @staticmethod
+    def _parse_message_summary(content: str) -> dict[str, int | bool]:
+        waiting = False
+        new_messages = 0
+        old_messages = 0
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            lower = line.lower()
+            if lower.startswith('messages-waiting:'):
+                waiting = lower.split(':', 1)[1].strip() == 'yes'
+            match = re.match(
+                r'^voice-message:\s*(\d+)\s*/\s*(\d+)',
+                line,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                new_messages = int(match.group(1))
+                old_messages = int(match.group(2))
+        return {
+            'waiting': waiting or new_messages > 0,
+            'new_messages': new_messages,
+            'old_messages': old_messages,
+        }
 
     @staticmethod
     def _refer_status(content) -> int | None:
