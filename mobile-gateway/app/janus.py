@@ -95,6 +95,13 @@ class JanusSipSession:
     async def hangup(self):
         await self._message({'request': 'hangup'})
 
+    async def dtmf(self, digit: str, duration: int = 160):
+        await self._message({
+            'request': 'dtmf_info',
+            'digit': digit,
+            'duration': duration,
+        })
+
     async def hold(self):
         await self._message({'request': 'hold', 'direction': 'sendonly'})
 
