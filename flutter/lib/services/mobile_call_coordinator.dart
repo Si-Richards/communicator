@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
@@ -94,6 +95,15 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? get gatewayConnectedAt => _activeGatewayCall?.connectedAt;
   bool get gatewayMuted => _activeGatewayCall?.muted ?? false;
   bool get gatewaySpeakerphoneOn => _activeGatewayCall?.speakerphoneOn ?? false;
+  bool get gatewayVideoEnabled => _activeGatewayCall?.webRtc.videoEnabled ?? false;
+  bool get gatewayRemoteVideoAvailable =>
+      _activeGatewayCall?.webRtc.remoteVideoAvailable ?? false;
+  bool get gatewayIncomingVideoOffered =>
+      _activeGatewayCall?.incomingVideoOffered ?? false;
+  RTCVideoRenderer? get gatewayLocalVideoRenderer =>
+      _activeGatewayCall?.webRtc.localRenderer;
+  RTCVideoRenderer? get gatewayRemoteVideoRenderer =>
+      _activeGatewayCall?.webRtc.remoteRenderer;
   bool get hasActiveTransfer => _transferId != null || _transferBusy;
   bool get attendedTransferActive => _transferId != null;
   bool get attendedTransferConnected => _transferConnected;
@@ -495,6 +505,22 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         details: {'remote_audio_tracks': count},
       ));
     };
+    context.webRtc.onLocalVideoChanged = (enabled) {
+      unawaited(_diag(
+        'local_video_state',
+        callId: context.id,
+        details: {'enabled': enabled},
+      ));
+      notifyListeners();
+    };
+    context.webRtc.onRemoteVideoChanged = (available) {
+      unawaited(_diag(
+        'remote_video_state',
+        callId: context.id,
+        details: {'available': available},
+      ));
+      notifyListeners();
+    };
     context.webRtc.onIceGatheringComplete = () {
       unawaited(gateway.candidate(context.id, {'completed': true}));
       unawaited(_diag(
@@ -516,7 +542,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         ..caller = call.caller
         ..displayName = call.displayName
         ..startedAt = DateTime.now()
-        ..phase = 'ringing';
+        ..phase = 'ringing'
+        ..incomingVideoOffered = WebRtcService.hasVideoInSdp(call.offerSdp);
       _configureGatewayCall(context);
       _gatewayCalls[context.id] = context;
       await _listenToGateway(context);
@@ -527,7 +554,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _accept(String requestedCallId) async {
+  Future<void> _accept(
+    String requestedCallId, {
+    bool video = false,
+  }) async {
     final existing = _contextFor(requestedCallId);
     if (existing?.answering == true || existing?.connected == true) {
       return;
@@ -557,6 +587,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       context.displayName = call.displayName;
       context.connected = call.connected;
       context.held = call.held;
+      context.incomingVideoOffered = WebRtcService.hasVideoInSdp(call.offerSdp);
       context.mediaConnected = false;
       context.connectedAt = call.connected ? DateTime.now() : null;
       context.localCandidateCount = 0;
@@ -578,6 +609,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       }
       await context.webRtc.preparePeerConnection(
         preservePendingRemoteCandidates: true,
+        video: video && context.incomingVideoOffered,
       );
       final answer = await context.webRtc.createAnswer(call.offerSdp);
       await gateway.answer(context.id, answer);
@@ -652,6 +684,30 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
               callId: context.id,
               details: {'gateway_event': 'accepted'},
             ));
+            break;
+          case 'updated':
+            final updatedJsep = event['jsep'];
+            if (updatedJsep is Map) {
+              final sdp = updatedJsep['sdp']?.toString();
+              if (sdp != null && sdp.isNotEmpty) {
+                unawaited(context.webRtc.applyRemoteAnswer(sdp).then((_) {
+                  _appendDiagnostic(
+                    'Media update completed · '
+                    '${WebRtcService.summarizeSdp(sdp)}',
+                  );
+                  notifyListeners();
+                }));
+              }
+            }
+            break;
+          case 'updatingcall':
+            final updatingJsep = event['jsep'];
+            if (updatingJsep is Map) {
+              final sdp = updatingJsep['sdp']?.toString();
+              if (sdp != null && sdp.isNotEmpty) {
+                unawaited(_answerGatewayMediaUpdate(context, sdp));
+              }
+            }
             break;
           case 'hold':
             context.held = event['held'] == true;
@@ -784,13 +840,16 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> placeCall(String number) async {
+  Future<void> placeCall(
+    String number, {
+    bool video = false,
+  }) async {
     final target = number.trim();
     if (target.isEmpty) return;
 
     final deviceId = _deviceId;
     if (!_gatewayProvisioned || deviceId == null) {
-      await phone.placeCall(target);
+      await phone.placeCall(target, video);
       return;
     }
 
@@ -816,8 +875,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     try {
       await _ringback.start();
       _appendDiagnostic('Local ringback requested');
-      await webRtc.preparePeerConnection();
+      await webRtc.preparePeerConnection(video: video);
       final offer = await webRtc.createOffer();
+      _appendDiagnostic(
+        'Outgoing media requested · video=$video · '
+        '${WebRtcService.summarizeSdp(offer)}',
+      );
       final callId = await gateway.startCall(
         deviceId: deviceId,
         target: target,
@@ -847,7 +910,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           ios: const IOSParams(
             handleType: 'number',
             normalHandle: 1,
-            supportsVideo: false,
+            supportsVideo: video,
             maximumCallGroups: 2,
             maximumCallsPerCallGroup: 1,
             supportsDTMF: false,
@@ -889,6 +952,28 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       if (previous != null && previous.held) {
         await _setGatewayHold(previous.id, false);
       }
+    }
+  }
+
+  Future<void> _answerGatewayMediaUpdate(
+    _GatewayCallContext context,
+    String offerSdp,
+  ) async {
+    try {
+      final answer =
+          await context.webRtc.applyRemoteOfferAndCreateAnswer(offerSdp);
+      await gateway.updateMedia(context.id, answer, type: 'answer');
+      await _diag(
+        'remote_video_update_answered',
+        callId: context.id,
+        details: {
+          'offer': WebRtcService.summarizeSdp(offerSdp),
+          'answer': WebRtcService.summarizeSdp(answer),
+        },
+      );
+      notifyListeners();
+    } catch (error) {
+      _appendDiagnostic('Unable to answer media update: $error');
     }
   }
 
@@ -1127,6 +1212,46 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> answerActiveGatewayCall({bool video = false}) async {
+    final active = _activeGatewayCall;
+    if (active == null) return;
+    await _accept(active.id, video: video);
+  }
+
+  Future<void> toggleGatewayVideo() async {
+    final active = _activeGatewayCall;
+    if (active == null || !active.connected) return;
+    final target = !active.webRtc.videoEnabled;
+    try {
+      final offer = await active.webRtc.setVideoEnabled(target);
+      await gateway.updateMedia(active.id, offer, type: 'offer');
+      await _diag(
+        'video_update_requested',
+        callId: active.id,
+        details: {
+          'enabled': target,
+          'sdp': WebRtcService.summarizeSdp(offer),
+        },
+      );
+      notifyListeners();
+    } catch (error) {
+      _appendDiagnostic(
+        'Video ${target ? 'enable' : 'disable'} failed: $error',
+      );
+    }
+  }
+
+  Future<void> switchGatewayCamera() async {
+    final active = _activeGatewayCall;
+    if (active == null || !active.webRtc.videoEnabled) return;
+    try {
+      await active.webRtc.switchCamera();
+      await _diag('camera_switched', callId: active.id);
+    } catch (error) {
+      _appendDiagnostic('Camera switch failed: $error');
+    }
+  }
+
   Future<void> toggleGatewayMute() async {
     final active = _activeGatewayCall;
     if (active == null) return;
@@ -1331,6 +1456,7 @@ class _GatewayCallContext {
   bool held = false;
   bool muted = false;
   bool speakerphoneOn = false;
+  bool incomingVideoOffered = false;
   DateTime? connectedAt;
   int localCandidateCount = 0;
   int remoteCandidateCount = 0;
