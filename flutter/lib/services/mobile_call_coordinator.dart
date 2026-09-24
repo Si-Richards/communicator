@@ -209,6 +209,22 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       '${_pushToken?.isNotEmpty == true ? 'available' : 'waiting'}',
     );
     unawaited(_recoverCallKitState());
+    _scheduleCallKitRecoveryRetries();
+  }
+
+  void _scheduleCallKitRecoveryRetries() {
+    for (final delay in const [
+      Duration(milliseconds: 250),
+      Duration(seconds: 1),
+      Duration(seconds: 3),
+    ]) {
+      unawaited(
+        Future<void>.delayed(delay, () async {
+          if (!gateway.enabled) return;
+          await _recoverCallKitState();
+        }),
+      );
+    }
   }
 
   void _phoneChanged() {
@@ -281,6 +297,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.resumed) {
       unawaited(_recoverCallKitState());
+      _scheduleCallKitRecoveryRetries();
     }
   }
 
