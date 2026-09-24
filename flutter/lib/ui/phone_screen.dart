@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../controllers/phone_controller.dart';
 import '../models/call_state.dart';
@@ -508,6 +509,15 @@ class _CallControls extends StatelessWidget {
                 ),
               ),
           ],
+          if (mobileCalls.gatewayVideoEnabled ||
+              mobileCalls.gatewayRemoteVideoAvailable) ...[
+            const SizedBox(height: 18),
+            _VideoStage(
+              remoteRenderer: mobileCalls.gatewayRemoteVideoRenderer,
+              localRenderer: mobileCalls.gatewayLocalVideoRenderer,
+              showLocal: mobileCalls.gatewayVideoEnabled,
+            ),
+          ],
           const SizedBox(height: 20),
           Wrap(
             spacing: 20,
@@ -536,6 +546,21 @@ class _CallControls extends StatelessWidget {
                 label: 'Speaker',
                 active: mobileCalls.gatewaySpeakerphoneOn,
                 onTap: mobileCalls.toggleGatewaySpeakerphone,
+              ),
+              _InCallAction(
+                icon: mobileCalls.gatewayVideoEnabled
+                    ? Icons.videocam
+                    : Icons.videocam_off,
+                label: mobileCalls.gatewayVideoEnabled ? 'Video on' : 'Video',
+                active: mobileCalls.gatewayVideoEnabled,
+                onTap: connected ? mobileCalls.toggleGatewayVideo : null,
+              ),
+              _InCallAction(
+                icon: Icons.cameraswitch,
+                label: 'Flip',
+                onTap: mobileCalls.gatewayVideoEnabled
+                    ? mobileCalls.switchGatewayCamera
+                    : null,
               ),
               _InCallAction(
                 icon: Icons.pause,
@@ -617,9 +642,18 @@ class _CallControls extends StatelessWidget {
           ),
           if (state.displayName?.isNotEmpty == true)
             Text(state.number ?? '', style: Theme.of(context).textTheme.bodyMedium),
+          if (controller.incomingVideoOffered) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Incoming video call',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+          ],
           const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            spacing: 34,
+            runSpacing: 18,
+            alignment: WrapAlignment.center,
             children: [
               _RoundAction(
                 icon: Icons.call_end,
@@ -627,13 +661,21 @@ class _CallControls extends StatelessWidget {
                 label: 'Decline',
                 onTap: controller.rejectIncomingCall,
               ),
-              const SizedBox(width: 48),
               _RoundAction(
                 icon: Icons.call,
                 color: Colors.green,
-                label: 'Answer',
+                label: controller.incomingVideoOffered
+                    ? 'Audio'
+                    : 'Answer',
                 onTap: controller.answerIncomingCall,
               ),
+              if (controller.incomingVideoOffered)
+                _RoundAction(
+                  icon: Icons.videocam,
+                  color: const Color(0xFF113B53),
+                  label: 'Video',
+                  onTap: controller.answerIncomingVideoCall,
+                ),
             ],
           ),
         ],
@@ -643,6 +685,14 @@ class _CallControls extends StatelessWidget {
     if (state.isInCall) {
       return Column(
         children: [
+          if (controller.videoEnabled || controller.remoteVideoAvailable) ...[
+            _VideoStage(
+              remoteRenderer: controller.remoteVideoRenderer,
+              localRenderer: controller.localVideoRenderer,
+              showLocal: controller.videoEnabled,
+            ),
+            const SizedBox(height: 18),
+          ],
           if (state.isConnected) ...[
             Text(
               _formatCallDuration(controller.activeCallConnectedAt),
@@ -683,6 +733,25 @@ class _CallControls extends StatelessWidget {
                   controller.speakerphoneOn ? Icons.volume_up : Icons.hearing,
                 ),
                 label: const Text('Speaker'),
+              ),
+              FilterChip(
+                selected: controller.videoEnabled,
+                onSelected: state.isConnected
+                    ? (_) => controller.toggleVideo()
+                    : null,
+                avatar: Icon(
+                  controller.videoEnabled
+                      ? Icons.videocam
+                      : Icons.videocam_off,
+                ),
+                label: Text(controller.videoEnabled ? 'Video on' : 'Video'),
+              ),
+              _InCallAction(
+                icon: Icons.cameraswitch,
+                label: 'Flip',
+                onTap: controller.videoEnabled
+                    ? controller.switchCamera
+                    : null,
               ),
               FilterChip(
                 selected: controller.hasDirectTransfer,
@@ -743,13 +812,100 @@ class _CallControls extends StatelessWidget {
       );
     }
 
-    return _RoundAction(
-      icon: Icons.call,
-      color: Colors.green,
-      label: 'Call',
-      onTap: controller.dialledNumber.trim().isNotEmpty
-          ? () => mobileCalls.placeCall(controller.dialledNumber)
-          : null,
+    final canDial = controller.dialledNumber.trim().isNotEmpty;
+    return Wrap(
+      spacing: 32,
+      runSpacing: 16,
+      alignment: WrapAlignment.center,
+      children: [
+        _RoundAction(
+          icon: Icons.call,
+          color: Colors.green,
+          label: 'Call',
+          onTap: canDial
+              ? () => mobileCalls.placeCall(controller.dialledNumber)
+              : null,
+        ),
+        _RoundAction(
+          icon: Icons.videocam,
+          color: const Color(0xFF113B53),
+          label: 'Video',
+          onTap: canDial
+              ? () => mobileCalls.placeCall(
+                    controller.dialledNumber,
+                    video: true,
+                  )
+              : null,
+        ),
+      ],
+    );
+  }
+}
+
+
+class _VideoStage extends StatelessWidget {
+  const _VideoStage({
+    required this.remoteRenderer,
+    required this.localRenderer,
+    required this.showLocal,
+  });
+
+  final RTCVideoRenderer? remoteRenderer;
+  final RTCVideoRenderer? localRenderer;
+  final bool showLocal;
+
+  @override
+  Widget build(BuildContext context) {
+    final remote = remoteRenderer;
+    final local = localRenderer;
+    const navy = Color(0xFF113B53);
+
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: ColoredBox(
+          color: navy,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (remote != null)
+                RTCVideoView(
+                  remote,
+                  objectFit:
+                      RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                )
+              else
+                const Center(
+                  child: Icon(
+                    Icons.person,
+                    color: Colors.white70,
+                    size: 72,
+                  ),
+                ),
+              if (showLocal && local != null)
+                Positioned(
+                  right: 12,
+                  top: 12,
+                  width: 104,
+                  height: 142,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: ColoredBox(
+                      color: Colors.black,
+                      child: RTCVideoView(
+                        local,
+                        mirror: true,
+                        objectFit:
+                            RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
