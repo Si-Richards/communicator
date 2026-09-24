@@ -59,6 +59,16 @@ class JanusSipService {
         jsep: {'type': 'answer', 'sdp': answerSdp, 'trickle': true},
       );
 
+  Future<void> updateOffer(String offerSdp) => _janus.sendPlugin(
+        body: const {'request': 'update'},
+        jsep: {'type': 'offer', 'sdp': offerSdp, 'trickle': true},
+      );
+
+  Future<void> updateAnswer(String answerSdp) => _janus.sendPlugin(
+        body: const {'request': 'update'},
+        jsep: {'type': 'answer', 'sdp': answerSdp, 'trickle': true},
+      );
+
   Future<void> decline({int code = 486}) =>
       _janus.sendPlugin(body: {'request': 'decline', 'code': code});
 
