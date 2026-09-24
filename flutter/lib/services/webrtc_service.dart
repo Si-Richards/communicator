@@ -12,6 +12,9 @@ class WebRtcService {
   bool _remoteDescriptionSet = false;
   bool _videoEnabled = false;
   bool _remoteVideoAvailable = false;
+  DateTime? _lastStatsAt;
+  int _lastVideoBytesSent = 0;
+  int _lastVideoBytesReceived = 0;
   final List<RTCIceCandidate> _pendingRemoteCandidates = [];
 
   void Function(Map<String, dynamic> candidate)? onLocalCandidate;
@@ -309,6 +312,100 @@ class WebRtcService {
     await _requirePeerConnection().addCandidate(candidate);
   }
 
+  Future<Map<String, Object>> collectSanitizedStats() async {
+    final pc = _peerConnection;
+    if (pc == null) return const {};
+
+    final reports = await pc.getStats();
+    var audioPacketsLost = 0;
+    var videoPacketsLost = 0;
+    var videoBytesSent = 0;
+    var videoBytesReceived = 0;
+    var videoWidth = 0;
+    var videoHeight = 0;
+    var videoFps = 0;
+    var rttMs = 0;
+    var jitterMs = 0;
+
+    for (final report in reports) {
+      final type = report.type.toLowerCase();
+      final values = report.values;
+      final kind =
+          (values['kind'] ?? values['mediaType'] ?? '').toString().toLowerCase();
+
+      if (type == 'inbound-rtp') {
+        final lost = _statInt(values['packetsLost']);
+        if (kind == 'video') {
+          videoPacketsLost += lost;
+          videoBytesReceived += _statInt(values['bytesReceived']);
+          videoWidth = _maxInt(videoWidth, _statInt(values['frameWidth']));
+          videoHeight = _maxInt(videoHeight, _statInt(values['frameHeight']));
+          videoFps = _maxInt(
+            videoFps,
+            _statInt(values['framesPerSecond']),
+          );
+        } else if (kind == 'audio') {
+          audioPacketsLost += lost;
+        }
+        final jitter = _statDouble(values['jitter']);
+        if (jitter > 0) jitterMs = _maxInt(jitterMs, (jitter * 1000).round());
+      } else if (type == 'outbound-rtp' && kind == 'video') {
+        videoBytesSent += _statInt(values['bytesSent']);
+        videoWidth = _maxInt(videoWidth, _statInt(values['frameWidth']));
+        videoHeight = _maxInt(videoHeight, _statInt(values['frameHeight']));
+        videoFps = _maxInt(
+          videoFps,
+          _statInt(values['framesPerSecond']),
+        );
+      } else if (type == 'remote-inbound-rtp') {
+        final rtt = _statDouble(values['roundTripTime']);
+        if (rtt > 0) rttMs = _maxInt(rttMs, (rtt * 1000).round());
+      } else if (type == 'candidate-pair') {
+        final selected = values['selected'] == true || values['nominated'] == true;
+        final state = values['state']?.toString().toLowerCase();
+        if (selected || state == 'succeeded') {
+          final rtt = _statDouble(values['currentRoundTripTime']);
+          if (rtt > 0) rttMs = _maxInt(rttMs, (rtt * 1000).round());
+        }
+      }
+    }
+
+    final now = DateTime.now();
+    var videoSendKbps = 0;
+    var videoReceiveKbps = 0;
+    final previous = _lastStatsAt;
+    if (previous != null) {
+      final elapsedMs = now.difference(previous).inMilliseconds;
+      if (elapsedMs > 0) {
+        final sentDelta = videoBytesSent - _lastVideoBytesSent;
+        final receivedDelta = videoBytesReceived - _lastVideoBytesReceived;
+        if (sentDelta >= 0) {
+          videoSendKbps = ((sentDelta * 8) / elapsedMs).round();
+        }
+        if (receivedDelta >= 0) {
+          videoReceiveKbps = ((receivedDelta * 8) / elapsedMs).round();
+        }
+      }
+    }
+    _lastStatsAt = now;
+    _lastVideoBytesSent = videoBytesSent;
+    _lastVideoBytesReceived = videoBytesReceived;
+
+    return <String, Object>{
+      'audio_packets_lost': audioPacketsLost,
+      'video_packets_lost': videoPacketsLost,
+      'rtt_ms': rttMs,
+      'jitter_ms': jitterMs,
+      'video_width': videoWidth,
+      'video_height': videoHeight,
+      'video_fps': videoFps,
+      'video_send_kbps': videoSendKbps,
+      'video_receive_kbps': videoReceiveKbps,
+      'local_video': _videoEnabled,
+      'remote_video': _remoteVideoAvailable,
+    };
+  }
+
   Future<void> setMuted(bool muted) async {
     final local = _localStream;
     if (local == null) {
@@ -368,6 +465,9 @@ class WebRtcService {
 
     _videoEnabled = false;
     _remoteVideoAvailable = false;
+    _lastStatsAt = null;
+    _lastVideoBytesSent = 0;
+    _lastVideoBytesReceived = 0;
     _remoteDescriptionSet = false;
     _pendingRemoteCandidates.clear();
   }
@@ -430,6 +530,19 @@ class WebRtcService {
     }
     return codecs.toList(growable: false);
   }
+
+  static int _statInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static double _statDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static int _maxInt(int left, int right) => left > right ? left : right;
 
   static String _candidateType(String candidate) {
     final match =
