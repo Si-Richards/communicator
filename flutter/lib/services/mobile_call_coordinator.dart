@@ -321,26 +321,6 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     if (!gateway.enabled || deviceId == null || !_gatewayProvisioned) return;
     try {
       final summary = await gateway.getVoicemail(deviceId);
-      final waiting = summary['waiting'] == true;
-      final newMessages =
-          int.tryParse(summary['new_messages']?.toString() ?? '') ?? 0;
-      final oldMessages =
-          int.tryParse(summary['old_messages']?.toString() ?? '') ?? 0;
-      phone.updateVoicemailFromGateway(
-        waiting: waiting,
-        newMessages: newMessages,
-        oldMessages: oldMessages,
-      );
-    } catch (error) {
-      debugPrint('[VoiceHost Mobile] voicemail refresh failed: $error');
-    }
-  }
-
-  Future<void> _refreshVoicemail() async {
-    final deviceId = _deviceId;
-    if (!gateway.enabled || deviceId == null || !_gatewayProvisioned) return;
-    try {
-      final summary = await gateway.getVoicemail(deviceId);
       phone.updateVoicemailSummary(
         waiting: summary.waiting,
         newMessages: summary.newMessages,
