@@ -82,11 +82,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveAndRegister() async {
-    await _save();
-    await widget.controller.connectAndRegister();
-  }
-
   @override
   Widget build(BuildContext context) {
     final model = widget.controller;
@@ -207,39 +202,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: const Icon(Icons.save),
                 label: const Text('Save Settings'),
               ),
-              const SizedBox(height: 10),
-              Text(
-                'Incoming and outgoing calls are handled by the VoiceHost '
-                'mobile gateway. Direct handset SIP registration is retained '
-                'only as a diagnostic test.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 10),
-              if (model.isRegistered)
-                OutlinedButton.icon(
-                  onPressed: () => model.disconnect(),
-                  icon: const Icon(Icons.link_off),
-                  label: const Text('Disconnect'),
-                )
-              else
-                FilledButton.tonalIcon(
-                  onPressed: _saving ? null : () => _saveAndRegister(),
-                  icon: const Icon(Icons.login),
-                  label: const Text('Test Direct Registration'),
-                ),
-              const SizedBox(height: 12),
-              Text(
-                'Direct SIP: ${model.registrationStatus}',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              if (model.connectionDiagnostic.isNotEmpty)
-                Text(
-                  'WebRTC: ${model.connectionDiagnostic}',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               if (model.errorMessage != null) ...[
                 const SizedBox(height: 12),
                 Text(
