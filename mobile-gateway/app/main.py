@@ -578,6 +578,15 @@ async def test_push(device_id: str):
     return {'ok': True, 'environment': environment}
 
 
+@app.get('/v1/devices/{device_id}/voicemail', dependencies=[Depends(auth)])
+async def voicemail(device_id: str):
+    try:
+        summary = manager.voicemail_summary(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+    return {'ok': True, **summary}
+
+
 @app.post('/v1/devices/{device_id}/calls', dependencies=[Depends(auth)])
 async def start_call(device_id: str, body: OutboundCallRequest):
     try:
