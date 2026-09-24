@@ -63,7 +63,7 @@ class PhoneController extends ChangeNotifier {
   String sipProxy = '';
   String janusUrl = AppConfig.defaultJanusUrl;
   String janusApiSecret = '';
-  String voicemailNumber = '';
+  static const String voicemailNumber = '1571';
   bool doNotDisturb = false;
 
   bool isRegistered = false;
@@ -151,7 +151,6 @@ class PhoneController extends ChangeNotifier {
     sipProxy = settings.sipProxy;
     janusUrl = settings.janusUrl;
     janusApiSecret = settings.janusApiSecret;
-    voicemailNumber = settings.voicemailNumber;
     doNotDisturb = settings.doNotDisturb;
     callHistory = await _historyRepository.load();
     notifyListeners();
@@ -165,7 +164,6 @@ class PhoneController extends ChangeNotifier {
     required String sipProxy,
     required String janusUrl,
     required String janusApiSecret,
-    required String voicemailNumber,
   }) async {
     this.nickname = nickname.trim();
     this.sipUsername = sipUsername.trim();
@@ -178,7 +176,6 @@ class PhoneController extends ChangeNotifier {
         ? AppConfig.defaultJanusUrl
         : janusUrl.trim();
     this.janusApiSecret = janusApiSecret.trim();
-    this.voicemailNumber = voicemailNumber.trim();
     await _persistSettings();
     notifyListeners();
   }
@@ -756,12 +753,7 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> callVoicemail() async {
-    final number = voicemailNumber.trim();
-    if (number.isEmpty) {
-      _setError('Set the voicemail number or feature code in Settings first.');
-      return;
-    }
-    await placeCall(number);
+    await placeCall(voicemailNumber);
   }
 
   Future<void> refreshVoicemailStatus() async {
