@@ -16,6 +16,7 @@ from .models import (
     AttendedTransferStartRequest,
     CandidateRequest,
     DeviceRegistration,
+    DtmfRequest,
     DiagnosticEvent,
     OutboundCallRequest,
     TransferRequest,
@@ -668,6 +669,17 @@ async def resume(call_id: str):
 async def candidate(call_id: str, body: CandidateRequest):
     try:
         await manager.candidate(call_id, body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(404, 'call not found')
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    return {'ok': True}
+
+
+@app.post('/v1/calls/{call_id}/dtmf', dependencies=[Depends(auth)])
+async def dtmf(call_id: str, body: DtmfRequest):
+    try:
+        await manager.dtmf(call_id, body.digit, body.duration)
     except KeyError:
         raise HTTPException(404, 'call not found')
     except RuntimeError as error:
