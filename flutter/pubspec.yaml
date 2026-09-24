@@ -1,7 +1,7 @@
 name: voicehost_softphone
 description: VoiceHost cross-platform Janus WebRTC softphone for iOS and Android.
 publish_to: "none"
-version: 0.2.0+14
+version: 0.2.0+15
 
 environment:
   sdk: ">=3.9.0 <4.0.0"
