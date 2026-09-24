@@ -572,6 +572,15 @@ async def register_device(body: DeviceRegistration):
     return {'ok': True, 'device_id': device.device_id}
 
 
+@app.get('/v1/devices/{device_id}/voicemail', dependencies=[Depends(auth)])
+async def voicemail_status(device_id: str):
+    try:
+        summary = manager.get_voicemail(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+    return summary
+
+
 @app.post('/v1/devices/{device_id}/test-push', dependencies=[Depends(auth)])
 async def test_push(device_id: str):
     environment = await _send_test_push(device_id)
