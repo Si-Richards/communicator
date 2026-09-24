@@ -74,6 +74,9 @@ class MobileGatewayService {
     return json['environment']?.toString() ?? '';
   }
 
+  Future<Map<String, dynamic>> getVoicemail(String deviceId) =>
+      _jsonRequest('GET', '/v1/devices/$deviceId/voicemail');
+
   Future<String> startCall({
     required String deviceId,
     required String target,
