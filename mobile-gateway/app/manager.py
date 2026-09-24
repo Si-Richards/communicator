@@ -1036,35 +1036,3 @@ class MobileSessionManager:
             _safe_ref(call_id),
             digit,
         )
-
-    def voicemail_summary(self, device_id: str) -> dict[str, int | bool]:
-        self.store.get(device_id)
-        return self.voicemail.get(
-            device_id,
-            {'waiting': False, 'new_messages': 0, 'old_messages': 0},
-        )
-
-    @staticmethod
-    def _parse_message_summary(content: str) -> dict[str, int | bool]:
-        waiting = False
-        new_messages = 0
-        old_messages = 0
-        for raw_line in content.splitlines():
-            line = raw_line.strip()
-            lower = line.lower()
-            if lower.startswith('messages-waiting:'):
-                waiting = lower.split(':', 1)[1].strip() == 'yes'
-                continue
-            match = re.match(
-                r'^voice-message:\s*(\d+)\s*/\s*(\d+)',
-                line,
-                flags=re.IGNORECASE,
-            )
-            if match:
-                new_messages = int(match.group(1))
-                old_messages = int(match.group(2))
-        return {
-            'waiting': waiting or new_messages > 0,
-            'new_messages': new_messages,
-            'old_messages': old_messages,
-        }
