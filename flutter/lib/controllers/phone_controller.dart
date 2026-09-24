@@ -63,7 +63,7 @@ class PhoneController extends ChangeNotifier {
   String sipProxy = '';
   String janusUrl = AppConfig.defaultJanusUrl;
   String janusApiSecret = '';
-  static const String voicemailNumber = '1571';
+  String get voicemailNumber => '1571';
   bool doNotDisturb = false;
 
   bool isRegistered = false;
