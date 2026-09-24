@@ -714,7 +714,7 @@ class MobileSessionManager:
             '[VH-DIAG] event=media_update_requested call=%s type=%s video=%s',
             _safe_ref(call_id),
             jsep_type,
-            bool(re.search(r'(?m)^m=video\\s+\\d+', sdp)),
+            bool(re.search(r'(?m)^m=video\s+\d+', sdp)),
         )
         await session.update(sdp, jsep_type)
 
