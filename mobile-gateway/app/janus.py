@@ -28,6 +28,8 @@ class JanusSipSession:
         self.on_trickle = on_trickle
         self.helper_master_id = helper_master_id
         self.ws = None
+        self.peer_ip: str | None = None
+        self.peer_port: int | None = None
         self.session_id: int | None = None
         self.handle_id: int | None = None
         self._waiters: dict[str, asyncio.Future] = {}
@@ -42,6 +44,19 @@ class JanusSipSession:
             subprotocols=['janus-protocol'],
             ping_interval=20,
             ping_timeout=20,
+        )
+        peer = getattr(self.ws, 'remote_address', None)
+        if isinstance(peer, tuple) and peer:
+            self.peer_ip = str(peer[0])
+            if len(peer) > 1:
+                try:
+                    self.peer_port = int(peer[1])
+                except (TypeError, ValueError):
+                    self.peer_port = None
+        logger.info(
+            '[VH-DIAG] event=janus_connected peer=%s port=%s',
+            self.peer_ip or '-',
+            self.peer_port or '-',
         )
         self._reader_task = asyncio.create_task(self._reader())
         created = await self._request({'janus': 'create'})
