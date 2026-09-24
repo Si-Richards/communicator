@@ -41,11 +41,12 @@ from pathlib import Path
 
 root = Path(os.environ['ROOT'])
 
-# iOS microphone permission and established-call background audio.
+# iOS microphone/camera permission and established-call background audio.
 plist_path = root / 'ios' / 'Runner' / 'Info.plist'
 with plist_path.open('rb') as fh:
     plist = plistlib.load(fh)
 plist['NSMicrophoneUsageDescription'] = 'VoiceHost needs microphone access for telephone calls.'
+plist['NSCameraUsageDescription'] = 'VoiceHost needs camera access for video calls.'
 background = list(plist.get('UIBackgroundModes', []))
 if 'audio' not in background:
     background.append('audio')
@@ -59,12 +60,20 @@ manifest = manifest_path.read_text()
 permissions = '''
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 '''
 if 'android.permission.RECORD_AUDIO' not in manifest:
     manifest = re.sub(r'(<manifest[^>]*>)', r'\1' + permissions, manifest, count=1)
+elif 'android.permission.CAMERA' not in manifest:
+    manifest = re.sub(
+        r'(<uses-permission android:name="android.permission.RECORD_AUDIO" />)',
+        r'\1\n    <uses-permission android:name="android.permission.CAMERA" />',
+        manifest,
+        count=1,
+    )
 manifest_path.write_text(manifest)
 
 # flutter_webrtc requires Android API 23 or newer. Support both Gradle templates.
