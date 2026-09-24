@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../controllers/phone_controller.dart';
 import '../models/call_state.dart';
 import '../services/mobile_call_coordinator.dart';
-import 'settings_screen.dart';
 
 class PhoneScreen extends StatefulWidget {
   const PhoneScreen({
@@ -128,21 +127,6 @@ class _PhoneScreenState extends State<PhoneScreen> {
                     color: Colors.white,
                   ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Settings',
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => SettingsScreen(
-                        controller: controller,
-                        mobileCalls: widget.mobileCalls,
-                      ),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.settings_outlined),
               ),
               const SizedBox(width: 6),
             ],
