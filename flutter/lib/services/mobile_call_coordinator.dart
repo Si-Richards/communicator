@@ -1320,7 +1320,6 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _transferWatchdog?.cancel();
-    _voicemailRefreshTimer?.cancel();
     _voicemailPollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
