@@ -98,6 +98,7 @@ class MobileSessionManager:
         self.device_calls: dict[str, set[str]] = {}
         self.transfers: dict[str, TransferRuntime] = {}
         self.device_transfer: dict[str, str] = {}
+        self.voicemail: dict[str, dict[str, int | bool]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def restore(self):
@@ -128,6 +129,17 @@ class MobileSessionManager:
 
             master = await self._create_session(device)
             self.sessions[device.device_id] = master
+            try:
+                await master.subscribe_message_summary()
+                logger.info(
+                    '[VH-DIAG] event=voicemail_subscribed device=%s',
+                    _safe_ref(device.device_id),
+                )
+            except Exception:
+                logger.exception(
+                    '[VH-DIAG] event=voicemail_subscribe_failed device=%s',
+                    _safe_ref(device.device_id),
+                )
             logger.info(
                 '[VH-DIAG] event=session_start device=%s master_id=%s peer=%s session=%s handle=%s',
                 _safe_ref(device.device_id),
@@ -379,6 +391,19 @@ class MobileSessionManager:
                         _safe_ref(call_id),
                     )
                 self._release_call_session(call)
+            return
+
+        if event == 'notify' and str(result.get('notify') or '').lower() == 'message-summary':
+            content = str(result.get('content') or '')
+            summary = self._parse_message_summary(content)
+            self.voicemail[device.device_id] = summary
+            logger.info(
+                '[VH-DIAG] event=voicemail_update device=%s waiting=%s new=%s old=%s',
+                _safe_ref(device.device_id),
+                summary['waiting'],
+                summary['new_messages'],
+                summary['old_messages'],
+            )
             return
 
         call = self._call_for_session(session)
@@ -951,3 +976,35 @@ class MobileSessionManager:
             _safe_ref(call_id),
             digit,
         )
+
+    def voicemail_summary(self, device_id: str) -> dict[str, int | bool]:
+        self.store.get(device_id)
+        return self.voicemail.get(
+            device_id,
+            {'waiting': False, 'new_messages': 0, 'old_messages': 0},
+        )
+
+    @staticmethod
+    def _parse_message_summary(content: str) -> dict[str, int | bool]:
+        waiting = False
+        new_messages = 0
+        old_messages = 0
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            lower = line.lower()
+            if lower.startswith('messages-waiting:'):
+                waiting = lower.split(':', 1)[1].strip() == 'yes'
+                continue
+            match = re.match(
+                r'^voice-message:\s*(\d+)\s*/\s*(\d+)',
+                line,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                new_messages = int(match.group(1))
+                old_messages = int(match.group(2))
+        return {
+            'waiting': waiting or new_messages > 0,
+            'new_messages': new_messages,
+            'old_messages': old_messages,
+        }
