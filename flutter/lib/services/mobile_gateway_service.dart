@@ -1,6 +1,25 @@
 import 'dart:convert';
 import 'dart:io';
 
+class GatewayVoicemailSummary {
+  const GatewayVoicemailSummary({
+    required this.waiting,
+    required this.newMessages,
+    required this.oldMessages,
+  });
+
+  final bool waiting;
+  final int newMessages;
+  final int oldMessages;
+
+  factory GatewayVoicemailSummary.fromJson(Map<String, dynamic> json) =>
+      GatewayVoicemailSummary(
+        waiting: json['waiting'] == true,
+        newMessages: int.tryParse(json['new_messages']?.toString() ?? '') ?? 0,
+        oldMessages: int.tryParse(json['old_messages']?.toString() ?? '') ?? 0,
+      );
+}
+
 class GatewayCall {
   const GatewayCall({
     required this.id,
@@ -64,6 +83,14 @@ class MobileGatewayService {
         'dnd': doNotDisturb,
       },
     );
+  }
+
+  Future<GatewayVoicemailSummary> getVoicemail(String deviceId) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/v1/devices/$deviceId/voicemail',
+    );
+    return GatewayVoicemailSummary.fromJson(json);
   }
 
   Future<String> testPush(String deviceId) async {
