@@ -530,9 +530,59 @@ class WebRtcService {
   static String summarizeSdp(String sdp) {
     final audio = _codecsForMedia(sdp, 'audio');
     final video = _codecsForMedia(sdp, 'video');
-    final direction = RegExp(r'(?m)^a=(sendrecv|sendonly|recvonly|inactive)$')
-            .firstMatch(sdp)
-            ?.group(1) ??
+    final direction = RegExp(
+          r'^a=(sendrecv|sendonly|recvonly|inactive)    return 'audio=[${audio.join(',')}] video=[${video.join(',')}] direction=$direction';
+  }
+
+  static List<String> _codecsForMedia(String sdp, String media) {
+    final lines = sdp.split(RegExp(r'\r?\n'));
+    final mIndex = lines.indexWhere((line) => line.startsWith('m=$media '));
+    if (mIndex < 0) return const [];
+    var end = lines.length;
+    for (var i = mIndex + 1; i < lines.length; i++) {
+      if (lines[i].startsWith('m=')) {
+        end = i;
+        break;
+      }
+    }
+    final codecs = <String>{};
+    for (var i = mIndex + 1; i < end; i++) {
+      final match = RegExp(r'^a=rtpmap:\d+\s+([^/\s]+)', caseSensitive: false)
+          .firstMatch(lines[i]);
+      final codec = match?.group(1);
+      if (codec != null && codec.isNotEmpty) codecs.add(codec.toUpperCase());
+    }
+    return codecs.toList(growable: false);
+  }
+
+  static int _statInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static double _statDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static int _maxInt(int left, int right) => left > right ? left : right;
+
+  static String _candidateType(String candidate) {
+    final match =
+        RegExp(r'\btyp\s+(host|srflx|prflx|relay)\b').firstMatch(candidate);
+    return match?.group(1) ?? 'unknown';
+  }
+
+  static int? _intValue(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+}
+,
+          multiLine: true,
+        ).firstMatch(sdp)?.group(1) ??
         'default';
     return 'audio=[${audio.join(',')}] video=[${video.join(',')}] direction=$direction';
   }
