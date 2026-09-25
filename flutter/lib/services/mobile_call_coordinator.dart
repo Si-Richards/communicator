@@ -598,7 +598,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _diag(
         'gateway_call_loaded',
         callId: context.id,
-        details: {'sdp_length': call.offerSdp.length},
+        details: {
+          'sdp_length': call.offerSdp.length,
+          'incoming_video_offered': context.incomingVideoOffered,
+          'sdp': WebRtcService.summarizeSdp(call.offerSdp),
+        },
       );
       if (call.offerSdp.isEmpty) {
         throw StateError('Gateway call has no WebRTC offer');
@@ -1258,22 +1262,47 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     final active = _activeGatewayCall;
     if (active == null || !active.connected) return;
     final target = !active.webRtc.videoEnabled;
+    var mediaChanged = false;
     try {
       final offer = await active.webRtc.setVideoEnabled(target);
+      mediaChanged = true;
+      final summary = WebRtcService.summarizeSdp(offer);
+      await _diag(
+        'video_update_attempt',
+        callId: active.id,
+        details: {
+          'enabled': target,
+          'sdp': summary,
+        },
+      );
       await gateway.updateMedia(active.id, offer, type: 'offer');
       await _diag(
         'video_update_requested',
         callId: active.id,
         details: {
           'enabled': target,
-          'sdp': WebRtcService.summarizeSdp(offer),
+          'sdp': summary,
         },
       );
       notifyListeners();
     } catch (error) {
+      await _diag(
+        'video_update_failed',
+        callId: active.id,
+        details: {
+          'enabled': target,
+          'error': error.toString(),
+        },
+      );
+      if (mediaChanged && active.webRtc.videoEnabled != !target) {
+        try {
+          await active.webRtc.setVideoEnabled(!target);
+        } catch (_) {}
+      }
       _appendDiagnostic(
         'Video ${target ? 'enable' : 'disable'} failed: $error',
       );
+      notifyListeners();
     }
   }
 
