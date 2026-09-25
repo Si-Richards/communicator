@@ -594,22 +594,30 @@ import flutter_callkit_incoming
             return
         }
 
-        recordNativeLog("PushKit incoming VoIP push received")
         let caller = body["handle"] as? String ?? "Unknown"
         let callerName = body["nameCaller"] as? String ?? caller
+        let isVideo = body["isVideo"] as? Bool ??
+            ((body["extra"] as? [String: Any])?["is_video"] as? Bool ?? false)
+        recordNativeLog(
+            "PushKit incoming VoIP push received · video=\(isVideo)"
+        )
 
         let data = flutter_callkit_incoming.Data(
             id: id,
             nameCaller: callerName,
             handle: caller,
-            type: 0
+            type: isVideo ? 1 : 0
         )
         data.appName = "VoiceHost"
-        data.extra = ["call_id": id, "source": "voicehost-mobile-gateway"]
+        data.extra = [
+            "call_id": id,
+            "source": "voicehost-mobile-gateway",
+            "is_video": isVideo,
+        ]
         data.duration = 45_000
         data.normalHandle = 1
         data.handleType = "number"
-        data.supportsVideo = false
+        data.supportsVideo = isVideo
         // Two separate CallKit groups allow an active call plus a waiting/held
         // call. We intentionally do not support conferencing/grouping yet.
         data.maximumCallGroups = 2
