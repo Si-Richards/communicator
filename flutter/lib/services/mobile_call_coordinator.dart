@@ -682,10 +682,24 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             break;
           case 'accepted':
             final acceptedJsep = event['jsep'];
-            if (context.outgoing && acceptedJsep is Map) {
+            String? acceptedSdp;
+            if (acceptedJsep is Map) {
               final sdp = acceptedJsep['sdp']?.toString();
               if (sdp != null && sdp.isNotEmpty) {
-                unawaited(context.webRtc.applyRemoteAnswer(sdp));
+                acceptedSdp = sdp;
+                unawaited(
+                  context.webRtc.applyRemoteAnswer(sdp).then((_) {
+                    _appendDiagnostic(
+                      'Accepted SDP applied · '
+                      '${WebRtcService.summarizeSdp(sdp)}',
+                    );
+                    notifyListeners();
+                  }).catchError((Object error) {
+                    _appendDiagnostic(
+                      'Accepted SDP apply failed: $error',
+                    );
+                  }),
+                );
               }
             }
             if (context.outgoing) unawaited(_ringback.stop());
@@ -699,7 +713,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             unawaited(_diag(
               'gateway_accepted',
               callId: context.id,
-              details: {'gateway_event': 'accepted'},
+              details: {
+                'gateway_event': 'accepted',
+                'jsep': acceptedSdp != null,
+                if (acceptedSdp != null)
+                  'sdp': WebRtcService.summarizeSdp(acceptedSdp),
+              },
             ));
             break;
           case 'updated':
