@@ -9,6 +9,13 @@ from .config import settings
 logger = logging.getLogger('uvicorn.error')
 
 
+class APNSError(RuntimeError):
+    def __init__(self, status: int, reason: str):
+        self.status = status
+        self.reason = reason
+        super().__init__(f'APNs {status}: {reason}')
+
+
 class APNSClient:
     def __init__(self):
         self._token: str | None = None
@@ -115,4 +122,4 @@ class APNSClient:
             ):
                 break
 
-        raise RuntimeError(f'APNs {last_status}: {last_reason}')
+        raise APNSError(last_status, last_reason)
