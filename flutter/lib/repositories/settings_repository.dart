@@ -3,6 +3,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_config.dart';
 
+enum ConfigurationSource {
+  manual,
+  provisioning,
+}
+
 class SoftphoneSettings {
   const SoftphoneSettings({
     required this.nickname,
@@ -14,6 +19,8 @@ class SoftphoneSettings {
     required this.janusApiSecret,
     required this.voicemailNumber,
     required this.doNotDisturb,
+    required this.configurationSource,
+    required this.provisioningUrl,
   });
 
   final String nickname;
@@ -25,6 +32,8 @@ class SoftphoneSettings {
   final String janusApiSecret;
   final String voicemailNumber;
   final bool doNotDisturb;
+  final ConfigurationSource configurationSource;
+  final String provisioningUrl;
 }
 
 class SettingsRepository {
@@ -40,6 +49,8 @@ class SettingsRepository {
   static const _dndKey = 'voicehost.dnd';
   static const _sipPasswordKey = 'voicehost.sip.password';
   static const _janusSecretKey = 'voicehost.janus.secret';
+  static const _configurationSourceKey = 'voicehost.configuration.source';
+  static const _provisioningUrlKey = 'voicehost.provisioning.url';
 
   final FlutterSecureStorage _secureStorage;
 
@@ -58,6 +69,15 @@ class SettingsRepository {
       janusApiSecret: janusSecret,
       voicemailNumber: prefs.getString(_voicemailNumberKey) ?? '',
       doNotDisturb: prefs.getBool(_dndKey) ?? false,
+      configurationSource: ConfigurationSource.values.firstWhere(
+        (value) =>
+            value.name ==
+            (prefs.getString(_configurationSourceKey) ??
+                ConfigurationSource.manual.name),
+        orElse: () => ConfigurationSource.manual,
+      ),
+      provisioningUrl:
+          prefs.getString(_provisioningUrlKey) ?? AppConfig.provisioningUrl,
     );
   }
 
@@ -71,6 +91,11 @@ class SettingsRepository {
       prefs.setString(_janusUrlKey, settings.janusUrl),
       prefs.setString(_voicemailNumberKey, settings.voicemailNumber),
       prefs.setBool(_dndKey, settings.doNotDisturb),
+      prefs.setString(
+        _configurationSourceKey,
+        settings.configurationSource.name,
+      ),
+      prefs.setString(_provisioningUrlKey, settings.provisioningUrl),
       _secureStorage.write(key: _sipPasswordKey, value: settings.sipPassword),
       _secureStorage.write(
         key: _janusSecretKey,
