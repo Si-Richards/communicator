@@ -48,6 +48,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final WebRtcService _transferWebRtc = WebRtcService();
   final RingbackService _ringback = RingbackService();
   final Map<String, _GatewayCallContext> _gatewayCalls = {};
+  final Set<String> _acceptingCallIds = <String>{};
   final List<String> _diagnosticLogs = [];
   static const MethodChannel _nativeCallKitChannel =
       MethodChannel('voicehost/callkit');
@@ -589,12 +590,22 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     String requestedCallId, {
     bool? video,
   }) async {
+    final normalizedCallId = requestedCallId.toLowerCase();
+    if (_acceptingCallIds.contains(normalizedCallId)) {
+      _appendDiagnostic(
+        'Duplicate CallKit accept ignored · call=$normalizedCallId',
+      );
+      return;
+    }
+
     final existing = _contextFor(requestedCallId);
     if (existing?.answering == true || existing?.connected == true) {
       return;
     }
 
-    await phone.disconnectDirectRegistrationIfIdle();
+    _acceptingCallIds.add(normalizedCallId);
+    try {
+      await phone.disconnectDirectRegistrationIfIdle();
 
     final previous = _activeGatewayCall;
     if (previous != null &&
@@ -675,6 +686,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _closeGatewayCall(id);
     } finally {
       if (context != null) context.answering = false;
+    }
+    } finally {
+      _acceptingCallIds.remove(normalizedCallId);
     }
   }
 
