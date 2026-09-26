@@ -6,6 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../core/app_config.dart';
 import '../models/call_record.dart';
 import '../models/call_state.dart';
+import '../models/provisioning.dart';
 import '../models/sip_account.dart';
 import '../models/voicemail_summary.dart';
 import '../repositories/call_history_repository.dart';
@@ -152,6 +153,12 @@ class PhoneController extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    await reloadManualConfiguration();
+    callHistory = await _historyRepository.load();
+    notifyListeners();
+  }
+
+  Future<void> reloadManualConfiguration() async {
     final settings = await _settingsRepository.load();
     nickname = settings.nickname;
     sipUsername = settings.sipUsername;
@@ -163,7 +170,40 @@ class PhoneController extends ChangeNotifier {
     configurationSource = settings.configurationSource;
     provisioningUrl = settings.provisioningUrl;
     doNotDisturb = settings.doNotDisturb;
-    callHistory = await _historyRepository.load();
+    notifyListeners();
+  }
+
+  Future<void> setConfigurationSource(
+    ConfigurationSource source, {
+    String? provisioningUrl,
+  }) async {
+    configurationSource = source;
+    if (provisioningUrl != null) {
+      this.provisioningUrl = provisioningUrl.trim();
+    }
+    await _settingsRepository.saveConfigurationSource(
+      source,
+      provisioningUrl: provisioningUrl?.trim(),
+    );
+    notifyListeners();
+  }
+
+  void applyProvisionedConfiguration(ProvisioningConfiguration config) {
+    final managedName = config.displayName?.trim() ?? '';
+    if (managedName.isNotEmpty) nickname = managedName;
+
+    final managedUsername = config.sipUsername?.trim() ?? '';
+    if (managedUsername.isNotEmpty) sipUsername = managedUsername;
+    if (config.sipPassword != null && config.sipPassword!.isNotEmpty) {
+      sipPassword = config.sipPassword!;
+    }
+    final managedRealm = config.sipRealm?.trim() ?? '';
+    if (managedRealm.isNotEmpty) sipRealm = managedRealm;
+    if (config.sipProxy != null) sipProxy = config.sipProxy!.trim();
+
+    final managedJanus = config.janusUrl?.trim() ?? '';
+    if (managedJanus.isNotEmpty) janusUrl = managedJanus;
+
     notifyListeners();
   }
 
