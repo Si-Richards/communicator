@@ -51,12 +51,26 @@ class GatewayCall {
 }
 
 class MobileGatewayService {
-  MobileGatewayService({required this.baseUrl, required this.apiKey});
+  MobileGatewayService({
+    required String baseUrl,
+    required String apiKey,
+  })  : _baseUrl = baseUrl,
+        _apiKey = apiKey;
 
-  final String baseUrl;
-  final String apiKey;
+  String _baseUrl;
+  String _apiKey;
 
-  bool get enabled => baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
+  String get baseUrl => _baseUrl;
+  String get apiKey => _apiKey;
+  bool get enabled => _baseUrl.trim().isNotEmpty && _apiKey.trim().isNotEmpty;
+
+  void configure({
+    String? baseUrl,
+    String? apiKey,
+  }) {
+    if (baseUrl != null) _baseUrl = baseUrl.trim();
+    if (apiKey != null) _apiKey = apiKey.trim();
+  }
 
   Future<void> registerDevice({
     required String deviceId,
@@ -207,7 +221,7 @@ class MobileGatewayService {
     final wsUri = uri.replace(scheme: uri.scheme == 'https' ? 'wss' : 'ws');
     return WebSocket.connect(
       wsUri.toString(),
-      headers: {'X-Gateway-Key': apiKey},
+      headers: {'X-Gateway-Key': _apiKey},
     );
   }
 
@@ -244,7 +258,7 @@ class MobileGatewayService {
     try {
       final request = await client.openUrl(method, Uri.parse(_url(path)));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set('X-Gateway-Key', apiKey);
+      request.headers.set('X-Gateway-Key', _apiKey);
       if (body != null) {
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(body));
@@ -267,5 +281,6 @@ class MobileGatewayService {
   }
 
   String _url(String path) =>
-      '${baseUrl.replaceFirst(RegExp(r'/+$'), '')}$path';
+      '${_baseUrl.replaceFirst(RegExp(r'/+}
+), '')}$path';
 }
