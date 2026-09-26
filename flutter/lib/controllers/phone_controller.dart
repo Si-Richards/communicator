@@ -64,6 +64,8 @@ class PhoneController extends ChangeNotifier {
   String sipProxy = '';
   String janusUrl = AppConfig.defaultJanusUrl;
   String janusApiSecret = '';
+  ConfigurationSource configurationSource = ConfigurationSource.manual;
+  String provisioningUrl = AppConfig.provisioningUrl;
   String get voicemailNumber => '1571';
   bool doNotDisturb = false;
 
@@ -158,6 +160,8 @@ class PhoneController extends ChangeNotifier {
     sipProxy = settings.sipProxy;
     janusUrl = settings.janusUrl;
     janusApiSecret = settings.janusApiSecret;
+    configurationSource = settings.configurationSource;
+    provisioningUrl = settings.provisioningUrl;
     doNotDisturb = settings.doNotDisturb;
     callHistory = await _historyRepository.load();
     notifyListeners();
@@ -171,6 +175,8 @@ class PhoneController extends ChangeNotifier {
     required String sipProxy,
     required String janusUrl,
     required String janusApiSecret,
+    required ConfigurationSource configurationSource,
+    required String provisioningUrl,
   }) async {
     this.nickname = nickname.trim();
     this.sipUsername = sipUsername.trim();
@@ -183,6 +189,8 @@ class PhoneController extends ChangeNotifier {
         ? AppConfig.defaultJanusUrl
         : janusUrl.trim();
     this.janusApiSecret = janusApiSecret.trim();
+    this.configurationSource = configurationSource;
+    this.provisioningUrl = provisioningUrl.trim();
     await _persistSettings();
     notifyListeners();
   }
@@ -1299,6 +1307,8 @@ class PhoneController extends ChangeNotifier {
           janusApiSecret: janusApiSecret,
           voicemailNumber: voicemailNumber,
           doNotDisturb: doNotDisturb,
+          configurationSource: configurationSource,
+          provisioningUrl: provisioningUrl,
         ),
       );
 
