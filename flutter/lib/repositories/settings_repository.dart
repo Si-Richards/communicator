@@ -104,6 +104,17 @@ class SettingsRepository {
     ]);
   }
 
+  Future<void> saveConfigurationSource(
+    ConfigurationSource source, {
+    String? provisioningUrl,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_configurationSourceKey, source.name);
+    if (provisioningUrl != null) {
+      await prefs.setString(_provisioningUrlKey, provisioningUrl);
+    }
+  }
+
   Future<void> saveDoNotDisturb(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_dndKey, enabled);
