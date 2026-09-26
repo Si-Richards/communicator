@@ -281,8 +281,10 @@ class MobileGatewayService {
   }
 
   String _url(String path) {
-    final root = _baseUrl.replaceFirst(RegExp(r'/+\$'), '');
-    return '\$root\$path';
+    final root = _baseUrl.replaceFirst(RegExp(r'/+
+}
+), '');
+    return '$root$path';
   }
 
 }
