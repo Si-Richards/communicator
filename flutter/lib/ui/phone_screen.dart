@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../controllers/phone_controller.dart';
+import '../controllers/provisioning_controller.dart';
 import '../models/call_state.dart';
 import '../services/mobile_call_coordinator.dart';
 import 'settings_screen.dart';
@@ -13,10 +14,12 @@ class PhoneScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.mobileCalls,
+    required this.provisioning,
   });
 
   final PhoneController controller;
   final MobileCallCoordinator mobileCalls;
+  final ProvisioningController provisioning;
 
   @override
   State<PhoneScreen> createState() => _PhoneScreenState();
@@ -140,6 +143,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
                       builder: (_) => SettingsScreen(
                         controller: controller,
                         mobileCalls: widget.mobileCalls,
+                        provisioning: widget.provisioning,
                       ),
                     ),
                   );
