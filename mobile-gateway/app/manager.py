@@ -5,7 +5,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 
-from .apns import APNSClient
+from .apns import APNSClient, APNSError
 from .janus import JanusSipSession
 from .config import settings
 from .models import DeviceRecord
@@ -393,6 +393,26 @@ class MobileSessionManager:
                 bool(offer),
                 is_video,
             )
+            if not self.store.is_push_token_valid(
+                device.device_id,
+                device.push_token,
+            ):
+                logger.warning(
+                    '[VH-DIAG] event=incoming_push_skipped_invalid_token '
+                    'call=%s device=%s',
+                    _safe_ref(call_id),
+                    _safe_ref(device.device_id),
+                )
+                try:
+                    await session.decline(480)
+                except Exception:
+                    logger.exception(
+                        '[VH-DIAG] event=incoming_push_decline_failed call=%s',
+                        _safe_ref(call_id),
+                    )
+                self._release_call_session(call)
+                return
+
             try:
                 environment = await self.apns.send_voip(device.push_token, {
                     'aps': {'content-available': 1},
@@ -407,6 +427,37 @@ class MobileSessionManager:
                     _safe_ref(call_id),
                     environment,
                 )
+            except APNSError as error:
+                if error.reason in {
+                    'Unregistered',
+                    'BadDeviceToken',
+                    'DeviceTokenNotForTopic',
+                }:
+                    invalidated = self.store.invalidate_push_token(
+                        device.device_id,
+                        device.push_token,
+                        error.reason,
+                    )
+                    logger.warning(
+                        '[VH-DIAG] event=push_token_invalidated '
+                        'device=%s reason=%s changed=%s',
+                        _safe_ref(device.device_id),
+                        error.reason,
+                        invalidated,
+                    )
+                logger.error(
+                    '[VH-DIAG] event=incoming_push_failed call=%s reason=%s',
+                    _safe_ref(call_id),
+                    str(error),
+                )
+                try:
+                    await session.decline(480)
+                except Exception:
+                    logger.exception(
+                        '[VH-DIAG] event=incoming_push_decline_failed call=%s',
+                        _safe_ref(call_id),
+                    )
+                self._release_call_session(call)
             except Exception as error:
                 logger.error(
                     '[VH-DIAG] event=incoming_push_failed call=%s reason=%s',
