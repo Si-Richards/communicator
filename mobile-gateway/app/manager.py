@@ -329,6 +329,10 @@ class MobileSessionManager:
             if not calls:
                 self.device_calls.pop(call.device_id, None)
 
+    def _forget_call(self, call: CallRuntime):
+        self._release_call_session(call)
+        self.calls.pop(call.id, None)
+
     @staticmethod
     def _same_sip_registration(current: DeviceRecord, updated: DeviceRecord) -> bool:
         return (
@@ -442,7 +446,7 @@ class MobileSessionManager:
                         '[VH-DIAG] event=incoming_push_decline_failed call=%s',
                         _safe_ref(call_id),
                     )
-                self._release_call_session(call)
+                self._forget_call(call)
                 return
 
             try:
@@ -489,7 +493,7 @@ class MobileSessionManager:
                         '[VH-DIAG] event=incoming_push_decline_failed call=%s',
                         _safe_ref(call_id),
                     )
-                self._release_call_session(call)
+                self._forget_call(call)
             except Exception as error:
                 logger.error(
                     '[VH-DIAG] event=incoming_push_failed call=%s reason=%s',
@@ -503,7 +507,7 @@ class MobileSessionManager:
                         '[VH-DIAG] event=incoming_push_decline_failed call=%s',
                         _safe_ref(call_id),
                     )
-                self._release_call_session(call)
+                self._forget_call(call)
             return
 
         if event == 'notify' and str(result.get('notify') or '').lower() == 'message-summary':
@@ -654,6 +658,24 @@ class MobileSessionManager:
                 asyncio.create_task(
                     self.cancel_attended_transfer(transfer.id, restore_original=False)
                 )
+            # Call diagnostics are persisted in SQLite; the live CallRuntime is
+            # only needed briefly so websocket subscribers can consume hangup.
+            asyncio.create_task(self._expire_call_runtime(call.id))
+
+    async def _expire_call_runtime(
+        self,
+        call_id: str,
+        delay: float = 30.0,
+    ):
+        await asyncio.sleep(delay)
+        call = self.calls.get(call_id)
+        if not call or call.session is not None:
+            return
+        self.calls.pop(call_id, None)
+        logger.info(
+            '[VH-DIAG] event=call_runtime_expired call=%s',
+            _safe_ref(call_id),
+        )
 
     def _current_transfer(self, device_id: str):
         transfer_id = self.device_transfer.get(device_id)
