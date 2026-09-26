@@ -53,6 +53,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       if (config != null &&
           phone.configurationSource == ConfigurationSource.provisioning) {
         phone.applyProvisionedConfiguration(config);
+        mobileCalls.applyProvisionedConfiguration(config);
       }
       notifyListeners();
       if (phone.configurationSource == ConfigurationSource.provisioning) {
@@ -131,6 +132,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
           provisioningUrl: cleanUrl,
         );
         phone.applyProvisionedConfiguration(result.configuration);
+        mobileCalls.applyProvisionedConfiguration(result.configuration);
         _error = null;
         _status = 'Provisioned';
       } finally {
@@ -187,6 +189,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
           deviceState: config.deviceState ?? result.state,
         );
         phone.applyProvisionedConfiguration(config);
+        mobileCalls.applyProvisionedConfiguration(config);
       }
 
       _state = updated;
@@ -227,6 +230,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       _state = updated;
       await _repository.save(updated);
       phone.applyProvisionedConfiguration(config);
+      mobileCalls.applyProvisionedConfiguration(config);
       _error = null;
       _status = 'Provisioned';
     } catch (error) {
