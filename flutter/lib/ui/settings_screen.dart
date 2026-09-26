@@ -111,6 +111,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'Configuration',
                 children: [
                   DropdownButtonFormField<ConfigurationSource>(
+                    key: ValueKey(_configurationSource),
                     initialValue: _configurationSource,
                     decoration: const InputDecoration(
                       labelText: 'Configuration source',
@@ -135,6 +136,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (_configurationSource == ConfigurationSource.provisioning)
                     TextField(
                       controller: _provisioningUrl,
+                      enabled: !managed,
                       keyboardType: TextInputType.url,
                       autocorrect: false,
                       decoration: const InputDecoration(
@@ -162,8 +164,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     subtitle: Text(widget.provisioning.status),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.of(context).push(
+                    onTap: () async {
+                      await Navigator.of(context).push(
                         MaterialPageRoute<void>(
                           builder: (_) => ProvisioningScreen(
                             phone: widget.controller,
@@ -171,6 +173,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ),
                       );
+                      if (!mounted) return;
+                      setState(() {
+                        _configurationSource =
+                            widget.controller.configurationSource;
+                        _provisioningUrl.text =
+                            widget.controller.provisioningUrl;
+                      });
                     },
                   ),
                 ],
