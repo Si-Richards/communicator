@@ -13,6 +13,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
 import '../models/call_record.dart';
+import '../models/provisioning.dart';
 import 'mobile_gateway_service.dart';
 import 'ringback_service.dart';
 import 'webrtc_service.dart';
@@ -160,6 +161,23 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   void clearDiagnosticLogs() {
     _diagnosticLogs.clear();
     notifyListeners();
+  }
+
+  void applyProvisionedConfiguration(ProvisioningConfiguration config) {
+    final managedUrl = config.randyUrl?.trim() ?? '';
+    if (managedUrl.isEmpty || managedUrl == gateway.baseUrl.trim()) return;
+    if (hasActiveGatewayCall) {
+      _appendDiagnostic(
+        'Managed RANDY URL update deferred while a call is active',
+      );
+      return;
+    }
+
+    gateway.configure(baseUrl: managedUrl);
+    _gatewayProvisioned = false;
+    _lastProvisionSignature = null;
+    _appendDiagnostic('Managed RANDY endpoint applied');
+    _phoneChanged();
   }
 
   Future<String> sendTestPush() async {
