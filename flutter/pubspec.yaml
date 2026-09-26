@@ -1,7 +1,7 @@
 name: voicehost_softphone
 description: VoiceHost cross-platform Janus WebRTC softphone for iOS and Android.
 publish_to: "none"
-version: 0.3.0+22
+version: 0.3.0+23
 
 environment:
   sdk: ">=3.9.0 <4.0.0"
@@ -14,6 +14,7 @@ dependencies:
   web_socket_channel: 3.0.3
   shared_preferences: 2.5.5
   flutter_secure_storage: 11.1.1
+  http: ^1.5.0
 
 dev_dependencies:
   flutter_test:
