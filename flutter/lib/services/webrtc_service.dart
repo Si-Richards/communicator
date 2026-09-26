@@ -531,132 +531,38 @@ class WebRtcService {
     final audio = _codecsForMedia(sdp, 'audio');
     final video = _codecsForMedia(sdp, 'video');
     final direction = RegExp(
-          r'^a=(sendrecv|sendonly|recvonly|inactive)
-  static List<String> _codecsForMedia(String sdp, String media) {
-    final lines = sdp.split(RegExp(r'\r?\n'));
-    final mIndex = lines.indexWhere((line) => line.startsWith('m=$media '));
-    if (mIndex < 0) return const [];
-    var end = lines.length;
-    for (var i = mIndex + 1; i < lines.length; i++) {
-      if (lines[i].startsWith('m=')) {
-        end = i;
-        break;
-      }
-    }
-    final codecs = <String>{};
-    for (var i = mIndex + 1; i < end; i++) {
-      final match = RegExp(
-        r'^a=rtpmap:\d+\s+([^/\s]+)',
-        caseSensitive: false,
-      ).firstMatch(lines[i]);
-      final codec = match?.group(1);
-      if (codec != null && codec.isNotEmpty) {
-        codecs.add(codec.toUpperCase());
-      }
-    }
-    return codecs.toList(growable: false);
-  }
-
-  static int _statInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.round();
-    return int.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  static double _statDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  static int _maxInt(int left, int right) => left > right ? left : right;
-
-  static String _candidateType(String candidate) {
-    final match =
-        RegExp(r'\btyp\s+(host|srflx|prflx|relay)\b').firstMatch(candidate);
-    return match?.group(1) ?? 'unknown';
-  }
-
-  static int? _intValue(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '');
-  }
-}
-,
+          r'^a=(sendrecv|sendonly|recvonly|inactive)$',
           multiLine: true,
         ).firstMatch(sdp)?.group(1) ??
         'default';
+
     final candidateTypes = <String, int>{};
     for (final line in sdp.split(RegExp(r'\r?\n'))) {
       if (!line.startsWith('a=candidate:')) continue;
       final type = _candidateType(line.substring(2));
       candidateTypes[type] = (candidateTypes[type] ?? 0) + 1;
     }
+
     final candidateSummary = candidateTypes.isEmpty
         ? 'none'
         : candidateTypes.entries
             .map((entry) => '${entry.key}:${entry.value}')
             .join(',');
-    final iceLite = RegExp(r'^a=ice-lite
-  static List<String> _codecsForMedia(String sdp, String media) {
-    final lines = sdp.split(RegExp(r'\r?\n'));
-    final mIndex = lines.indexWhere((line) => line.startsWith('m=$media '));
-    if (mIndex < 0) return const [];
-    var end = lines.length;
-    for (var i = mIndex + 1; i < lines.length; i++) {
-      if (lines[i].startsWith('m=')) {
-        end = i;
-        break;
-      }
-    }
-    final codecs = <String>{};
-    for (var i = mIndex + 1; i < end; i++) {
-      final match = RegExp(
-        r'^a=rtpmap:\d+\s+([^/\s]+)',
-        caseSensitive: false,
-      ).firstMatch(lines[i]);
-      final codec = match?.group(1);
-      if (codec != null && codec.isNotEmpty) {
-        codecs.add(codec.toUpperCase());
-      }
-    }
-    return codecs.toList(growable: false);
-  }
+    final iceLite = RegExp(
+      r'^a=ice-lite$',
+      multiLine: true,
+    ).hasMatch(sdp);
 
-  static int _statInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.round();
-    return int.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  static double _statDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  static int _maxInt(int left, int right) => left > right ? left : right;
-
-  static String _candidateType(String candidate) {
-    final match =
-        RegExp(r'\btyp\s+(host|srflx|prflx|relay)\b').firstMatch(candidate);
-    return match?.group(1) ?? 'unknown';
-  }
-
-  static int? _intValue(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '');
-  }
-}
-, multiLine: true).hasMatch(sdp);
     return 'audio=[${audio.join(',')}] video=[${video.join(',')}] '
-        'direction=$direction candidates=[$candidateSummary] ice_lite=$iceLite';
+        'direction=$direction candidates=[$candidateSummary] '
+        'ice_lite=$iceLite';
   }
 
   static List<String> _codecsForMedia(String sdp, String media) {
     final lines = sdp.split(RegExp(r'\r?\n'));
     final mIndex = lines.indexWhere((line) => line.startsWith('m=$media '));
     if (mIndex < 0) return const [];
+
     var end = lines.length;
     for (var i = mIndex + 1; i < lines.length; i++) {
       if (lines[i].startsWith('m=')) {
@@ -664,6 +570,7 @@ class WebRtcService {
         break;
       }
     }
+
     final codecs = <String>{};
     for (var i = mIndex + 1; i < end; i++) {
       final match = RegExp(
