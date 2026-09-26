@@ -191,7 +191,7 @@ class ProvisioningService {
     final error = _map(json['error']);
     return ProvisioningException(
       error['message']?.toString() ??
-          'Provisioning request failed (' + response.statusCode.toString() + ').',
+          'Provisioning request failed (${response.statusCode}).',
       statusCode: response.statusCode,
       code: error['code']?.toString(),
     );
