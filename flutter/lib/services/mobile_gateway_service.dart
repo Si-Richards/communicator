@@ -281,10 +281,11 @@ class MobileGatewayService {
   }
 
   String _url(String path) {
-    final root = _baseUrl.replaceFirst(RegExp(r'/+
-}
-), '');
-    return '$root$path';
+    var root = _baseUrl;
+    while (root.endsWith('/')) {
+      root = root.substring(0, root.length - 1);
+    }
+    return root + path;
   }
 
 }
