@@ -1,20 +1,24 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
+import '../controllers/provisioning_controller.dart';
 import '../repositories/settings_repository.dart';
 import '../services/mobile_call_coordinator.dart';
 import 'about_screen.dart';
 import 'diagnostics_screen.dart';
+import 'provisioning_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
     required this.controller,
     required this.mobileCalls,
+    required this.provisioning,
   });
 
   final PhoneController controller;
   final MobileCallCoordinator mobileCalls;
+  final ProvisioningController provisioning;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -94,8 +98,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final model = widget.controller;
     return AnimatedBuilder(
-      animation: model,
+      animation: Listenable.merge([model, widget.provisioning]),
       builder: (context, _) {
+        final managed = widget.provisioning.isEnrolled &&
+            _configurationSource == ConfigurationSource.provisioning;
         return Scaffold(
           appBar: AppBar(title: const Text('Settings')),
           body: ListView(
@@ -119,10 +125,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: Text('Provisioning server'),
                       ),
                     ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => _configurationSource = value);
-                    },
+                    onChanged: widget.provisioning.isEnrolled
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() => _configurationSource = value);
+                          },
                   ),
                   if (_configurationSource == ConfigurationSource.provisioning)
                     TextField(
@@ -137,10 +145,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   if (_configurationSource == ConfigurationSource.provisioning)
-                    const Text(
-                      'Provisioning mode is enabled. Manual SIP and Janus '
-                      'settings remain available until this device is enrolled.',
+                    Text(
+                      managed
+                          ? 'This device is managed by the provisioning server. '
+                              'Remove managed configuration to return to manual setup.'
+                          : 'Provisioning mode is enabled. Manual SIP and Janus '
+                              'settings remain available until this device is enrolled.',
                     ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      managed ? Icons.verified_user_outlined : Icons.qr_code_2,
+                    ),
+                    title: Text(
+                      managed ? 'Managed provisioning' : 'Provision device',
+                    ),
+                    subtitle: Text(widget.provisioning.status),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ProvisioningScreen(
+                            phone: widget.controller,
+                            provisioning: widget.provisioning,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
               _SectionCard(
@@ -148,6 +180,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   TextField(
                     controller: _nickname,
+                    enabled: !managed,
                     textCapitalization: TextCapitalization.words,
                     decoration: const InputDecoration(
                       labelText: 'Nickname',
@@ -156,6 +189,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   TextField(
                     controller: _sipUsername,
+                    enabled: !managed,
                     keyboardType: TextInputType.text,
                     autocorrect: false,
                     decoration: const InputDecoration(
@@ -164,17 +198,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   TextField(
                     controller: _sipPassword,
+                    enabled: !managed,
                     obscureText: true,
                     autocorrect: false,
                     decoration: const InputDecoration(labelText: 'Password'),
                   ),
                   TextField(
                     controller: _sipRealm,
+                    enabled: !managed,
                     autocorrect: false,
                     decoration: const InputDecoration(labelText: 'Realm'),
                   ),
                   TextField(
                     controller: _sipProxy,
+                    enabled: !managed,
                     autocorrect: false,
                     decoration: const InputDecoration(
                       labelText: 'Proxy',
@@ -188,6 +225,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   TextField(
                     controller: _janusUrl,
+                    enabled: !managed,
                     keyboardType: TextInputType.url,
                     autocorrect: false,
                     decoration: const InputDecoration(
@@ -196,6 +234,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   TextField(
                     controller: _janusSecret,
+                    enabled: !managed,
                     obscureText: true,
                     autocorrect: false,
                     decoration: const InputDecoration(
@@ -248,7 +287,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 4),
               FilledButton.icon(
-                onPressed: _saving ? null : () => _save(),
+                onPressed: _saving || managed ? null : () => _save(),
                 icon: const Icon(Icons.save),
                 label: const Text('Save Settings'),
               ),
