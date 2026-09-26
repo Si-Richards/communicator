@@ -31,9 +31,40 @@ class DeviceStore:
                     sip_proxy TEXT,
                     nickname TEXT NOT NULL,
                     dnd INTEGER NOT NULL DEFAULT 0,
+                    push_token_valid INTEGER NOT NULL DEFAULT 1,
+                    push_token_updated_at TEXT,
+                    push_invalidated_at TEXT,
+                    last_seen_at TEXT,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Migrate existing Randy databases in place. SQLite ADD COLUMN
+            # cannot use CURRENT_TIMESTAMP as a non-constant default, so the
+            # historical rows are backfilled immediately afterwards.
+            columns = {
+                row['name']
+                for row in db.execute('PRAGMA table_info(devices)').fetchall()
+            }
+            migrations = {
+                'push_token_valid':
+                    'ALTER TABLE devices ADD COLUMN push_token_valid INTEGER NOT NULL DEFAULT 1',
+                'push_token_updated_at':
+                    'ALTER TABLE devices ADD COLUMN push_token_updated_at TEXT',
+                'push_invalidated_at':
+                    'ALTER TABLE devices ADD COLUMN push_invalidated_at TEXT',
+                'last_seen_at':
+                    'ALTER TABLE devices ADD COLUMN last_seen_at TEXT',
+            }
+            for name, statement in migrations.items():
+                if name not in columns:
+                    db.execute(statement)
+            db.execute(
+                '''
+                UPDATE devices
+                SET push_token_updated_at=COALESCE(push_token_updated_at, updated_at),
+                    last_seen_at=COALESCE(last_seen_at, updated_at)
+                '''
+            )
             db.execute('''
                 CREATE TABLE IF NOT EXISTS call_diagnostics (
                     call_id TEXT PRIMARY KEY,
@@ -88,14 +119,34 @@ class DeviceStore:
         encrypted = self.fernet.encrypt(item.sip_password.encode())
         with self.lock, self._connect() as db:
             db.execute('''
-                INSERT INTO devices(device_id, platform, push_token, sip_username,
-                    sip_password, sip_realm, sip_proxy, nickname, dnd, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO devices(
+                    device_id, platform, push_token, sip_username,
+                    sip_password, sip_realm, sip_proxy, nickname, dnd,
+                    push_token_valid, push_token_updated_at,
+                    push_invalidated_at, last_seen_at, updated_at
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    1, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
                 ON CONFLICT(device_id) DO UPDATE SET
-                    platform=excluded.platform, push_token=excluded.push_token,
-                    sip_username=excluded.sip_username, sip_password=excluded.sip_password,
-                    sip_realm=excluded.sip_realm, sip_proxy=excluded.sip_proxy,
-                    nickname=excluded.nickname, dnd=excluded.dnd,
+                    platform=excluded.platform,
+                    push_token_updated_at=CASE
+                        WHEN devices.push_token != excluded.push_token
+                        THEN CURRENT_TIMESTAMP
+                        ELSE devices.push_token_updated_at
+                    END,
+                    push_token=excluded.push_token,
+                    push_token_valid=1,
+                    push_invalidated_at=NULL,
+                    last_seen_at=CURRENT_TIMESTAMP,
+                    sip_username=excluded.sip_username,
+                    sip_password=excluded.sip_password,
+                    sip_realm=excluded.sip_realm,
+                    sip_proxy=excluded.sip_proxy,
+                    nickname=excluded.nickname,
+                    dnd=excluded.dnd,
                     updated_at=CURRENT_TIMESTAMP
             ''', (
                 item.device_id, item.platform, item.push_token, item.sip_username,
@@ -121,7 +172,8 @@ class DeviceStore:
             rows = db.execute(
                 '''
                 SELECT device_id, platform, sip_username, sip_realm, nickname,
-                       dnd, updated_at
+                       dnd, push_token_valid, push_token_updated_at,
+                       push_invalidated_at, last_seen_at, updated_at
                 FROM devices
                 ORDER BY updated_at DESC, sip_username ASC
                 '''
@@ -134,10 +186,54 @@ class DeviceStore:
                 'sip_realm': row['sip_realm'],
                 'nickname': row['nickname'],
                 'dnd': bool(row['dnd']),
+                'push_token_valid': bool(row['push_token_valid']),
+                'push_token_updated_at': row['push_token_updated_at'],
+                'push_invalidated_at': row['push_invalidated_at'],
+                'last_seen_at': row['last_seen_at'],
                 'updated_at': row['updated_at'],
             }
             for row in rows
         ]
+
+    def is_push_token_valid(self, device_id: str, token: str) -> bool:
+        with self.lock, self._connect() as db:
+            row = db.execute(
+                '''
+                SELECT push_token, push_token_valid
+                FROM devices
+                WHERE device_id=?
+                ''',
+                (device_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        return (
+            row['push_token'] == token
+            and bool(row['push_token_valid'])
+        )
+
+    def invalidate_push_token(
+        self,
+        device_id: str,
+        token: str,
+        reason: str = '',
+    ) -> bool:
+        # Match the token as well as the device. This prevents a delayed APNs
+        # rejection for an old token from invalidating a newer token that the
+        # handset has already registered.
+        with self.lock, self._connect() as db:
+            cursor = db.execute(
+                '''
+                UPDATE devices
+                SET push_token_valid=0,
+                    push_invalidated_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE device_id=? AND push_token=?
+                ''',
+                (device_id, token),
+            )
+            db.commit()
+            return cursor.rowcount > 0
 
     def delete(self, device_id: str) -> bool:
         with self.lock, self._connect() as db:
