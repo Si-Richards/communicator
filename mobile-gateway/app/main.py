@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from .apns import APNSClient
+from .apns import APNSClient, APNSError
 from .config import settings
 from .manager import MobileSessionManager
 from .models import (
@@ -63,6 +63,23 @@ async def _send_test_push(device_id: str) -> str:
             'isVideo': False,
             'extra': {'call_id': call_id, 'test': True},
         })
+    except APNSError as error:
+        if error.reason in {
+            'Unregistered',
+            'BadDeviceToken',
+            'DeviceTokenNotForTopic',
+        }:
+            store.invalidate_push_token(
+                device.device_id,
+                device.push_token,
+                error.reason,
+            )
+        diag_logger.warning(
+            '[VH-DIAG] event=test_push_failed device=%s reason=%s',
+            _safe_ref(device_id),
+            str(error),
+        )
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except RuntimeError as error:
         diag_logger.warning(
             '[VH-DIAG] event=test_push_failed device=%s reason=%s',
