@@ -1,4 +1,6 @@
 class AppConfig {
+  static const appVersion = '0.3.0';
+  static const appBuild = 23;
   static const defaultJanusUrl = 'wss://devrtc.voicehost.io:443';
   static const defaultSipRealm = 'hpbx.sipconvergence.co.uk';
   static const janusSipPlugin = 'janus.plugin.sip';
@@ -19,6 +21,10 @@ class AppConfig {
   static const provisioningUrl = String.fromEnvironment(
     'VOICEHOST_PROVISIONING_URL',
     defaultValue: '',
+  );
+  static const pushEnvironment = String.fromEnvironment(
+    'VOICEHOST_PUSH_ENVIRONMENT',
+    defaultValue: 'production',
   );
 
   static const stunUrl = String.fromEnvironment(
