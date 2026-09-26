@@ -114,6 +114,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String get transferStatus => _transferStatus;
   String? get transferTarget => _transferTarget;
   bool get hasPushToken => _pushToken?.isNotEmpty == true;
+  String? get voipPushToken => _pushToken;
+  String? get runtimeDeviceId => _deviceId;
   List<String> get diagnosticLogs =>
       List<String>.unmodifiable(_diagnosticLogs.reversed);
 
