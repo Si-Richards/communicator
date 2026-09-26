@@ -70,6 +70,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool _transferBusy = false;
   Timer? _transferWatchdog;
   Timer? _voicemailPollTimer;
+  Timer? _provisionRetryTimer;
+  int _provisionRetryAttempt = 0;
   final List<Map<String, dynamic>> _pendingTransferCandidates = [];
 
   _GatewayCallContext? get _activeGatewayCall {
@@ -90,6 +92,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool get hasActiveGatewayCall => _activeGatewayCall != null;
   int get gatewayCallCount => _gatewayCalls.length;
   bool get gatewayProvisioned => _gatewayProvisioned;
+  bool get gatewayProvisioning => _provisioning;
   bool get gatewayCallConnected => _activeGatewayCall?.connected ?? false;
   bool get gatewayMediaConnected => _activeGatewayCall?.mediaConnected ?? false;
   bool get gatewayHeld => _activeGatewayCall?.held ?? false;
@@ -313,6 +316,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         doNotDisturb: phone.doNotDisturb,
       );
       _gatewayProvisioned = true;
+      _provisionRetryAttempt = 0;
+      _provisionRetryTimer?.cancel();
+      _provisionRetryTimer = null;
       notifyListeners();
       _appendDiagnostic('Mobile gateway registration active');
       unawaited(_refreshVoicemail());
@@ -327,9 +333,34 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       _lastProvisionSignature = null;
       _appendDiagnostic('Gateway provisioning failed: $error');
+      _scheduleProvisionRetry();
     } finally {
       _provisioning = false;
     }
+  }
+
+  void _scheduleProvisionRetry() {
+    if (_gatewayProvisioned || _provisionRetryTimer?.isActive == true) return;
+    const delays = <Duration>[
+      Duration(seconds: 1),
+      Duration(seconds: 3),
+      Duration(seconds: 8),
+      Duration(seconds: 20),
+    ];
+    final index = _provisionRetryAttempt < delays.length
+        ? _provisionRetryAttempt
+        : delays.length - 1;
+    _provisionRetryAttempt++;
+    final delay = delays[index];
+    _provisionRetryTimer = Timer(delay, () {
+      _provisionRetryTimer = null;
+      if (_gatewayProvisioned) return;
+      _appendDiagnostic(
+        'Retrying mobile gateway registration · attempt=$_provisionRetryAttempt',
+      );
+      _lastProvisionSignature = null;
+      _phoneChanged();
+    });
   }
 
   @override
@@ -352,6 +383,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (state == AppLifecycleState.resumed) {
+      if (!_gatewayProvisioned && !_provisioning) {
+        _lastProvisionSignature = null;
+        _phoneChanged();
+      }
       unawaited(_recoverCallKitState());
       _scheduleCallKitRecoveryRetries();
       unawaited(_refreshVoicemail());
@@ -1557,6 +1592,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     _transferWatchdog?.cancel();
     _voicemailPollTimer?.cancel();
+    _provisionRetryTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     phone.removeListener(_phoneChanged);
     unawaited(_callKitSubscription?.cancel());
