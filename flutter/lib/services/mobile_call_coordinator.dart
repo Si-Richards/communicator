@@ -211,7 +211,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       }
     };
 
-    _callKitSubscription = FlutterCallkitIncoming.onEvent.listen(_handleCallKitEvent);
+    _callKitSubscription =
+        FlutterCallkitIncoming.onEvent.listen(_handleCallKitEvent);
     _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
     phone.addListener(_phoneChanged);
     _phoneChanged();
@@ -219,6 +220,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       'Device ready · PushKit token '
       '${_pushToken?.isNotEmpty == true ? 'available' : 'waiting'}',
     );
+    _schedulePushTokenRefreshRetries();
     unawaited(_recoverCallKitState());
     _scheduleCallKitRecoveryRetries();
     _voicemailPollTimer?.cancel();
@@ -227,6 +229,35 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       (_) => unawaited(_refreshVoicemail()),
     );
     unawaited(_refreshVoicemail());
+  }
+
+  void _schedulePushTokenRefreshRetries() {
+    for (final delay in const [
+      Duration(milliseconds: 250),
+      Duration(seconds: 1),
+      Duration(seconds: 3),
+      Duration(seconds: 6),
+    ]) {
+      unawaited(
+        Future<void>.delayed(delay, () async {
+          try {
+            final token =
+                await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+            if (token == null || token.isEmpty || token == _pushToken) return;
+            _pushToken = token;
+            _lastProvisionSignature = null;
+            _appendDiagnostic(
+              'PushKit token recovered after startup · available',
+            );
+            _phoneChanged();
+          } catch (error) {
+            debugPrint(
+              '[VoiceHost Mobile] PushKit token refresh failed: $error',
+            );
+          }
+        }),
+      );
+    }
   }
 
   void _scheduleCallKitRecoveryRetries() {
