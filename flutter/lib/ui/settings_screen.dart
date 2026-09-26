@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
+import '../repositories/settings_repository.dart';
 import '../services/mobile_call_coordinator.dart';
 import 'about_screen.dart';
 import 'diagnostics_screen.dart';
@@ -27,6 +28,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _sipProxy;
   late final TextEditingController _janusUrl;
   late final TextEditingController _janusSecret;
+  late final TextEditingController _provisioningUrl;
+  late ConfigurationSource _configurationSource;
 
   bool _saving = false;
 
@@ -41,6 +44,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _sipProxy = TextEditingController(text: model.sipProxy);
     _janusUrl = TextEditingController(text: model.janusUrl);
     _janusSecret = TextEditingController(text: model.janusApiSecret);
+    _provisioningUrl = TextEditingController(text: model.provisioningUrl);
+    _configurationSource = model.configurationSource;
   }
 
   @override
@@ -53,6 +58,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _sipProxy,
       _janusUrl,
       _janusSecret,
+      _provisioningUrl,
     ]) {
       controller.dispose();
     }
@@ -71,6 +77,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         sipProxy: _sipProxy.text,
         janusUrl: _janusUrl.text,
         janusApiSecret: _janusSecret.text,
+        configurationSource: _configurationSource,
+        provisioningUrl: _provisioningUrl.text,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -93,6 +101,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _SectionCard(
+                title: 'Configuration',
+                children: [
+                  DropdownButtonFormField<ConfigurationSource>(
+                    initialValue: _configurationSource,
+                    decoration: const InputDecoration(
+                      labelText: 'Configuration source',
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: ConfigurationSource.manual,
+                        child: Text('Manual'),
+                      ),
+                      DropdownMenuItem(
+                        value: ConfigurationSource.provisioning,
+                        child: Text('Provisioning server'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _configurationSource = value);
+                    },
+                  ),
+                  if (_configurationSource == ConfigurationSource.provisioning)
+                    TextField(
+                      controller: _provisioningUrl,
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      decoration: const InputDecoration(
+                        labelText: 'Provisioning server',
+                        hintText: 'https://provision.voicehost.io',
+                        helperText:
+                            'Activation-code enrolment will use this server.',
+                      ),
+                    ),
+                  if (_configurationSource == ConfigurationSource.provisioning)
+                    const Text(
+                      'Provisioning mode is enabled. Manual SIP and Janus '
+                      'settings remain available until this device is enrolled.',
+                    ),
+                ],
+              ),
               _SectionCard(
                 title: 'SIP account',
                 children: [
