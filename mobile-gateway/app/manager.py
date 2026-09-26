@@ -1042,8 +1042,13 @@ class MobileSessionManager:
             call.transfer_target = None
 
     def get_call(self, call_id: str) -> CallRuntime:
+        # CallKit/CXUUID commonly renders UUID strings in uppercase while
+        # Python's str(uuid.uuid4()) is lowercase. UUID text is
+        # case-insensitive, so normalise before looking up the runtime.
         call = self.calls.get(call_id)
-        if not call:
+        if call is None:
+            call = self.calls.get(call_id.lower())
+        if call is None:
             raise KeyError(call_id)
         return call
 
