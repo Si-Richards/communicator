@@ -373,10 +373,26 @@ import flutter_callkit_incoming
             forKey: pendingCallKitActionsKey
         ) as? [[String: String]] ?? []
 
+        // Keep only recent recovery actions. A CallKit action is useful only
+        // while its SIP call can still be alive; replaying an old accept/end on
+        // a later launch causes spurious gateway 404s.
+        let now = Date().timeIntervalSince1970
+        actions = actions.filter { item in
+            guard let raw = item["created_at"],
+                  let created = TimeInterval(raw) else {
+                return false
+            }
+            return now - created <= 120
+        }
+
         if !actions.contains(where: {
             $0["type"] == type && $0["id"]?.lowercased() == id.lowercased()
         }) {
-            actions.append(["type": type, "id": id])
+            actions.append([
+                "type": type,
+                "id": id,
+                "created_at": String(now),
+            ])
             if actions.count > 12 {
                 actions.removeFirst(actions.count - 12)
             }
@@ -385,10 +401,25 @@ import flutter_callkit_incoming
     }
 
     private func drainPendingCallKitActions() -> [[String: String]] {
-        let actions = UserDefaults.standard.array(
+        let stored = UserDefaults.standard.array(
             forKey: pendingCallKitActionsKey
         ) as? [[String: String]] ?? []
         UserDefaults.standard.removeObject(forKey: pendingCallKitActionsKey)
+
+        let now = Date().timeIntervalSince1970
+        let actions = stored.filter { item in
+            guard let raw = item["created_at"],
+                  let created = TimeInterval(raw) else {
+                return false
+            }
+            return now - created <= 120
+        }
+        let staleCount = stored.count - actions.count
+        if staleCount > 0 {
+            recordNativeLog(
+                "Discarded \(staleCount) stale pending CallKit action(s)"
+            )
+        }
         if !actions.isEmpty {
             recordNativeLog("Recovered \(actions.count) pending CallKit action(s)")
         }
