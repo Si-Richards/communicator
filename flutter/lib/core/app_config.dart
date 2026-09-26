@@ -16,6 +16,11 @@ class AppConfig {
     defaultValue: '',
   );
 
+  static const provisioningUrl = String.fromEnvironment(
+    'VOICEHOST_PROVISIONING_URL',
+    defaultValue: '',
+  );
+
   static const stunUrl = String.fromEnvironment(
     'VOICEHOST_STUN_URL',
     defaultValue: 'stun:stun.voicehost.co.uk:3478',
