@@ -17,6 +17,15 @@ def _safe_ref(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:10]
 
 
+def _sdp_candidate_metadata(sdp: str) -> dict:
+    for line in sdp.splitlines():
+        value = line.strip()
+        if not value.startswith('a=candidate:'):
+            continue
+        return _candidate_metadata({'candidate': value[2:]})
+    return {}
+
+
 def _candidate_metadata(candidate: dict) -> dict:
     value = str(candidate.get('candidate') or '').strip()
     if not value:
@@ -386,6 +395,29 @@ class MobileSessionManager:
             )
             self.calls[call_id] = call
             self._bind_call_session(call, session)
+
+            initial_candidate = _sdp_candidate_metadata(offer)
+            if initial_candidate:
+                self.store.update_call(
+                    call.id,
+                    janus_candidate_type=initial_candidate.get('candidate_type'),
+                    janus_media_ip=initial_candidate.get('ip'),
+                    janus_media_port=initial_candidate.get('port'),
+                )
+                self.store.add_call_event(call.id, 'janus_sdp_candidate', {
+                    'candidate_type': initial_candidate.get('candidate_type', ''),
+                    'janus_media_ip': initial_candidate.get('ip', ''),
+                    'janus_media_port': initial_candidate.get('port', 0),
+                })
+                logger.info(
+                    '[VH-DIAG] event=janus_sdp_candidate call=%s '
+                    'type=%s media=%s:%s',
+                    _safe_ref(call.id),
+                    initial_candidate.get('candidate_type', '-'),
+                    initial_candidate.get('ip', '-'),
+                    initial_candidate.get('port', '-'),
+                )
+
             logger.info(
                 '[VH-DIAG] event=incoming_call call=%s device=%s offer_sdp=%s video=%s',
                 _safe_ref(call_id),
