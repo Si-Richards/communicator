@@ -288,7 +288,9 @@ class _StatusStrip extends StatelessWidget {
         ? controller.isRegistered
             ? 'Mobile ready · Outgoing SIP active'
             : 'Mobile ready'
-        : controller.registrationStatus;
+        : mobileCalls.gatewayProvisioning
+            ? 'Mobile connecting…'
+            : controller.registrationStatus;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
       child: Row(
