@@ -129,8 +129,12 @@ class _MainShellState extends State<MainShell> {
     ];
 
     return AnimatedBuilder(
-      animation: controller,
+      animation: Listenable.merge([controller, widget.provisioning]),
       builder: (context, _) {
+        if (widget.provisioning.isLocked) {
+          return const _ProvisioningLockedScreen();
+        }
+
         return Scaffold(
           body: IndexedStack(index: _selectedIndex, children: screens),
           bottomNavigationBar: NavigationBar(
@@ -163,6 +167,63 @@ class _MainShellState extends State<MainShell> {
           ),
         );
       },
+    );
+  }
+}
+
+
+class _ProvisioningLockedScreen extends StatelessWidget {
+  const _ProvisioningLockedScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    const navy = Color(0xFF113B53);
+    const orange = Color(0xFFFF6600);
+
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 88,
+                  height: 88,
+                  decoration: BoxDecoration(
+                    color: orange.withValues(alpha: 0.10),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.lock_outline,
+                    size: 44,
+                    color: orange,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Text(
+                  'App locked',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: navy,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'This app is locked. Please contact your administrator.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: navy,
+                        height: 1.45,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
