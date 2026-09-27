@@ -25,6 +25,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   ProvisionedDeviceState? _state;
   bool _initialized = false;
   bool _busy = false;
+  Timer? _lockPollTimer;
   String _status = 'Not provisioned';
   String? _error;
 
@@ -54,6 +55,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         phone.applyProvisionedConfiguration(config);
         mobileCalls.applyProvisionedConfiguration(config);
       }
+      _syncLockPolling();
       notifyListeners();
       if (phone.configurationSource == ConfigurationSource.provisioning) {
         unawaited(checkIn());
@@ -193,6 +195,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
       _state = updated;
       await _repository.save(updated);
+      _syncLockPolling();
       _error = null;
       _status = switch (updated.deviceState) {
         'locked' => 'Device locked',
@@ -228,6 +231,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       );
       _state = updated;
       await _repository.save(updated);
+      _syncLockPolling();
       phone.applyProvisionedConfiguration(config);
       mobileCalls.applyProvisionedConfiguration(config);
       _error = null;
@@ -264,6 +268,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
     await _repository.clear();
     _state = null;
+    _syncLockPolling();
     await phone.setConfigurationSource(ConfigurationSource.manual);
     await phone.reloadManualConfiguration();
     _error = null;
@@ -318,6 +323,20 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   String get _deviceType =>
       Platform.isIOS || Platform.isAndroid ? 'mobile' : 'desktop';
 
+  void _syncLockPolling() {
+    _lockPollTimer?.cancel();
+    _lockPollTimer = null;
+    if (!isLocked ||
+        phone.configurationSource != ConfigurationSource.provisioning) {
+      return;
+    }
+
+    _lockPollTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(checkIn()),
+    );
+  }
+
   void _setBusy(bool value, {String? status}) {
     _busy = value;
     if (status != null) _status = status;
@@ -335,6 +354,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
   @override
   void dispose() {
+    _lockPollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
