@@ -1,6 +1,7 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from .config import settings
 from .models import (
@@ -29,7 +30,23 @@ def error(code: str, message: str, status_code: int) -> HTTPException:
     )
 
 
-def bearer_device(
+@app.exception_handler(HTTPException)
+async def http_exception_handler(
+    request: Request,
+    exc: HTTPException,
+) -> JSONResponse:
+    detail = exc.detail if isinstance(exc.detail, dict) else {
+        "code": "http_error",
+        "message": str(exc.detail),
+    }
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": detail},
+        headers=exc.headers,
+    )
+
+
+def authenticated_device(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
@@ -38,11 +55,17 @@ def bearer_device(
     device = store.authenticate_access(token)
     if device is None:
         raise error("unauthorized", "Device credential is invalid or expired.", 401)
-    if device["state"] == "locked":
-        raise error("device_locked", "This device is locked.", 423)
     if device["state"] in {"revoked", "retired"}:
         raise error("device_revoked", "This device is no longer authorised.", 403)
     device["_access_token"] = token
+    return device
+
+
+def bearer_device(
+    device: Annotated[dict, Depends(authenticated_device)],
+) -> dict:
+    if device["state"] == "locked":
+        raise error("device_locked", "This device is locked.", 423)
     return device
 
 
@@ -199,7 +222,7 @@ def refresh(request: RefreshRequest, response: Response) -> dict:
 @app.post("/api/v1/device/check-in")
 def check_in(
     request: CheckInRequest,
-    device: Annotated[dict, Depends(bearer_device)],
+    device: Annotated[dict, Depends(authenticated_device)],
 ) -> dict:
     updated = store.update_checkin(device["id"], request.model_dump())
     if updated is None:
