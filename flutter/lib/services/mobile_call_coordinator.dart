@@ -63,6 +63,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _lastProvisionSignature;
   bool _provisioning = false;
   bool _gatewayProvisioned = false;
+  bool _administrativelyLocked = false;
   bool _recoveringCallKitState = false;
   String? _transferId;
   String? _transferTarget;
@@ -160,6 +161,41 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   void clearDiagnosticLogs() {
     _diagnosticLogs.clear();
+    notifyListeners();
+  }
+
+  bool get administrativelyLocked => _administrativelyLocked;
+
+  Future<void> setAdministrativeLocked(bool locked) async {
+    if (_administrativelyLocked == locked) return;
+    _administrativelyLocked = locked;
+    _lastProvisionSignature = null;
+
+    if (locked) {
+      _appendDiagnostic('Administrative device lock applied');
+
+      final callIds = _gatewayCalls.keys.toList(growable: false);
+      for (final callId in callIds) {
+        try {
+          await _end(callId);
+        } catch (_) {}
+        try {
+          await FlutterCallkitIncoming.endCall(callId);
+        } catch (_) {}
+      }
+
+      if (phone.hasActiveDirectCall) {
+        try {
+          await phone.hangup();
+        } catch (_) {}
+      } else {
+        unawaited(phone.disconnectDirectRegistrationIfIdle());
+      }
+    } else {
+      _appendDiagnostic('Administrative device lock cleared');
+    }
+
+    _phoneChanged();
     notifyListeners();
   }
 
@@ -310,6 +346,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       phone.sipProxy,
       phone.extensionDisplayName,
       phone.doNotDisturb.toString(),
+      _administrativelyLocked.toString(),
     ].join('|');
     if (signature == _lastProvisionSignature) return;
     _lastProvisionSignature = signature;
@@ -333,7 +370,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         sipRealm: phone.sipRealm,
         sipProxy: phone.sipProxy.trim().isEmpty ? null : phone.sipProxy.trim(),
         nickname: phone.extensionDisplayName,
-        doNotDisturb: phone.doNotDisturb,
+        doNotDisturb: _administrativelyLocked || phone.doNotDisturb,
       );
       _gatewayProvisioned = true;
       _provisionRetryAttempt = 0;
@@ -492,6 +529,30 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _handleCallKitEvent(CallEvent? event) async {
     if (event == null) return;
+
+    if (_administrativelyLocked &&
+        event is! CallEventActionDidUpdateDevicePushTokenVoip) {
+      final id = switch (event) {
+        CallEventActionCallIncoming() => event.callKitParams.id,
+        CallEventActionCallAccept() => event.callKitParams.id,
+        CallEventActionCallDecline() => event.callKitParams.id,
+        CallEventActionCallEnded() => event.callKitParams.id,
+        CallEventActionCallTimeout() => event.id,
+        CallEventActionCallToggleMute() => event.id,
+        CallEventActionCallToggleHold() => event.id,
+        _ => null,
+      };
+      if (id != null && id.isNotEmpty) {
+        try {
+          await gateway.decline(id);
+        } catch (_) {}
+        try {
+          await FlutterCallkitIncoming.endCall(id);
+        } catch (_) {}
+      }
+      _appendDiagnostic('CallKit activity suppressed by administrative lock');
+      return;
+    }
     if (event is CallEventActionDidUpdateDevicePushTokenVoip) {
       _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
       _appendDiagnostic(
@@ -980,6 +1041,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     String number, {
     bool video = false,
   }) async {
+    if (_administrativelyLocked) {
+      _appendDiagnostic('Outgoing call blocked by administrative lock');
+      return;
+    }
+
     final target = number.trim();
     if (target.isEmpty) return;
 
