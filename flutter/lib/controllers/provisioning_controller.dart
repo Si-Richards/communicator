@@ -56,6 +56,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         mobileCalls.applyProvisionedConfiguration(config);
       }
       _syncLockPolling();
+      unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       notifyListeners();
       if (phone.configurationSource == ConfigurationSource.provisioning) {
         unawaited(checkIn());
@@ -196,6 +197,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       _state = updated;
       await _repository.save(updated);
       _syncLockPolling();
+      unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       _error = null;
       _status = switch (updated.deviceState) {
         'locked' => 'Device locked',
@@ -232,6 +234,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       _state = updated;
       await _repository.save(updated);
       _syncLockPolling();
+      unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       phone.applyProvisionedConfiguration(config);
       mobileCalls.applyProvisionedConfiguration(config);
       _error = null;
@@ -269,6 +272,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     await _repository.clear();
     _state = null;
     _syncLockPolling();
+    await mobileCalls.setAdministrativeLocked(false);
     await phone.setConfigurationSource(ConfigurationSource.manual);
     await phone.reloadManualConfiguration();
     _error = null;
