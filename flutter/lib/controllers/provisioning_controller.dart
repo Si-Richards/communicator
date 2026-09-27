@@ -25,7 +25,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   ProvisionedDeviceState? _state;
   bool _initialized = false;
   bool _busy = false;
-  Timer? _lockPollTimer;
+  Timer? _checkInTimer;
   String _status = 'Not provisioned';
   String? _error;
 
@@ -55,7 +55,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         phone.applyProvisionedConfiguration(config);
         mobileCalls.applyProvisionedConfiguration(config);
       }
-      _syncLockPolling();
+      _syncPolling();
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       notifyListeners();
       if (phone.configurationSource == ConfigurationSource.provisioning) {
@@ -135,6 +135,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         );
         phone.applyProvisionedConfiguration(result.configuration);
         mobileCalls.applyProvisionedConfiguration(result.configuration);
+        _syncPolling();
+        unawaited(mobileCalls.setAdministrativeLocked(isLocked));
         _error = null;
         _status = 'Provisioned';
       } finally {
@@ -196,7 +198,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
       _state = updated;
       await _repository.save(updated);
-      _syncLockPolling();
+      _syncPolling();
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       _error = null;
       _status = switch (updated.deviceState) {
@@ -233,7 +235,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       );
       _state = updated;
       await _repository.save(updated);
-      _syncLockPolling();
+      _syncPolling();
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       phone.applyProvisionedConfiguration(config);
       mobileCalls.applyProvisionedConfiguration(config);
@@ -271,7 +273,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
     await _repository.clear();
     _state = null;
-    _syncLockPolling();
+    _syncPolling();
     await mobileCalls.setAdministrativeLocked(false);
     await phone.setConfigurationSource(ConfigurationSource.manual);
     await phone.reloadManualConfiguration();
@@ -327,16 +329,16 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   String get _deviceType =>
       Platform.isIOS || Platform.isAndroid ? 'mobile' : 'desktop';
 
-  void _syncLockPolling() {
-    _lockPollTimer?.cancel();
-    _lockPollTimer = null;
-    if (!isLocked ||
+  void _syncPolling() {
+    _checkInTimer?.cancel();
+    _checkInTimer = null;
+    if (!isEnrolled ||
         phone.configurationSource != ConfigurationSource.provisioning) {
       return;
     }
 
-    _lockPollTimer = Timer.periodic(
-      const Duration(seconds: 30),
+    _checkInTimer = Timer.periodic(
+      Duration(seconds: isLocked ? 30 : 60),
       (_) => unawaited(checkIn()),
     );
   }
@@ -358,7 +360,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
   @override
   void dispose() {
-    _lockPollTimer?.cancel();
+    _checkInTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
