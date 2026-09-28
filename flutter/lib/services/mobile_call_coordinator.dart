@@ -1065,6 +1065,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _setGatewayHold(previous.id, true);
     }
 
+    final callId = _newCallId();
+    final stopwatch = Stopwatch()..start();
+    void trace(String stage) {
+      _appendDiagnostic(
+        'OUTBOUND +${stopwatch.elapsedMilliseconds}ms $stage',
+      );
+    }
+
     final webRtc = WebRtcService();
     final pendingCandidates = <Map<String, dynamic>>[];
     webRtc.onLog =
@@ -1074,34 +1082,20 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       pendingCandidates.add({'completed': true});
     };
 
+    final context = _GatewayCallContext(callId, webRtc: webRtc)
+      ..caller = target
+      ..displayName = target
+      ..startedAt = DateTime.now()
+      ..outgoing = true
+      ..gatewayStarted = false
+      ..phase = 'calling';
+    _gatewayCalls[callId] = context;
+    _activeGatewayCallId = callId;
+    trace('dial_pressed');
+    notifyListeners();
+
     try {
-      await _ringback.start();
-      _appendDiagnostic('Local ringback requested');
-      await webRtc.preparePeerConnection(video: video);
-      final offer = await webRtc.createOffer();
-      _appendDiagnostic(
-        'Outgoing media requested · video=$video · '
-        '${WebRtcService.summarizeSdp(offer)}',
-      );
-      final callId = await gateway.startCall(
-        deviceId: deviceId,
-        target: target,
-        offerSdp: offer,
-      );
-      if (callId.isEmpty) {
-        throw StateError('Gateway did not return a call id');
-      }
-
-      final context = _GatewayCallContext(callId, webRtc: webRtc)
-        ..caller = target
-        ..displayName = target
-        ..startedAt = DateTime.now()
-        ..outgoing = true
-        ..phase = 'calling';
-      _gatewayCalls[callId] = context;
-      _activeGatewayCallId = callId;
-      _configureGatewayCall(context);
-
+      trace('callkit_start_requested');
       await FlutterCallkitIncoming.startCall(
         CallKitParams(
           id: callId,
@@ -1125,31 +1119,94 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           ),
         ),
       );
+      trace('callkit_start_completed');
 
+      unawaited(_ringback.start());
+      trace('ringback_requested');
+
+      trace('webrtc_prepare_started');
+      await webRtc.preparePeerConnection(video: video);
+      trace('webrtc_prepare_completed');
+
+      trace('offer_create_started');
+      final offer = await webRtc.createOffer();
+      trace('offer_created');
+      _appendDiagnostic(
+        'Outgoing media requested · video=$video · '
+        '${WebRtcService.summarizeSdp(offer)}',
+      );
+
+      trace('randy_start_requested');
+      final returnedCallId = await gateway.startCall(
+        deviceId: deviceId,
+        target: target,
+        offerSdp: offer,
+        callId: callId,
+      );
+      trace('randy_start_completed');
+
+      if (returnedCallId.isEmpty) {
+        throw StateError('Gateway did not return a call id');
+      }
+      if (returnedCallId.toLowerCase() != callId.toLowerCase()) {
+        throw StateError(
+          'Gateway returned unexpected call id $returnedCallId',
+        );
+      }
+      context.gatewayStarted = true;
+
+      // The user may have ended the CallKit call while WebRTC/Randy was
+      // starting. If so, terminate the newly-created SIP call immediately
+      // instead of resurrecting a call whose UI has already gone away.
+      if (_contextFor(callId) == null) {
+        trace('cancelled_during_startup');
+        try {
+          await gateway.hangup(callId);
+        } catch (_) {}
+        await _ringback.stop();
+        await webRtc.close();
+        return;
+      }
+
+      _configureGatewayCall(context);
+
+      trace('gateway_events_connect_started');
       await _listenToGateway(context);
+      trace('gateway_events_connected');
 
       for (final candidate in pendingCandidates) {
         await gateway.candidate(callId, candidate);
       }
       pendingCandidates.clear();
+      trace('initial_candidates_flushed');
 
-      await _diag('outbound_call_started', callId: callId);
+      unawaited(_diag('outbound_call_started', callId: callId));
       notifyListeners();
     } catch (error) {
+      trace('startup_failed');
       await _ringback.stop();
       await webRtc.close();
-      final active = _activeGatewayCall;
-      if (active != null && active.outgoing && active.caller == target) {
+
+      final activeContext = _contextFor(callId);
+      if (context.gatewayStarted) {
         try {
-          await FlutterCallkitIncoming.endCall(active.id);
+          await gateway.hangup(callId);
         } catch (_) {}
+      }
+      if (activeContext != null) {
         await _closeGatewayCall(
-          active.id,
+          activeContext.id,
           result: CallResult.failed,
           resumeAnother: false,
         );
+      }
+      if (_activeGatewayCallId?.toLowerCase() == callId.toLowerCase()) {
         _activeGatewayCallId = null;
       }
+      try {
+        await FlutterCallkitIncoming.endCall(callId);
+      } catch (_) {}
+
       debugPrint('[VoiceHost Mobile] outgoing call failed: $error');
       if (previous != null && previous.held) {
         await _setGatewayHold(previous.id, false);
@@ -1559,10 +1616,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _end(String requestedCallId) async {
     final context = _contextFor(requestedCallId);
     final callId = context?.id ?? requestedCallId;
-    try {
-      await gateway.hangup(callId);
-    } catch (error) {
-      debugPrint('[VoiceHost Mobile] hangup failed: $error');
+    if (context == null || context.gatewayStarted) {
+      try {
+        await gateway.hangup(callId);
+      } catch (error) {
+        debugPrint('[VoiceHost Mobile] hangup failed: $error');
+      }
+    } else {
+      _appendDiagnostic('Outbound call cancelled during startup');
     }
     if (context != null) {
       await _closeGatewayCall(
@@ -1663,6 +1724,21 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  String _newCallId() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-'
+        '${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-'
+        '${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
+  }
+
   Future<String> _loadOrCreateDeviceId() async {
     const key = 'voicehost.mobile.device_id';
     final existing = await _storage.read(key: key);
@@ -1696,6 +1772,7 @@ class _GatewayCallContext {
   final String id;
   final WebRtcService webRtc;
   bool outgoing = false;
+  bool gatewayStarted = true;
   String phase = 'connecting';
   StreamSubscription<dynamic>? subscription;
   WebSocket? socket;
