@@ -5,21 +5,15 @@ import 'package:flutter/services.dart';
 class RingbackService {
   static const MethodChannel _channel = MethodChannel('voicehost/audio');
 
-  bool _playing = false;
-
   Future<void> start() async {
-    if (_playing || !Platform.isIOS) return;
-    _playing = true;
+    if (!Platform.isIOS) return;
     try {
       await _channel.invokeMethod<void>('startRingback');
-    } catch (_) {
-      _playing = false;
-    }
+    } catch (_) {}
   }
 
   Future<void> stop() async {
-    if (!_playing || !Platform.isIOS) return;
-    _playing = false;
+    if (!Platform.isIOS) return;
     try {
       await _channel.invokeMethod<void>('stopRingback');
     } catch (_) {}
