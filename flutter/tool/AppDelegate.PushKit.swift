@@ -13,7 +13,7 @@ import flutter_callkit_incoming
     private var ringbackPlayer: AVAudioPlayer?
     private var ringbackTimer: Timer?
     private var ringbackRequested = false
-    private var ringbackLastPlayerTime: TimeInterval = -1
+    private var ringbackLastCadenceAt = Date.distantPast
     private var audioChannel: FlutterMethodChannel?
     private var callKitChannel: FlutterMethodChannel?
     private var contactsChannel: FlutterMethodChannel?
@@ -220,7 +220,7 @@ import flutter_callkit_incoming
             if let player = ringbackPlayer {
                 player.pause()
                 player.currentTime = 0
-                ringbackLastPlayerTime = 0
+                ringbackLastCadenceAt = Date()
                 if player.play() {
                     recordNativeLog(
                         "Local ringback restarted after audio activation"
@@ -510,21 +510,20 @@ import flutter_callkit_incoming
 
             if ringbackPlayer == nil {
                 let player = try AVAudioPlayer(data: makeUKRingbackWav())
-                player.numberOfLoops = -1
+                player.numberOfLoops = 0
                 player.volume = 0.72
                 player.prepareToPlay()
                 ringbackPlayer = player
             }
 
-            if ringbackPlayer?.isPlaying != true {
-                ringbackPlayer?.currentTime = 0
-                ringbackPlayer?.play()
-            }
+            ringbackPlayer?.stop()
+            ringbackPlayer?.currentTime = 0
+            ringbackPlayer?.play()
+            ringbackLastCadenceAt = Date()
 
-            ringbackLastPlayerTime = ringbackPlayer?.currentTime ?? -1
             ringbackTimer?.invalidate()
             ringbackTimer = Timer.scheduledTimer(
-                withTimeInterval: 1.0,
+                withTimeInterval: 0.5,
                 repeats: true
             ) { [weak self] _ in
                 guard let self, self.ringbackRequested else { return }
@@ -544,25 +543,15 @@ import flutter_callkit_incoming
                     }
                 }
 
-                guard let player = self.ringbackPlayer else { return }
-                let currentTime = player.currentTime
-                let advanced =
-                    self.ringbackLastPlayerTime < 0 ||
-                    abs(currentTime - self.ringbackLastPlayerTime) > 0.05
-                self.ringbackLastPlayerTime = currentTime
-
-                if player.isPlaying != true || !advanced {
-                    player.pause()
+                if Date().timeIntervalSince(self.ringbackLastCadenceAt) >= 2.9,
+                   let player = self.ringbackPlayer {
+                    player.stop()
                     player.currentTime = 0
-                    self.ringbackLastPlayerTime = 0
+                    self.ringbackLastCadenceAt = Date()
                     if player.play() {
-                        self.recordNativeLog(
-                            advanced
-                                ? "Local ringback restarted"
-                                : "Local ringback restarted after playback stalled"
-                        )
+                        self.recordNativeLog("Local ringback cadence replayed")
                     } else {
-                        self.recordNativeLog("Local ringback restart failed")
+                        self.recordNativeLog("Local ringback cadence replay failed")
                     }
                 }
             }
@@ -579,7 +568,7 @@ import flutter_callkit_incoming
 
     private func stopRingback() {
         ringbackRequested = false
-        ringbackLastPlayerTime = -1
+        ringbackLastCadenceAt = Date.distantPast
         ringbackTimer?.invalidate()
         ringbackTimer = nil
 
