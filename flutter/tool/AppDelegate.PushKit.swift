@@ -504,9 +504,27 @@ import flutter_callkit_incoming
             ) { [weak self] _ in
                 guard let self, self.ringbackRequested else { return }
                 if self.ringbackPlayer?.isPlaying != true {
+                    do {
+                        let session = AVAudioSession.sharedInstance()
+                        try session.setCategory(
+                            .playAndRecord,
+                            mode: .voiceChat,
+                            options: [.allowBluetooth, .defaultToSpeaker]
+                        )
+                        try session.setActive(true)
+                        try session.overrideOutputAudioPort(.speaker)
+                    } catch {
+                        self.recordNativeLog(
+                            "Unable to reactivate audio session for ringback"
+                        )
+                    }
+
                     self.ringbackPlayer?.currentTime = 0
-                    self.ringbackPlayer?.play()
-                    self.recordNativeLog("Local ringback restarted")
+                    if self.ringbackPlayer?.play() == true {
+                        self.recordNativeLog("Local ringback restarted")
+                    } else {
+                        self.recordNativeLog("Local ringback restart failed")
+                    }
                 }
             }
 
