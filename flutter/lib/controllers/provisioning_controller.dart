@@ -164,16 +164,21 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _setBusy(true, status: 'Checking provisioning…');
     final service = ProvisioningService(baseUrl: url);
     try {
-      await _ensureFreshToken(service);
       var state = _state!;
       DeviceCheckInResult result;
       try {
+        // Always try the current access token first. A stale/invalid refresh
+        // credential must not prevent an otherwise-valid access token from
+        // checking the authoritative device state and clearing a cached lock.
         result = await service.checkIn(
           accessToken: state.accessToken,
           payload: _checkInPayload(state),
         );
       } on ProvisioningException catch (error) {
         if (error.statusCode != 401) rethrow;
+        debugPrint(
+          '[VoiceHost Provisioning] access token rejected; attempting refresh',
+        );
         await _refreshToken(service);
         state = _state!;
         result = await service.checkIn(
