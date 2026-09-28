@@ -98,7 +98,11 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        model.isEnrolled ? 'Managed device' : 'Activate device',
+                        model.credentialsInvalid
+                            ? 'Re-activate device'
+                            : model.isEnrolled
+                                ? 'Managed device'
+                                : 'Activate device',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 8),
@@ -130,7 +134,7 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                   ),
                 ),
               ),
-              if (!model.isEnrolled) ...[
+              if (!model.isEnrolled || model.credentialsInvalid) ...[
                 const SizedBox(height: 4),
                 TextField(
                   controller: _serverUrl,
@@ -168,7 +172,11 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.link),
-                  label: const Text('Activate Device'),
+                  label: Text(
+                    model.credentialsInvalid
+                        ? 'Re-activate Device'
+                        : 'Activate Device',
+                  ),
                 ),
               ] else ...[
                 if (config != null)
