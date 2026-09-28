@@ -612,6 +612,7 @@ async def start_call(device_id: str, body: OutboundCallRequest):
             device_id,
             body.target,
             body.sdp,
+            body.call_id,
         )
     except KeyError:
         raise HTTPException(404, 'device not found')
