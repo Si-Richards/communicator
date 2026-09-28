@@ -205,10 +205,29 @@ import flutter_callkit_incoming
         let rtcAudioSession = RTCAudioSession.sharedInstance()
         rtcAudioSession.audioSessionDidActivate(audioSession)
         rtcAudioSession.isAudioEnabled = true
-        if ringbackRequested && ringbackPlayer?.isPlaying != true {
-            ringbackPlayer?.play()
-            recordNativeLog("Local ringback resumed after audio activation")
+
+        if ringbackRequested {
+            do {
+                try audioSession.setCategory(
+                    .playAndRecord,
+                    mode: .voiceChat,
+                    options: [.allowBluetooth, .defaultToSpeaker]
+                )
+                try audioSession.overrideOutputAudioPort(.speaker)
+                recordNativeLog("Local ringback route restored after audio activation")
+            } catch {
+                recordNativeLog(
+                    "Unable to restore ringback route after audio activation"
+                )
+            }
+
+            if ringbackPlayer?.isPlaying != true {
+                ringbackPlayer?.currentTime = 0
+                ringbackPlayer?.play()
+                recordNativeLog("Local ringback resumed after audio activation")
+            }
         }
+
         recordNativeLog("CallKit WebRTC audio session activated")
     }
 
@@ -503,22 +522,30 @@ import flutter_callkit_incoming
                 repeats: true
             ) { [weak self] _ in
                 guard let self, self.ringbackRequested else { return }
-                if self.ringbackPlayer?.isPlaying != true {
-                    do {
-                        let session = AVAudioSession.sharedInstance()
-                        try session.setCategory(
-                            .playAndRecord,
-                            mode: .voiceChat,
-                            options: [.allowBluetooth, .defaultToSpeaker]
-                        )
-                        try session.setActive(true)
+
+                do {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(
+                        .playAndRecord,
+                        mode: .voiceChat,
+                        options: [.allowBluetooth, .defaultToSpeaker]
+                    )
+                    try session.setActive(true)
+
+                    let output = session.currentRoute.outputs.first?.portType
+                    if output != .builtInSpeaker {
                         try session.overrideOutputAudioPort(.speaker)
-                    } catch {
                         self.recordNativeLog(
-                            "Unable to reactivate audio session for ringback"
+                            "Local ringback output route restored to speaker"
                         )
                     }
+                } catch {
+                    self.recordNativeLog(
+                        "Unable to maintain audio session for ringback"
+                    )
+                }
 
+                if self.ringbackPlayer?.isPlaying != true {
                     self.ringbackPlayer?.currentTime = 0
                     if self.ringbackPlayer?.play() == true {
                         self.recordNativeLog("Local ringback restarted")
