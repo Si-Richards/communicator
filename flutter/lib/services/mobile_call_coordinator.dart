@@ -1075,8 +1075,6 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     };
 
     try {
-      await _ringback.start();
-      _appendDiagnostic('Local ringback requested');
       await webRtc.preparePeerConnection(video: video);
       final offer = await webRtc.createOffer();
       _appendDiagnostic(
@@ -1125,6 +1123,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           ),
         ),
       );
+
+      await _ringback.start();
+      _appendDiagnostic('Local ringback requested after CallKit start');
 
       await _listenToGateway(context);
 
