@@ -1165,6 +1165,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           await gateway.hangup(callId);
         } catch (_) {}
         await _ringback.stop();
+        await _ringback.prepareForWebRtcClose();
         await webRtc.close();
         return;
       }
@@ -1192,9 +1193,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     } catch (error) {
       trace('startup_failed');
       await _ringback.stop();
-      await webRtc.close();
 
       final activeContext = _contextFor(callId);
+      if (activeContext == null) {
+        await _ringback.prepareForWebRtcClose();
+        await webRtc.close();
+      }
       if (context.gatewayStarted) {
         try {
           await gateway.hangup(callId);
@@ -1233,7 +1237,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       for (final candidate in candidates) {
-        if (_contextFor(context.id) == null || context.gatewayEnded) break;
+        if (_contextFor(context.id) == null ||
+            context.gatewayEnded ||
+            context.closing) {
+          break;
+        }
         await gateway.candidate(context.id, candidate);
       }
     } catch (error) {
@@ -1693,7 +1701,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     CallResult? result,
   }) async {
     final context = _contextFor(requestedCallId);
-    if (context == null) return;
+    if (context == null || context.closing) return;
+    context.closing = true;
 
     final wasActive = _activeGatewayCallId == context.id;
     if (wasActive && _transferId != null) {
@@ -1826,6 +1835,7 @@ class _GatewayCallContext {
   bool gatewayStarted = true;
   bool gatewayEnded = false;
   bool hangupRequested = false;
+  bool closing = false;
   String phase = 'connecting';
   StreamSubscription<dynamic>? subscription;
   WebSocket? socket;
