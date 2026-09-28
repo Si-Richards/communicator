@@ -407,6 +407,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed &&
         isEnrolled &&
+        !_credentialsInvalid &&
         phone.provisioningUrl.trim().isNotEmpty) {
       unawaited(checkIn());
     }
