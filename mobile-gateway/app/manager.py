@@ -766,6 +766,7 @@ class MobileSessionManager:
         device_id: str,
         target: str,
         offer_sdp: str,
+        requested_call_id: str | None = None,
     ) -> CallRuntime:
         device = self.store.get(device_id)
         if device_id not in self.sessions:
@@ -775,7 +776,9 @@ class MobileSessionManager:
         if session is None:
             raise RuntimeError('No free SIP call slot is available')
 
-        call_id = str(uuid.uuid4())
+        call_id = requested_call_id or str(uuid.uuid4())
+        if call_id in self.calls:
+            raise RuntimeError('Call id is already in use')
         call = CallRuntime(
             id=call_id,
             device_id=device_id,
