@@ -58,7 +58,12 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       _syncPolling();
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       notifyListeners();
-      if (phone.configurationSource == ConfigurationSource.provisioning) {
+      debugPrint(
+        '[VoiceHost Provisioning] cached state=$deviceState '
+        'source=${phone.configurationSource.name} '
+        'url=${phone.provisioningUrl.trim().isEmpty ? 'missing' : 'configured'}',
+      );
+      if (phone.provisioningUrl.trim().isNotEmpty) {
         unawaited(checkIn());
       }
     } else {
@@ -177,6 +182,12 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         );
       }
 
+      debugPrint(
+        '[VoiceHost Provisioning] check-in state=${result.state} '
+        'version=${result.configurationVersion} '
+        'changed=${result.configurationChanged}',
+      );
+
       var updated = _state!.copyWith(
         deviceState: result.state,
         configurationVersion: result.configurationVersion,
@@ -234,6 +245,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     } catch (error) {
       _error = error.toString();
       _status = 'Provisioning unavailable';
+      debugPrint('[VoiceHost Provisioning] check-in failed: $error');
     } finally {
       service.close();
       _setBusy(false);
@@ -356,8 +368,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   void _syncPolling() {
     _checkInTimer?.cancel();
     _checkInTimer = null;
-    if (!isEnrolled ||
-        phone.configurationSource != ConfigurationSource.provisioning) {
+    if (!isEnrolled || phone.provisioningUrl.trim().isEmpty) {
       return;
     }
 
@@ -376,8 +387,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed &&
-        phone.configurationSource == ConfigurationSource.provisioning &&
-        isEnrolled) {
+        isEnrolled &&
+        phone.provisioningUrl.trim().isNotEmpty) {
       unawaited(checkIn());
     }
   }
