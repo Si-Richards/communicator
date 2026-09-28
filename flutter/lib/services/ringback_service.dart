@@ -18,4 +18,11 @@ class RingbackService {
       await _channel.invokeMethod<void>('stopRingback');
     } catch (_) {}
   }
+
+  Future<void> prepareForWebRtcClose() async {
+    if (!Platform.isIOS) return;
+    try {
+      await _channel.invokeMethod<void>('prepareForWebRtcClose');
+    } catch (_) {}
+  }
 }
