@@ -494,7 +494,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             break;
           case 'end':
             await _diag('callkit_end_native_recovered', callId: id);
-            await _end(id);
+            await _end(id, recoverUnknown: true);
             break;
         }
       }
@@ -949,6 +949,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             notifyListeners();
             break;
           case 'hangup':
+            context.gatewayEnded = true;
             if (context.outgoing) unawaited(_ringback.stop());
             unawaited(FlutterCallkitIncoming.endCall(context.id));
             if (context.id == _activeGatewayCallId) {
@@ -1174,13 +1175,19 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _listenToGateway(context);
       trace('gateway_events_connected');
 
-      for (final candidate in pendingCandidates) {
-        await gateway.candidate(callId, candidate);
-      }
+      final initialCandidates =
+          List<Map<String, dynamic>>.from(pendingCandidates);
       pendingCandidates.clear();
-      trace('initial_candidates_flushed');
 
+      trace('outbound_ready');
       unawaited(_diag('outbound_call_started', callId: callId));
+      unawaited(
+        _flushInitialCandidates(
+          context,
+          initialCandidates,
+          onComplete: () => trace('initial_candidates_flushed'),
+        ),
+      );
       notifyListeners();
     } catch (error) {
       trace('startup_failed');
@@ -1211,6 +1218,28 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       if (previous != null && previous.held) {
         await _setGatewayHold(previous.id, false);
       }
+    }
+  }
+
+  Future<void> _flushInitialCandidates(
+    _GatewayCallContext context,
+    List<Map<String, dynamic>> candidates, {
+    void Function()? onComplete,
+  }) async {
+    if (candidates.isEmpty) {
+      onComplete?.call();
+      return;
+    }
+
+    try {
+      for (final candidate in candidates) {
+        if (_contextFor(context.id) == null || context.gatewayEnded) break;
+        await gateway.candidate(context.id, candidate);
+      }
+    } catch (error) {
+      _appendDiagnostic('Initial ICE candidate flush failed: $error');
+    } finally {
+      onComplete?.call();
     }
   }
 
@@ -1613,28 +1642,49 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _end(String requestedCallId) async {
+  Future<void> _end(
+    String requestedCallId, {
+    bool recoverUnknown = false,
+  }) async {
     final context = _contextFor(requestedCallId);
-    final callId = context?.id ?? requestedCallId;
-    if (context == null || context.gatewayStarted) {
+
+    if (context == null) {
+      if (!recoverUnknown) {
+        _appendDiagnostic('Ignoring duplicate CallKit end for closed call');
+        return;
+      }
       try {
-        await gateway.hangup(callId);
+        await gateway.hangup(requestedCallId);
+      } catch (error) {
+        debugPrint('[VoiceHost Mobile] recovered hangup failed: $error');
+      }
+      return;
+    }
+
+    if (context.hangupRequested) {
+      _appendDiagnostic('Ignoring duplicate hangup request');
+      return;
+    }
+
+    context.hangupRequested = true;
+    if (context.gatewayStarted && !context.gatewayEnded) {
+      try {
+        await gateway.hangup(context.id);
       } catch (error) {
         debugPrint('[VoiceHost Mobile] hangup failed: $error');
       }
-    } else {
+    } else if (!context.gatewayStarted) {
       _appendDiagnostic('Outbound call cancelled during startup');
     }
-    if (context != null) {
-      await _closeGatewayCall(
-        context.id,
-        result: context.connected
-            ? CallResult.completed
-            : context.outgoing
-                ? CallResult.cancelled
-                : CallResult.declined,
-      );
-    }
+
+    await _closeGatewayCall(
+      context.id,
+      result: context.connected
+          ? CallResult.completed
+          : context.outgoing
+              ? CallResult.cancelled
+              : CallResult.declined,
+    );
   }
 
   Future<void> _closeGatewayCall(
@@ -1656,6 +1706,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     context.subscription = null;
     await context.socket?.close();
     context.socket = null;
+    await _ringback.prepareForWebRtcClose();
     await context.webRtc.close();
 
     if (!context.historyRecorded && result != null) {
@@ -1773,6 +1824,8 @@ class _GatewayCallContext {
   final WebRtcService webRtc;
   bool outgoing = false;
   bool gatewayStarted = true;
+  bool gatewayEnded = false;
+  bool hangupRequested = false;
   String phase = 'connecting';
   StreamSubscription<dynamic>? subscription;
   WebSocket? socket;
