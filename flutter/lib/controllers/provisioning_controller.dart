@@ -28,12 +28,14 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   Timer? _checkInTimer;
   String _status = 'Not provisioned';
   String? _error;
+  bool _credentialsInvalid = false;
 
   bool get initialized => _initialized;
   bool get busy => _busy;
   bool get isEnrolled => _state != null;
   String get status => _status;
   String? get error => _error;
+  bool get credentialsInvalid => _credentialsInvalid;
   String? get deviceId => _state?.deviceId;
   String get deviceState => _state?.deviceState ?? 'unprovisioned';
   int get configurationVersion => _state?.configurationVersion ?? 0;
@@ -142,6 +144,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         mobileCalls.applyProvisionedConfiguration(result.configuration);
         _syncPolling();
         unawaited(mobileCalls.setAdministrativeLocked(isLocked));
+        _credentialsInvalid = false;
         _error = null;
         _status = 'Provisioned';
       } finally {
@@ -203,6 +206,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       // the optional configuration refresh succeeding.
       _state = updated;
       await _repository.save(updated);
+      _credentialsInvalid = false;
       _syncPolling();
       await mobileCalls.setAdministrativeLocked(isLocked);
       _error = null;
@@ -248,8 +252,15 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         }
       }
     } catch (error) {
+      if (error is ProvisioningException &&
+          error.code == 'refresh_token_invalid') {
+        _credentialsInvalid = true;
+        _status = 'Re-activation required';
+        _syncPolling();
+      } else {
+        _status = 'Provisioning unavailable';
+      }
       _error = error.toString();
-      _status = 'Provisioning unavailable';
       debugPrint('[VoiceHost Provisioning] check-in failed: $error');
     } finally {
       service.close();
@@ -314,6 +325,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
     await _repository.clear();
     _state = null;
+    _credentialsInvalid = false;
     _syncPolling();
     await mobileCalls.setAdministrativeLocked(false);
     await phone.setConfigurationSource(ConfigurationSource.manual);
@@ -373,7 +385,9 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   void _syncPolling() {
     _checkInTimer?.cancel();
     _checkInTimer = null;
-    if (!isEnrolled || phone.provisioningUrl.trim().isEmpty) {
+    if (!isEnrolled ||
+        _credentialsInvalid ||
+        phone.provisioningUrl.trim().isEmpty) {
       return;
     }
 
