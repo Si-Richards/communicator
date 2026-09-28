@@ -13,6 +13,7 @@ import flutter_callkit_incoming
     private var ringbackPlayer: AVAudioPlayer?
     private var ringbackTimer: Timer?
     private var ringbackRequested = false
+    private var ringbackLastPlayerTime: TimeInterval = -1
     private var audioChannel: FlutterMethodChannel?
     private var callKitChannel: FlutterMethodChannel?
     private var contactsChannel: FlutterMethodChannel?
@@ -208,11 +209,6 @@ import flutter_callkit_incoming
 
         if ringbackRequested {
             do {
-                try audioSession.setCategory(
-                    .playAndRecord,
-                    mode: .voiceChat,
-                    options: [.allowBluetooth, .defaultToSpeaker]
-                )
                 try audioSession.overrideOutputAudioPort(.speaker)
                 recordNativeLog("Local ringback route restored after audio activation")
             } catch {
@@ -221,10 +217,19 @@ import flutter_callkit_incoming
                 )
             }
 
-            if ringbackPlayer?.isPlaying != true {
-                ringbackPlayer?.currentTime = 0
-                ringbackPlayer?.play()
-                recordNativeLog("Local ringback resumed after audio activation")
+            if let player = ringbackPlayer {
+                player.pause()
+                player.currentTime = 0
+                ringbackLastPlayerTime = 0
+                if player.play() {
+                    recordNativeLog(
+                        "Local ringback restarted after audio activation"
+                    )
+                } else {
+                    recordNativeLog(
+                        "Local ringback restart after audio activation failed"
+                    )
+                }
             }
         }
 
@@ -516,6 +521,7 @@ import flutter_callkit_incoming
                 ringbackPlayer?.play()
             }
 
+            ringbackLastPlayerTime = ringbackPlayer?.currentTime ?? -1
             ringbackTimer?.invalidate()
             ringbackTimer = Timer.scheduledTimer(
                 withTimeInterval: 1.0,
@@ -523,32 +529,38 @@ import flutter_callkit_incoming
             ) { [weak self] _ in
                 guard let self, self.ringbackRequested else { return }
 
-                do {
-                    let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(
-                        .playAndRecord,
-                        mode: .voiceChat,
-                        options: [.allowBluetooth, .defaultToSpeaker]
-                    )
-                    try session.setActive(true)
-
-                    let output = session.currentRoute.outputs.first?.portType
-                    if output != .builtInSpeaker {
+                let session = AVAudioSession.sharedInstance()
+                let output = session.currentRoute.outputs.first?.portType
+                if output != .builtInSpeaker {
+                    do {
                         try session.overrideOutputAudioPort(.speaker)
                         self.recordNativeLog(
                             "Local ringback output route restored to speaker"
                         )
+                    } catch {
+                        self.recordNativeLog(
+                            "Unable to restore ringback output route"
+                        )
                     }
-                } catch {
-                    self.recordNativeLog(
-                        "Unable to maintain audio session for ringback"
-                    )
                 }
 
-                if self.ringbackPlayer?.isPlaying != true {
-                    self.ringbackPlayer?.currentTime = 0
-                    if self.ringbackPlayer?.play() == true {
-                        self.recordNativeLog("Local ringback restarted")
+                guard let player = self.ringbackPlayer else { return }
+                let currentTime = player.currentTime
+                let advanced =
+                    self.ringbackLastPlayerTime < 0 ||
+                    abs(currentTime - self.ringbackLastPlayerTime) > 0.05
+                self.ringbackLastPlayerTime = currentTime
+
+                if player.isPlaying != true || !advanced {
+                    player.pause()
+                    player.currentTime = 0
+                    self.ringbackLastPlayerTime = 0
+                    if player.play() {
+                        self.recordNativeLog(
+                            advanced
+                                ? "Local ringback restarted"
+                                : "Local ringback restarted after playback stalled"
+                        )
                     } else {
                         self.recordNativeLog("Local ringback restart failed")
                     }
@@ -567,6 +579,7 @@ import flutter_callkit_incoming
 
     private func stopRingback() {
         ringbackRequested = false
+        ringbackLastPlayerTime = -1
         ringbackTimer?.invalidate()
         ringbackTimer = nil
 
