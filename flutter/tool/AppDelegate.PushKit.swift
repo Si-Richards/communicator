@@ -213,23 +213,38 @@ import flutter_callkit_incoming
                 recordNativeLog("Local ringback route restored after audio activation")
             } catch {
                 recordNativeLog(
-                    "Unable to restore ringback route after audio activation"
+                    "Unable to restore ringback route after audio activation: \(error.localizedDescription)"
                 )
             }
 
-            if let player = ringbackPlayer {
-                player.pause()
-                player.currentTime = 0
-                ringbackLastCadenceAt = Date()
-                if player.play() {
-                    recordNativeLog(
-                        "Local ringback restarted after audio activation"
-                    )
-                } else {
-                    recordNativeLog(
-                        "Local ringback restart after audio activation failed"
-                    )
+            do {
+                if ringbackPlayer == nil {
+                    let player = try AVAudioPlayer(data: makeUKRingbackWav())
+                    player.numberOfLoops = 0
+                    player.volume = 1.0
+                    player.prepareToPlay()
+                    ringbackPlayer = player
                 }
+
+                if let player = ringbackPlayer {
+                    player.volume = 1.0
+                    player.stop()
+                    player.currentTime = 0
+                    ringbackLastCadenceAt = Date()
+                    if player.play() {
+                        recordNativeLog(
+                            "Local ringback restarted after audio activation"
+                        )
+                    } else {
+                        recordNativeLog(
+                            "Local ringback restart after audio activation failed"
+                        )
+                    }
+                }
+            } catch {
+                recordNativeLog(
+                    "Unable to prepare ringback after audio activation: \(error.localizedDescription)"
+                )
             }
         }
 
@@ -505,13 +520,14 @@ import flutter_callkit_incoming
                 mode: .voiceChat,
                 options: [.allowBluetooth, .defaultToSpeaker]
             )
-            try session.setActive(true)
+            // CallKit owns AVAudioSession activation. Activating it here can
+            // desynchronise WebRTC's activation counter on repeated calls.
             try session.overrideOutputAudioPort(.speaker)
 
             if ringbackPlayer == nil {
                 let player = try AVAudioPlayer(data: makeUKRingbackWav())
                 player.numberOfLoops = 0
-                player.volume = 0.72
+                player.volume = 1.0
                 player.prepareToPlay()
                 ringbackPlayer = player
             }
@@ -545,6 +561,7 @@ import flutter_callkit_incoming
 
                 if Date().timeIntervalSince(self.ringbackLastCadenceAt) >= 2.9,
                    let player = self.ringbackPlayer {
+                    player.volume = 1.0
                     player.stop()
                     player.currentTime = 0
                     self.ringbackLastCadenceAt = Date()
@@ -558,11 +575,15 @@ import flutter_callkit_incoming
 
             recordNativeLog("Local ringback started")
         } catch {
-            ringbackRequested = false
+            // Keep the request alive. CallKit may activate the audio session a
+            // moment later, at which point didActivateAudioSession can recover
+            // and start the player.
             ringbackTimer?.invalidate()
             ringbackTimer = nil
             ringbackPlayer = nil
-            recordNativeLog("Local ringback failed")
+            recordNativeLog(
+                "Local ringback setup deferred: \(error.localizedDescription)"
+            )
         }
     }
 
