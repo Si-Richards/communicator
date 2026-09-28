@@ -182,24 +182,13 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         configurationVersion: result.configurationVersion,
       );
 
-      if (result.configurationChanged ||
-          result.actions.contains('refresh_configuration')) {
-        final config = await service.getConfiguration(
-          accessToken: updated.accessToken,
-        );
-        updated = updated.copyWith(
-          configurationVersion: config.version,
-          configuration: config,
-          deviceState: config.deviceState ?? result.state,
-        );
-        phone.applyProvisionedConfiguration(config);
-        mobileCalls.applyProvisionedConfiguration(config);
-      }
-
+      // Device state is authoritative and must be applied immediately.
+      // In particular, a transition from locked -> active must not depend on
+      // the optional configuration refresh succeeding.
       _state = updated;
       await _repository.save(updated);
       _syncPolling();
-      unawaited(mobileCalls.setAdministrativeLocked(isLocked));
+      await mobileCalls.setAdministrativeLocked(isLocked);
       _error = null;
       _status = switch (updated.deviceState) {
         'locked' => 'Device locked',
@@ -207,6 +196,41 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         'retired' => 'Device retired',
         _ => 'Provisioned',
       };
+      notifyListeners();
+
+      if (result.configurationChanged ||
+          result.actions.contains('refresh_configuration')) {
+        try {
+          final config = await service.getConfiguration(
+            accessToken: updated.accessToken,
+          );
+          updated = updated.copyWith(
+            configurationVersion: config.version,
+            configuration: config,
+            deviceState: config.deviceState ?? result.state,
+          );
+          _state = updated;
+          await _repository.save(updated);
+          phone.applyProvisionedConfiguration(config);
+          mobileCalls.applyProvisionedConfiguration(config);
+          _syncPolling();
+          await mobileCalls.setAdministrativeLocked(isLocked);
+          _status = switch (updated.deviceState) {
+            'locked' => 'Device locked',
+            'revoked' => 'Device revoked',
+            'retired' => 'Device retired',
+            _ => 'Provisioned',
+          };
+          notifyListeners();
+        } on ProvisioningException catch (error) {
+          // Locked devices are intentionally denied configuration retrieval.
+          // Keep the successfully synchronized state rather than reverting to
+          // stale local state because a configuration refresh was unavailable.
+          if (error.statusCode != 423 || updated.deviceState != 'locked') {
+            rethrow;
+          }
+        }
+      }
     } catch (error) {
       _error = error.toString();
       _status = 'Provisioning unavailable';
@@ -338,7 +362,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     }
 
     _checkInTimer = Timer.periodic(
-      Duration(seconds: isLocked ? 30 : 60),
+      Duration(seconds: isLocked ? 10 : 60),
       (_) => unawaited(checkIn()),
     );
   }
