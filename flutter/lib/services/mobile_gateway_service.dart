@@ -119,11 +119,16 @@ class MobileGatewayService {
     required String deviceId,
     required String target,
     required String offerSdp,
+    String? callId,
   }) async {
     final json = await _jsonRequest(
       'POST',
       '/v1/devices/$deviceId/calls',
-      body: {'target': target, 'sdp': offerSdp},
+      body: {
+        'target': target,
+        'sdp': offerSdp,
+        if (callId != null && callId.isNotEmpty) 'call_id': callId,
+      },
     );
     return json['call_id']?.toString() ?? '';
   }
