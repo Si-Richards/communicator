@@ -7,6 +7,7 @@ import 'ui/call_history_screen.dart';
 import 'ui/contacts_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/phone_screen.dart';
+import 'ui/provisioning_screen.dart';
 
 class VoiceHostApp extends StatelessWidget {
   const VoiceHostApp({
@@ -132,7 +133,10 @@ class _MainShellState extends State<MainShell> {
       animation: Listenable.merge([controller, widget.provisioning]),
       builder: (context, _) {
         if (widget.provisioning.isLocked) {
-          return const _ProvisioningLockedScreen();
+          return _ProvisioningLockedScreen(
+            controller: controller,
+            provisioning: widget.provisioning,
+          );
         }
 
         return Scaffold(
@@ -173,7 +177,13 @@ class _MainShellState extends State<MainShell> {
 
 
 class _ProvisioningLockedScreen extends StatelessWidget {
-  const _ProvisioningLockedScreen();
+  const _ProvisioningLockedScreen({
+    required this.controller,
+    required this.provisioning,
+  });
+
+  final PhoneController controller;
+  final ProvisioningController provisioning;
 
   @override
   Widget build(BuildContext context) {
@@ -212,13 +222,32 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'This app is locked. Please contact your administrator.',
+                  provisioning.credentialsInvalid
+                      ? 'This device needs to be re-activated by your administrator.'
+                      : 'This app is locked. Please contact your administrator.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: navy,
                         height: 1.45,
                       ),
                 ),
+                if (provisioning.credentialsInvalid) ...[
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ProvisioningScreen(
+                            phone: controller,
+                            provisioning: provisioning,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.key_outlined),
+                    label: const Text('Re-activate device'),
+                  ),
+                ],
               ],
             ),
           ),
