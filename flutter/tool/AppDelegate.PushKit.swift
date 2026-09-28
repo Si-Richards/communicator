@@ -14,6 +14,8 @@ import flutter_callkit_incoming
     private var ringbackTimer: Timer?
     private var ringbackRequested = false
     private var ringbackLastCadenceAt = Date.distantPast
+    private var rtcCallKitAudioActive = false
+    private var webRtcClosedBeforeCallKitDeactivation = false
     private var audioChannel: FlutterMethodChannel?
     private var callKitChannel: FlutterMethodChannel?
     private var contactsChannel: FlutterMethodChannel?
@@ -77,6 +79,9 @@ import flutter_callkit_incoming
                 result(nil)
             case "stopRingback":
                 self?.stopRingback()
+                result(nil)
+            case "prepareForWebRtcClose":
+                self?.prepareForWebRtcClose()
                 result(nil)
             default:
                 result(FlutterMethodNotImplemented)
@@ -206,6 +211,8 @@ import flutter_callkit_incoming
         let rtcAudioSession = RTCAudioSession.sharedInstance()
         rtcAudioSession.audioSessionDidActivate(audioSession)
         rtcAudioSession.isAudioEnabled = true
+        rtcCallKitAudioActive = true
+        webRtcClosedBeforeCallKitDeactivation = false
 
         if ringbackRequested {
             do {
@@ -253,9 +260,30 @@ import flutter_callkit_incoming
 
     func didDeactivateAudioSession(_ audioSession: AVAudioSession) {
         let rtcAudioSession = RTCAudioSession.sharedInstance()
-        rtcAudioSession.audioSessionDidDeactivate(audioSession)
+
+        if webRtcClosedBeforeCallKitDeactivation {
+            // flutter_webrtc closes/deactivates RTCAudioSession while tearing
+            // down the peer connection. Calling audioSessionDidDeactivate here
+            // as well would decrement WebRTC's activation counter twice.
+            webRtcClosedBeforeCallKitDeactivation = false
+            recordNativeLog(
+                "CallKit WebRTC deactivation already handled by peer close"
+            )
+        } else if rtcCallKitAudioActive {
+            rtcAudioSession.audioSessionDidDeactivate(audioSession)
+        }
+
         rtcAudioSession.isAudioEnabled = false
+        rtcCallKitAudioActive = false
         recordNativeLog("CallKit WebRTC audio session deactivated")
+    }
+
+    private func prepareForWebRtcClose() {
+        guard rtcCallKitAudioActive else { return }
+        webRtcClosedBeforeCallKitDeactivation = true
+        recordNativeLog(
+            "WebRTC peer close will satisfy CallKit audio deactivation"
+        )
     }
 
     func providerDidReset() {
