@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import time
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -1134,12 +1135,25 @@ class MobileSessionManager:
         await call.publish({'type': 'hold', 'held': held})
 
     async def answer(self, call_id: str, sdp: str):
+        started = time.perf_counter()
         logger.info(
             '[VH-DIAG] event=answer_received call=%s sdp_length=%s',
             _safe_ref(call_id),
             len(sdp),
         )
-        await self._session_for_call(call_id).accept(sdp)
+        session = self._session_for_call(call_id)
+        logger.info(
+            '[VH-DIAG] event=janus_accept_start call=%s session=%s handle=%s',
+            _safe_ref(call_id),
+            session.session_id or '-',
+            session.handle_id or '-',
+        )
+        await session.accept(sdp)
+        logger.info(
+            '[VH-DIAG] event=janus_accept_complete call=%s elapsed_ms=%s',
+            _safe_ref(call_id),
+            int((time.perf_counter() - started) * 1000),
+        )
 
     async def decline(self, call_id: str):
         call = self.get_call(call_id)
