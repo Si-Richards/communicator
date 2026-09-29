@@ -1141,7 +1141,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       trace('webrtc_prepare_completed');
 
       trace('offer_create_started');
-      final offer = await webRtc.createOffer();
+      await webRtc.createOffer();
       trace('offer_created');
 
       trace('ice_candidate_wait_started');
