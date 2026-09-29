@@ -363,6 +363,15 @@ class MobileSessionManager:
                 call.transfer_target = None
             return
 
+        if event == 'registration_failed':
+            logger.error(
+                '[VH-DIAG] event=registration_failed device=%s code=%s reason=%s',
+                _safe_ref(device.device_id),
+                result.get('code'),
+                result.get('reason') or result.get('error') or '-',
+            )
+            return
+
         if event == 'notify':
             notify_type = str(result.get('notify') or '').lower()
             if notify_type == 'message-summary':
