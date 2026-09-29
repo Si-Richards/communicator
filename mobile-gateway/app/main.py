@@ -586,6 +586,12 @@ async def admin_delete_device(device_id: str):
 
 @app.post('/v1/devices/register', dependencies=[Depends(auth)])
 async def register_device(body: DeviceRegistration):
+    token_fp = hashlib.sha256(body.push_token.encode('utf-8')).hexdigest()[:12]
+    diag_logger.info(
+        '[VH-DIAG] event=device_register_received device=%s token_fp=%s',
+        _safe_ref(body.device_id),
+        token_fp,
+    )
     device = store.upsert(body)
     asyncio.create_task(manager.ensure_session(device))
     return {'ok': True, 'device_id': device.device_id}
