@@ -105,8 +105,9 @@ class _CompactLicensesScreenState extends State<_CompactLicensesScreen> {
           ? const <String>['Other']
           : entry.packages.toList(growable: false);
       for (final package in packages) {
-        grouped.putIfAbsent(package, () => <LicenseParagraph>[])
-          ..addAll(entry.paragraphs);
+        grouped
+            .putIfAbsent(package, () => <LicenseParagraph>[])
+            .addAll(entry.paragraphs);
       }
     }
 
