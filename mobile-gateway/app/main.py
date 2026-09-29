@@ -99,6 +99,16 @@ async def _send_test_push(device_id: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.sip_srtp not in {'sdes_mandatory', 'sdes_optional'}:
+        raise RuntimeError(
+            'SIP_SRTP must be sdes_mandatory or sdes_optional'
+        )
+    diag_logger.info(
+        '[VH-DIAG] event=sip_security_policy transport=%s media=%s profile=%s',
+        'tls' if settings.sip_tls else 'default',
+        settings.sip_srtp,
+        settings.sip_srtp_profile or 'default',
+    )
     await manager.restore()
     yield
 
@@ -119,6 +129,9 @@ async def health():
             'sandbox' if settings.apns_sandbox else 'production'
         ),
         'apns_fallback_environment': settings.apns_fallback_environment,
+        'sip_transport': 'tls' if settings.sip_tls else 'default',
+        'sip_media_encryption': settings.sip_srtp,
+        'sip_srtp_profile': settings.sip_srtp_profile or 'default',
     }
 
 
