@@ -486,7 +486,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         switch (type) {
           case 'accept':
             await _diag('callkit_accept_native_recovered', callId: id);
-            await _accept(id);
+            await _accept(id, recovered: true);
             break;
           case 'decline':
             await _diag('callkit_decline_native_recovered', callId: id);
@@ -515,7 +515,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         if (call.isAccepted) {
           if (_contextFor(call.id)?.connected == true) continue;
           await _diag('callkit_accept_recovered', callId: call.id);
-          await _accept(call.id);
+          await _accept(call.id, recovered: true);
         } else {
           await _trackIncomingCall(call.id);
         }
@@ -705,6 +705,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _accept(
     String requestedCallId, {
     bool? video,
+    bool recovered = false,
   }) async {
     final normalizedCallId = requestedCallId.toLowerCase();
     if (_acceptingCallIds.contains(normalizedCallId)) {
@@ -733,7 +734,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     _GatewayCallContext? context = existing;
     try {
-      final call = await gateway.getCall(requestedCallId);
+      final call = await _loadGatewayCallForAccept(
+        requestedCallId,
+        retryNotFound: recovered,
+      );
       context ??= _GatewayCallContext(call.id)..startedAt = DateTime.now();
       if (!_gatewayCalls.containsKey(context.id)) {
         _configureGatewayCall(context);
@@ -806,6 +810,51 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       _acceptingCallIds.remove(normalizedCallId);
     }
+  }
+
+  Future<GatewayCall> _loadGatewayCallForAccept(
+    String callId, {
+    required bool retryNotFound,
+  }) async {
+    const retryDelays = <Duration>[
+      Duration.zero,
+      Duration(milliseconds: 150),
+      Duration(milliseconds: 350),
+      Duration(milliseconds: 700),
+      Duration(milliseconds: 1200),
+    ];
+
+    Object? lastError;
+    for (var attempt = 0; attempt < retryDelays.length; attempt++) {
+      final delay = retryDelays[attempt];
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+
+      try {
+        final call = await gateway.getCall(callId);
+        if (attempt > 0) {
+          _appendDiagnostic(
+            'Recovered gateway call after cold-start retry · '
+            'attempt=${attempt + 1}',
+          );
+        }
+        return call;
+      } catch (error) {
+        lastError = error;
+        final notFound = error is HttpException &&
+            error.message.contains(' failed (404):');
+        if (!retryNotFound || !notFound || attempt == retryDelays.length - 1) {
+          rethrow;
+        }
+        _appendDiagnostic(
+          'Cold-start gateway call not ready · '
+          'retry=${attempt + 1}/${retryDelays.length - 1}',
+        );
+      }
+    }
+
+    throw lastError ?? StateError('Gateway call recovery failed');
   }
 
   Future<void> _listenToGateway(_GatewayCallContext context) async {
