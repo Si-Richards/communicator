@@ -623,35 +623,23 @@ class MobileSessionManager:
                 'reason_header_cause': result.get('reason_header_cause'),
             })
 
-            # If an unanswered fork disappears because another endpoint answered
-            # (or the caller cancelled), dismiss native CallKit even when Dart is
-            # suspended and therefore has no websocket subscriber.
+            # A VoIP PushKit notification is reserved for reporting a new
+            # incoming call. Do not send a second VoIP push merely to dismiss
+            # CallKit when an unanswered fork disappears. The hangup event above
+            # is delivered over the existing websocket whenever the handset is
+            # awake; otherwise CallKit will reconcile/timeout naturally.
             if (
                 call.direction == 'incoming'
                 and not call.connected
                 and not call.local_ending
             ):
                 logger.info(
-                    '[VH-DIAG] event=remote_ringing_end call=%s code=%s cause=%s',
+                    '[VH-DIAG] event=remote_ringing_end call=%s code=%s cause=%s '
+                    'delivery=websocket_only',
                     _safe_ref(call.id),
                     result.get('code'),
                     result.get('reason_header_cause'),
                 )
-                try:
-                    await self.apns.send_voip(device.push_token, {
-                        'aps': {'content-available': 1},
-                        'action': 'end',
-                        'id': call.id,
-                        'extra': {
-                            'call_id': call.id,
-                            'reason': 'remote_ringing_end',
-                        },
-                    })
-                except Exception:
-                    logger.exception(
-                        '[VH-DIAG] event=callkit_end_push_failed call=%s',
-                        _safe_ref(call.id),
-                    )
 
             self._release_call_session(call)
             transfer = self._current_transfer(device.device_id)
