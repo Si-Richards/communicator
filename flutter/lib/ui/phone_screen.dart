@@ -1003,6 +1003,39 @@ class _InlineInCallKeypad extends StatelessWidget {
               'Keypad',
               style: Theme.of(context).textTheme.titleLarge,
             ),
+            const SizedBox(width: 10),
+            Tooltip(
+              message: 'WebRTC media between this device and Janus is encrypted',
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.lock,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Encrypted',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onPrimaryContainer,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             const Spacer(),
             TextButton.icon(
               onPressed: onBackToCall,
