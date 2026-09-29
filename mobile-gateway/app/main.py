@@ -1,3 +1,4 @@
+import time
 import asyncio
 import hashlib
 import html
@@ -623,10 +624,24 @@ async def start_call(device_id: str, body: OutboundCallRequest):
 
 @app.get('/v1/calls/{call_id}', dependencies=[Depends(auth)])
 async def get_call(call_id: str):
+    diag_logger.info(
+        '[VH-DIAG] event=call_lookup_received call=%s',
+        _safe_ref(call_id),
+    )
     try:
         call = manager.get_call(call_id)
     except KeyError:
+        diag_logger.warning(
+            '[VH-DIAG] event=call_lookup_not_found call=%s',
+            _safe_ref(call_id),
+        )
         raise HTTPException(404, 'call not found')
+    diag_logger.info(
+        '[VH-DIAG] event=call_lookup_found call=%s direction=%s connected=%s',
+        _safe_ref(call_id),
+        call.direction,
+        call.connected,
+    )
     return {
         'id': call.id,
         'caller': call.caller,
@@ -640,12 +655,34 @@ async def get_call(call_id: str):
 
 @app.post('/v1/calls/{call_id}/answer', dependencies=[Depends(auth)])
 async def answer(call_id: str, body: AnswerRequest):
+    started = time.perf_counter()
+    diag_logger.info(
+        '[VH-DIAG] event=answer_http_received call=%s sdp_length=%s',
+        _safe_ref(call_id),
+        len(body.sdp),
+    )
     try:
         await manager.answer(call_id, body.sdp)
     except KeyError:
+        diag_logger.warning(
+            '[VH-DIAG] event=answer_http_not_found call=%s elapsed_ms=%s',
+            _safe_ref(call_id),
+            int((time.perf_counter() - started) * 1000),
+        )
         raise HTTPException(404, 'call not found')
     except RuntimeError as error:
+        diag_logger.warning(
+            '[VH-DIAG] event=answer_http_conflict call=%s elapsed_ms=%s reason=%s',
+            _safe_ref(call_id),
+            int((time.perf_counter() - started) * 1000),
+            str(error),
+        )
         raise HTTPException(409, str(error))
+    diag_logger.info(
+        '[VH-DIAG] event=answer_http_complete call=%s elapsed_ms=%s',
+        _safe_ref(call_id),
+        int((time.perf_counter() - started) * 1000),
+    )
     return {'ok': True}
 
 
