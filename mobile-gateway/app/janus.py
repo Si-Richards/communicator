@@ -81,13 +81,41 @@ class JanusSipSession:
         return self.master_id
 
     async def call(self, uri: str, sdp: str):
+        body = {
+            'request': 'call',
+            'uri': uri,
+            'srtp': settings.sip_srtp,
+        }
+        if settings.sip_srtp_profile:
+            body['srtp_profile'] = settings.sip_srtp_profile
+        logger.info(
+            '[VH-DIAG] event=sip_call_security transport=%s media=%s profile=%s',
+            'tls' if settings.sip_tls else 'default',
+            settings.sip_srtp,
+            settings.sip_srtp_profile or 'default',
+        )
         await self._message(
-            {'request': 'call', 'uri': uri},
+            body,
             {'type': 'offer', 'sdp': sdp, 'trickle': True},
         )
 
     async def accept(self, sdp: str):
-        await self._message({'request': 'accept'}, {'type': 'answer', 'sdp': sdp, 'trickle': True})
+        body = {
+            'request': 'accept',
+            'srtp': settings.sip_srtp,
+        }
+        if settings.sip_srtp_profile:
+            body['srtp_profile'] = settings.sip_srtp_profile
+        logger.info(
+            '[VH-DIAG] event=sip_accept_security transport=%s media=%s profile=%s',
+            'tls' if settings.sip_tls else 'default',
+            settings.sip_srtp,
+            settings.sip_srtp_profile or 'default',
+        )
+        await self._message(
+            body,
+            {'type': 'answer', 'sdp': sdp, 'trickle': True},
+        )
 
     async def update(self, sdp: str, jsep_type: str):
         if jsep_type not in {'offer', 'answer'}:
@@ -136,24 +164,48 @@ class JanusSipSession:
             'handle_id': self.handle_id, 'candidate': candidate,
         })
 
+    @staticmethod
+    def _sip_uri(username: str, realm: str) -> str:
+        scheme = 'sips' if settings.sip_tls else 'sip'
+        return f'{scheme}:{username}@{realm}'
+
+    @staticmethod
+    def _sip_proxy(proxy: str) -> str:
+        value = proxy.strip()
+        if settings.sip_tls and value.lower().startswith('sip:'):
+            return 'sips:' + value[4:]
+        return value
+
     def _register_body(self):
+        username = self._sip_uri(
+            self.device.sip_username,
+            self.device.sip_realm,
+        )
         if self.helper_master_id is not None:
             return {
                 'request': 'register',
                 'type': 'helper',
-                'username': f'sip:{self.device.sip_username}@{self.device.sip_realm}',
+                'username': username,
                 'master_id': self.helper_master_id,
             }
 
         body = {
             'request': 'register',
-            'username': f'sip:{self.device.sip_username}@{self.device.sip_realm}',
+            'username': username,
             'authuser': self.device.sip_username,
             'secret': self.device.sip_password,
             'display_name': self.device.nickname or self.device.sip_username,
+            'sips': settings.sip_tls,
         }
         if self.device.sip_proxy:
-            body['proxy'] = self.device.sip_proxy
+            body['proxy'] = self._sip_proxy(self.device.sip_proxy)
+
+        logger.info(
+            '[VH-DIAG] event=sip_register_security transport=%s media=%s proxy=%s',
+            'tls' if settings.sip_tls else 'default',
+            settings.sip_srtp,
+            'configured' if self.device.sip_proxy else 'realm',
+        )
         return body
 
     async def _message(self, body: dict, jsep: dict | None = None):
