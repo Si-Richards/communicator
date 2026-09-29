@@ -166,8 +166,10 @@ class JanusSipSession:
 
     @staticmethod
     def _sip_uri(username: str, realm: str) -> str:
-        scheme = 'sips' if settings.sip_tls else 'sip'
-        return f'{scheme}:{username}@{realm}'
+        # Janus expects the account identity as a normal SIP URI. Secure SIP
+        # registration is enabled separately with the register request's
+        # "sips" flag.
+        return f'sip:{username}@{realm}'
 
     @staticmethod
     def _sip_proxy(proxy: str) -> str:
