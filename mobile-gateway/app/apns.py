@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import time
 
@@ -96,20 +97,24 @@ class APNSClient:
             if response.status_code == 200:
                 self._token_environment[token] = sandbox
                 environment = self._environment_name(sandbox)
+                token_fp = hashlib.sha256(token.encode('utf-8')).hexdigest()[:12]
                 logger.info(
-                    '[VH-DIAG] event=apns_sent environment=%s',
+                    '[VH-DIAG] event=apns_sent environment=%s token_fp=%s',
                     environment,
+                    token_fp,
                 )
                 return environment
 
             last_status = response.status_code
             last_reason = self._failure_reason(response)
             environment = self._environment_name(sandbox)
+            token_fp = hashlib.sha256(token.encode('utf-8')).hexdigest()[:12]
             logger.warning(
-                '[VH-DIAG] event=apns_failed environment=%s status=%s reason=%s',
+                '[VH-DIAG] event=apns_failed environment=%s status=%s reason=%s token_fp=%s',
                 environment,
                 last_status,
                 last_reason,
+                token_fp,
             )
 
             # A development token sent to production (or vice versa) is
