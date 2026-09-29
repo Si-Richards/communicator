@@ -192,6 +192,28 @@ class WebRtcService {
     return offer.sdp!;
   }
 
+  Future<String> currentLocalDescriptionSdp({
+    List<Map<String, dynamic>> candidates = const [],
+  }) async {
+    final pc = _requirePeerConnection();
+    final description = await pc.getLocalDescription();
+    final baseSdp = description?.sdp;
+    if (baseSdp == null || baseSdp.isEmpty) {
+      throw StateError('WebRTC local description contained no SDP');
+    }
+
+    var sdp = baseSdp;
+    for (final candidate in candidates) {
+      if (candidate['completed'] == true) continue;
+      final value = candidate['candidate']?.toString();
+      if (value == null || value.isEmpty || sdp.contains(value)) continue;
+
+      final mid = candidate['sdpMid']?.toString();
+      sdp = _appendCandidateToMediaSection(sdp, value, mid);
+    }
+    return sdp;
+  }
+
   Future<String> createAnswer(String remoteOfferSdp) async {
     final pc = _requirePeerConnection();
     onLog?.call('Remote SDP offer: ${summarizeSdp(remoteOfferSdp)}');
@@ -515,6 +537,38 @@ class WebRtcService {
     final pc = _peerConnection;
     if (pc == null) throw StateError('WebRTC peer connection is unavailable');
     return pc;
+  }
+
+  static String _appendCandidateToMediaSection(
+    String sdp,
+    String candidate,
+    String? mid,
+  ) {
+    final newline = sdp.contains('\r\n') ? '\r\n' : '\n';
+    final candidateLine = candidate.startsWith('a=')
+        ? candidate
+        : 'a=$candidate';
+    final lines = sdp.split(RegExp(r'\r?\n'));
+
+    var insertAt = lines.length;
+    if (mid != null && mid.isNotEmpty) {
+      final midIndex = lines.indexWhere((line) => line == 'a=mid:$mid');
+      if (midIndex >= 0) {
+        insertAt = lines.length;
+        for (var i = midIndex + 1; i < lines.length; i++) {
+          if (lines[i].startsWith('m=')) {
+            insertAt = i;
+            break;
+          }
+        }
+      }
+    }
+
+    if (insertAt == lines.length && lines.isNotEmpty && lines.last.isEmpty) {
+      insertAt = lines.length - 1;
+    }
+    lines.insert(insertAt, candidateLine);
+    return lines.join(newline);
   }
 
   static bool hasVideoInSdp(String sdp) {
