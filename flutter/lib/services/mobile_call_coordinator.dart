@@ -707,6 +707,16 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     bool? video,
     bool recovered = false,
   }) async {
+    final acceptStopwatch = Stopwatch()..start();
+    void acceptTrace(String stage) {
+      _appendDiagnostic(
+        'INCOMING_ACCEPT +${acceptStopwatch.elapsedMilliseconds}ms '
+        '$stage · call=${requestedCallId.toLowerCase()} · '
+        'recovered=$recovered',
+      );
+    }
+
+    acceptTrace('begin');
     final normalizedCallId = requestedCallId.toLowerCase();
     if (_acceptingCallIds.contains(normalizedCallId)) {
       _appendDiagnostic(
@@ -722,7 +732,9 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     _acceptingCallIds.add(normalizedCallId);
     try {
+      acceptTrace('direct_registration_disconnect_start');
       await phone.disconnectDirectRegistrationIfIdle();
+      acceptTrace('direct_registration_disconnect_done');
 
     final previous = _activeGatewayCall;
     if (previous != null &&
@@ -734,10 +746,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     _GatewayCallContext? context = existing;
     try {
+      acceptTrace('gateway_lookup_start');
       final call = await _loadGatewayCallForAccept(
         requestedCallId,
         retryNotFound: recovered,
       );
+      acceptTrace('gateway_lookup_done');
       context ??= _GatewayCallContext(call.id)..startedAt = DateTime.now();
       if (!_gatewayCalls.containsKey(context.id)) {
         _configureGatewayCall(context);
@@ -771,9 +785,12 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       }
 
       if (context.socket == null) {
+        acceptTrace('gateway_socket_start');
         await _listenToGateway(context);
+        acceptTrace('gateway_socket_done');
       }
       final useVideo = video ?? context.incomingVideoOffered;
+      acceptTrace('webrtc_prepare_start');
       try {
         await context.webRtc.preparePeerConnection(
           preservePendingRemoteCandidates: true,
@@ -789,15 +806,22 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           video: false,
         );
       }
+      acceptTrace('webrtc_prepare_done');
+      acceptTrace('answer_create_start');
       final answer = await context.webRtc.createAnswer(call.offerSdp);
+      acceptTrace('answer_create_done');
+      acceptTrace('gateway_answer_start');
       await gateway.answer(context.id, answer);
+      acceptTrace('gateway_answer_done');
       await _diag(
         'answer_sent',
         callId: context.id,
         details: {'sdp_length': answer.length},
       );
       _appendDiagnostic('Gateway call answer sent');
+      acceptTrace('complete');
     } catch (error) {
+      acceptTrace('failed');
       _appendDiagnostic('Gateway call answer failed: $error');
       final id = context?.id ?? requestedCallId;
       try {
