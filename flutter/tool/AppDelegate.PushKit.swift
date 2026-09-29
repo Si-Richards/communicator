@@ -1,6 +1,7 @@
 import AVFAudio
 import CallKit
 import Contacts
+import CryptoKit
 import Flutter
 import PushKit
 import UIKit
@@ -169,7 +170,9 @@ import flutter_callkit_incoming
     ) {
         guard type == .voIP else { return }
         let token = credentials.token.map { String(format: "%02x", $0) }.joined()
-        recordNativeLog("PushKit token updated (\(credentials.token.count) bytes)")
+        recordNativeLog(
+            "PushKit token updated (\(credentials.token.count) bytes) · fp=\(tokenFingerprint(token))"
+        )
         SwiftFlutterCallkitIncomingPlugin.sharedInstance?.setDevicePushTokenVoIP(token)
     }
 
@@ -290,6 +293,11 @@ import flutter_callkit_incoming
         recordNativeLog("CallKit provider reset")
     }
 
+
+    private func tokenFingerprint(_ token: String) -> String {
+        let digest = SHA256.hash(data: Data(token.utf8))
+        return digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
 
     private func buildInfo() -> [String: String] {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -709,6 +717,9 @@ import flutter_callkit_incoming
         }
 
         stopRingback()
+        recordNativeLog(
+            "PushKit callback entered · appState=\(UIApplication.shared.applicationState.rawValue)"
+        )
         let body = payload.dictionaryPayload
         let id = body["id"] as? String ?? UUID().uuidString
 
@@ -770,10 +781,18 @@ import flutter_callkit_incoming
             recordNativeLog("CallKit audio session preconfiguration failed")
         }
 
-        SwiftFlutterCallkitIncomingPlugin.sharedInstance?.showCallkitIncoming(
+        guard let plugin = SwiftFlutterCallkitIncomingPlugin.sharedInstance else {
+            recordNativeLog("CallKit plugin unavailable during PushKit callback")
+            completion()
+            return
+        }
+
+        recordNativeLog("CallKit presentation requested")
+        plugin.showCallkitIncoming(
             data,
             fromPushKit: true
         ) {
+            self.recordNativeLog("CallKit presentation completion")
             completion()
         }
     }
