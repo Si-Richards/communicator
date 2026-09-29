@@ -348,6 +348,12 @@ class MobileSessionManager:
         event = result.get('event')
         plugin_error = data.get('error')
         if plugin_error:
+            logger.error(
+                '[VH-DIAG] event=janus_sip_plugin_error device=%s code=%s error=%s',
+                _safe_ref(device.device_id),
+                data.get('error_code'),
+                plugin_error,
+            )
             call = self._call_for_session(session)
             if call and call.transfer_mode:
                 logger.warning(
