@@ -1076,9 +1076,20 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     final webRtc = WebRtcService();
     final pendingCandidates = <Map<String, dynamic>>[];
+    final firstCandidate = Completer<void>();
+    final preferredCandidate = Completer<void>();
     webRtc.onLog =
         (message) => debugPrint('[VoiceHost Mobile] outbound media: $message');
-    webRtc.onLocalCandidate = pendingCandidates.add;
+    webRtc.onLocalCandidate = (candidate) {
+      pendingCandidates.add(candidate);
+      if (!firstCandidate.isCompleted) {
+        firstCandidate.complete();
+      }
+      final value = candidate['candidate']?.toString() ?? '';
+      if (value.contains(' typ srflx ') && !preferredCandidate.isCompleted) {
+        preferredCandidate.complete();
+      }
+    };
     webRtc.onIceGatheringComplete = () {
       pendingCandidates.add({'completed': true});
     };
@@ -1132,16 +1143,37 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       trace('offer_create_started');
       final offer = await webRtc.createOffer();
       trace('offer_created');
+
+      trace('ice_candidate_wait_started');
+      await _waitForInitialOutboundCandidate(
+        firstCandidate,
+        preferredCandidate,
+      );
+      trace('ice_candidate_wait_completed');
+
+      final embeddedCandidates = pendingCandidates
+          .where((candidate) => candidate['completed'] != true)
+          .map((candidate) => Map<String, dynamic>.from(candidate))
+          .toList(growable: false);
+      final embeddedCandidateValues = embeddedCandidates
+          .map((candidate) => candidate['candidate']?.toString() ?? '')
+          .where((value) => value.isNotEmpty)
+          .toSet();
+
+      final offerWithIce = await webRtc.currentLocalDescriptionSdp(
+        candidates: embeddedCandidates,
+      );
       _appendDiagnostic(
         'Outgoing media requested · video=$video · '
-        '${WebRtcService.summarizeSdp(offer)}',
+        '${WebRtcService.summarizeSdp(offerWithIce)} · '
+        'embedded_ice=${embeddedCandidateValues.length}',
       );
 
       trace('randy_start_requested');
       final returnedCallId = await gateway.startCall(
         deviceId: deviceId,
         target: target,
-        offerSdp: offer,
+        offerSdp: offerWithIce,
         callId: callId,
       );
       trace('randy_start_completed');
@@ -1176,8 +1208,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _listenToGateway(context);
       trace('gateway_events_connected');
 
-      final initialCandidates =
-          List<Map<String, dynamic>>.from(pendingCandidates);
+      final initialCandidates = pendingCandidates
+          .where((candidate) {
+            if (candidate['completed'] == true) return true;
+            final value = candidate['candidate']?.toString() ?? '';
+            return value.isEmpty || !embeddedCandidateValues.contains(value);
+          })
+          .map((candidate) => Map<String, dynamic>.from(candidate))
+          .toList(growable: false);
       pendingCandidates.clear();
 
       trace('outbound_ready');
@@ -1222,6 +1260,37 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       if (previous != null && previous.held) {
         await _setGatewayHold(previous.id, false);
       }
+    }
+  }
+
+  Future<void> _waitForInitialOutboundCandidate(
+    Completer<void> firstCandidate,
+    Completer<void> preferredCandidate,
+  ) async {
+    try {
+      await preferredCandidate.future.timeout(
+        const Duration(milliseconds: 700),
+      );
+      _appendDiagnostic('Initial ICE candidate ready · preferred=srflx');
+      return;
+    } on TimeoutException {
+      // Fall back to any gathered candidate, but keep the total wait bounded.
+    }
+
+    if (firstCandidate.isCompleted) {
+      _appendDiagnostic('Initial ICE candidate ready · preferred=host');
+      return;
+    }
+
+    try {
+      await firstCandidate.future.timeout(
+        const Duration(milliseconds: 300),
+      );
+      _appendDiagnostic('Initial ICE candidate ready · preferred=host');
+    } on TimeoutException {
+      _appendDiagnostic(
+        'Initial ICE candidate wait timed out · starting with current SDP',
+      );
     }
   }
 
