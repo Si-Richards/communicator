@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     janus_url: str = 'wss://devrtc.voicehost.io:443'
     janus_api_secret: str = ''
     janus_helper_count: int = 1
+
+    # SIP-side security between Janus and the VoiceHost SIP platform.
+    # WebRTC handset <-> Janus remains DTLS-SRTP independently.
+    sip_tls: bool = True
+    sip_srtp: str = 'sdes_mandatory'
+    sip_srtp_profile: str = ''
     apns_team_id: str = ''
     apns_key_id: str = ''
     apns_bundle_id: str = ''
