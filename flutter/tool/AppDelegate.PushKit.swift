@@ -723,9 +723,9 @@ import flutter_callkit_incoming
         let body = payload.dictionaryPayload
         let id = body["id"] as? String ?? UUID().uuidString
 
-        // Randy sends this when the SIP INVITE disappears before we answer,
-        // e.g. the call was answered on another registered endpoint. Handle it
-        // natively because Flutter may still be suspended while CallKit rings.
+        // Legacy compatibility only. Current Randy versions no longer send
+        // a second VoIP PushKit notification to dismiss an existing CallKit call;
+        // remote hangup is delivered over the live gateway websocket instead.
         if body["action"] as? String == "end" {
             recordNativeLog("PushKit received remote ringing-end")
             endCallKitCall(id: id, completion: completion)
