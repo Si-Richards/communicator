@@ -1,6 +1,6 @@
 class AppConfig {
   static const appVersion = '0.3.0';
-  static const appBuild = 23;
+  static const appBuild = 25;
   static const defaultJanusUrl = 'wss://devrtc.voicehost.io:443';
   static const defaultSipRealm = 'hpbx.sipconvergence.co.uk';
   static const janusSipPlugin = 'janus.plugin.sip';
