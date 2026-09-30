@@ -64,6 +64,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool _provisioning = false;
   bool _gatewayProvisioned = false;
   bool _administrativelyLocked = false;
+  bool _provisioningAccessEnabled = false;
   bool _recoveringCallKitState = false;
   String? _transferId;
   String? _transferTarget;
@@ -165,6 +166,34 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get administrativelyLocked => _administrativelyLocked;
+  bool get provisioningAccessEnabled => _provisioningAccessEnabled;
+
+  Future<void> setProvisioningAccess(bool enabled) async {
+    if (_provisioningAccessEnabled == enabled) return;
+    _provisioningAccessEnabled = enabled;
+    _lastProvisionSignature = null;
+
+    if (!enabled) {
+      _gatewayProvisioned = false;
+      _provisionRetryTimer?.cancel();
+      _provisionRetryTimer = null;
+      final ids = _gatewayCalls.keys.toList(growable: false);
+      for (final id in ids) {
+        try {
+          await _end(id);
+        } catch (_) {}
+        try {
+          await FlutterCallkitIncoming.endCall(id);
+        } catch (_) {}
+      }
+      await phone.disconnectDirectRegistrationIfIdle();
+      _appendDiagnostic('Provisioning access disabled');
+    } else {
+      _appendDiagnostic('Provisioning access enabled');
+      _phoneChanged();
+    }
+    notifyListeners();
+  }
 
   Future<void> setAdministrativeLocked(bool locked) async {
     if (_administrativelyLocked == locked) return;
@@ -336,7 +365,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _phoneChanged() {
-    if (!gateway.enabled) return;
+    if (!gateway.enabled || !_provisioningAccessEnabled) return;
     final token = _pushToken ?? '';
     final signature = [
       token,
@@ -354,7 +383,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _provision() async {
-    if (_provisioning) return;
+    if (_provisioning || !_provisioningAccessEnabled) return;
     final token = _pushToken;
     final deviceId = _deviceId;
     if (token == null || token.isEmpty || deviceId == null) return;
@@ -1202,6 +1231,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     bool video = false,
     List<_PbxDtmfStep> postConnectDtmf = const [],
   }) async {
+    if (!_provisioningAccessEnabled) {
+      _appendDiagnostic('Outgoing call blocked until device is provisioned');
+      return;
+    }
     if (_administrativelyLocked) {
       _appendDiagnostic('Outgoing call blocked by administrative lock');
       return;
