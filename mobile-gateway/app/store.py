@@ -75,6 +75,13 @@ class DeviceStore:
                     janus_session_id INTEGER,
                     janus_handle_id INTEGER,
                     sip_call_id TEXT,
+                    sip_realm TEXT,
+                    sip_transport TEXT,
+                    sip_media_encryption TEXT,
+                    sip_srv_candidates TEXT,
+                    sip_selected_host TEXT,
+                    sip_selected_ip TEXT,
+                    sip_selected_port INTEGER,
                     janus_candidate_type TEXT,
                     janus_media_ip TEXT,
                     janus_media_port INTEGER,
@@ -92,6 +99,32 @@ class DeviceStore:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            call_columns = {
+                row['name']
+                for row in db.execute(
+                    'PRAGMA table_info(call_diagnostics)'
+                ).fetchall()
+            }
+            call_migrations = {
+                'sip_realm':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_realm TEXT',
+                'sip_transport':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_transport TEXT',
+                'sip_media_encryption':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_media_encryption TEXT',
+                'sip_srv_candidates':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_srv_candidates TEXT',
+                'sip_selected_host':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_selected_host TEXT',
+                'sip_selected_ip':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_selected_ip TEXT',
+                'sip_selected_port':
+                    'ALTER TABLE call_diagnostics ADD COLUMN sip_selected_port INTEGER',
+            }
+            for name, statement in call_migrations.items():
+                if name not in call_columns:
+                    db.execute(statement)
+
             db.execute('''
                 CREATE TABLE IF NOT EXISTS call_diagnostic_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -255,26 +288,42 @@ class DeviceStore:
         janus_session_id: int | None = None,
         janus_handle_id: int | None = None,
         sip_call_id: str | None = None,
+        sip_realm: str | None = None,
+        sip_transport: str | None = None,
+        sip_media_encryption: str | None = None,
+        sip_srv_candidates: str | None = None,
     ):
         with self.lock, self._connect() as db:
             db.execute(
                 '''
                 INSERT INTO call_diagnostics(
                     call_id, device_id, direction, janus_peer_ip, janus_peer_port,
-                    janus_session_id, janus_handle_id, sip_call_id
+                    janus_session_id, janus_handle_id, sip_call_id,
+                    sip_realm, sip_transport, sip_media_encryption,
+                    sip_srv_candidates
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(call_id) DO UPDATE SET
                     janus_peer_ip=COALESCE(excluded.janus_peer_ip, janus_peer_ip),
                     janus_peer_port=COALESCE(excluded.janus_peer_port, janus_peer_port),
                     janus_session_id=COALESCE(excluded.janus_session_id, janus_session_id),
                     janus_handle_id=COALESCE(excluded.janus_handle_id, janus_handle_id),
                     sip_call_id=COALESCE(excluded.sip_call_id, sip_call_id),
+                    sip_realm=COALESCE(excluded.sip_realm, sip_realm),
+                    sip_transport=COALESCE(excluded.sip_transport, sip_transport),
+                    sip_media_encryption=COALESCE(
+                        excluded.sip_media_encryption, sip_media_encryption
+                    ),
+                    sip_srv_candidates=COALESCE(
+                        excluded.sip_srv_candidates, sip_srv_candidates
+                    ),
                     updated_at=CURRENT_TIMESTAMP
                 ''',
                 (
                     call_id, device_id, direction, janus_peer_ip, janus_peer_port,
                     janus_session_id, janus_handle_id, sip_call_id,
+                    sip_realm, sip_transport, sip_media_encryption,
+                    sip_srv_candidates,
                 ),
             )
             db.commit()
@@ -284,6 +333,10 @@ class DeviceStore:
             'janus_peer_port': janus_peer_port or 0,
             'janus_session_id': janus_session_id or 0,
             'janus_handle_id': janus_handle_id or 0,
+            'sip_realm': sip_realm or '',
+            'sip_transport': sip_transport or '',
+            'sip_media_encryption': sip_media_encryption or '',
+            'sip_srv_candidates': sip_srv_candidates or '',
         })
 
     def update_call(self, call_id: str, **fields):
@@ -293,6 +346,9 @@ class DeviceStore:
             'janus_media_ip', 'janus_media_port', 'ice_state', 'peer_state',
             'local_candidates', 'remote_candidates', 'local_audio_tracks',
             'remote_audio_tracks', 'call_status', 'media_status',
+            'sip_realm', 'sip_transport', 'sip_media_encryption',
+            'sip_srv_candidates', 'sip_selected_host', 'sip_selected_ip',
+            'sip_selected_port',
         }
         values = {key: value for key, value in fields.items() if key in allowed}
         if not values:
