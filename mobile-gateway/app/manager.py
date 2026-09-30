@@ -549,6 +549,14 @@ class MobileSessionManager:
             self.store.update_call(call.id, sip_call_id=call.sip_call_id)
 
         if event == 'transferring':
+            logger.info(
+                '[VH-DIAG] event=janus_transferring call=%s mode=%s',
+                _safe_ref(call.id),
+                call.transfer_mode or 'unknown',
+            )
+            self.store.add_call_event(call.id, 'janus_transferring', {
+                'mode': call.transfer_mode or 'unknown',
+            })
             await call.publish({'type': 'transfer', 'state': 'transferring'})
             transfer = self._current_transfer(device.device_id)
             if transfer:
@@ -839,9 +847,13 @@ class MobileSessionManager:
         call.transfer_mode = 'blind'
         call.transfer_target = target
         logger.info(
-            '[VH-DIAG] event=blind_transfer_requested call=%s',
+            '[VH-DIAG] event=blind_transfer_requested call=%s target=%s',
             _safe_ref(call_id),
+            uri,
         )
+        self.store.add_call_event(call.id, 'blind_transfer_requested', {
+            'target': uri,
+        })
         await session.transfer(uri)
         asyncio.create_task(self._transfer_watchdog(call.id, 'blind'))
 
