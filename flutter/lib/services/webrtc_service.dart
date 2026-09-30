@@ -176,7 +176,7 @@ class WebRtcService {
     }
     onLocalVideoChanged?.call(_videoEnabled);
 
-    await Helper.setSpeakerphoneOn(false);
+    await _setSpeakerphoneIfSupported(false);
     _remoteDescriptionSet = false;
   }
 
@@ -459,7 +459,20 @@ class WebRtcService {
     }
   }
 
-  Future<void> setSpeakerphone(bool enabled) => Helper.setSpeakerphoneOn(enabled);
+  Future<void> setSpeakerphone(bool enabled) =>
+      _setSpeakerphoneIfSupported(enabled);
+
+  Future<void> _setSpeakerphoneIfSupported(bool enabled) async {
+    if (defaultTargetPlatform != TargetPlatform.android &&
+        defaultTargetPlatform != TargetPlatform.iOS) {
+      onLog?.call(
+        'Speakerphone routing is not supported on '
+        '${defaultTargetPlatform.name}; leaving the desktop audio route unchanged',
+      );
+      return;
+    }
+    await Helper.setSpeakerphoneOn(enabled);
+  }
 
   Future<void> close() async {
     final pc = _peerConnection;
