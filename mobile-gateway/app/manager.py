@@ -1231,7 +1231,6 @@ class MobileSessionManager:
             raise RuntimeError('Call is not connected')
         await self._session_for_call(call_id).dtmf(digit, duration)
         logger.info(
-            '[VH-DIAG] event=dtmf_sent call=%s digit=%s',
+            '[VH-DIAG] event=dtmf_sent call=%s',
             _safe_ref(call_id),
-            digit,
         )
