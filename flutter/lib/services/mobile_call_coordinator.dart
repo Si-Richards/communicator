@@ -709,11 +709,21 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     final acceptStopwatch = Stopwatch()..start();
     void acceptTrace(String stage) {
+      final elapsedMs = acceptStopwatch.elapsedMilliseconds;
       _appendDiagnostic(
-        'INCOMING_ACCEPT +${acceptStopwatch.elapsedMilliseconds}ms '
+        'INCOMING_ACCEPT +${elapsedMs}ms '
         '$stage · call=${requestedCallId.toLowerCase()} · '
         'recovered=$recovered',
       );
+      unawaited(_diag(
+        'incoming_accept_setup',
+        callId: requestedCallId,
+        details: {
+          'stage': stage,
+          'elapsed_ms': elapsedMs,
+          'recovered': recovered,
+        },
+      ));
     }
 
     acceptTrace('begin');
@@ -1142,9 +1152,16 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     final callId = _newCallId();
     final stopwatch = Stopwatch()..start();
     void trace(String stage) {
-      _appendDiagnostic(
-        'OUTBOUND +${stopwatch.elapsedMilliseconds}ms $stage',
-      );
+      final elapsedMs = stopwatch.elapsedMilliseconds;
+      _appendDiagnostic('OUTBOUND +${elapsedMs}ms $stage');
+      unawaited(_diag(
+        'outbound_setup',
+        callId: callId,
+        details: {
+          'stage': stage,
+          'elapsed_ms': elapsedMs,
+        },
+      ));
     }
 
     final webRtc = WebRtcService();
