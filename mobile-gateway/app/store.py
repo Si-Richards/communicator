@@ -91,6 +91,12 @@ class DeviceStore:
                     remote_candidates INTEGER,
                     local_audio_tracks INTEGER,
                     remote_audio_tracks INTEGER,
+                    rtt_ms INTEGER,
+                    jitter_ms INTEGER,
+                    audio_packets_lost INTEGER,
+                    video_packets_lost INTEGER,
+                    video_send_kbps INTEGER,
+                    video_receive_kbps INTEGER,
                     call_status TEXT NOT NULL DEFAULT 'starting',
                     media_status TEXT NOT NULL DEFAULT 'unknown',
                     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -120,6 +126,18 @@ class DeviceStore:
                     'ALTER TABLE call_diagnostics ADD COLUMN sip_selected_ip TEXT',
                 'sip_selected_port':
                     'ALTER TABLE call_diagnostics ADD COLUMN sip_selected_port INTEGER',
+                'rtt_ms':
+                    'ALTER TABLE call_diagnostics ADD COLUMN rtt_ms INTEGER',
+                'jitter_ms':
+                    'ALTER TABLE call_diagnostics ADD COLUMN jitter_ms INTEGER',
+                'audio_packets_lost':
+                    'ALTER TABLE call_diagnostics ADD COLUMN audio_packets_lost INTEGER',
+                'video_packets_lost':
+                    'ALTER TABLE call_diagnostics ADD COLUMN video_packets_lost INTEGER',
+                'video_send_kbps':
+                    'ALTER TABLE call_diagnostics ADD COLUMN video_send_kbps INTEGER',
+                'video_receive_kbps':
+                    'ALTER TABLE call_diagnostics ADD COLUMN video_receive_kbps INTEGER',
             }
             for name, statement in call_migrations.items():
                 if name not in call_columns:
@@ -348,7 +366,9 @@ class DeviceStore:
             'remote_audio_tracks', 'call_status', 'media_status',
             'sip_realm', 'sip_transport', 'sip_media_encryption',
             'sip_srv_candidates', 'sip_selected_host', 'sip_selected_ip',
-            'sip_selected_port',
+            'sip_selected_port', 'rtt_ms', 'jitter_ms',
+            'audio_packets_lost', 'video_packets_lost',
+            'video_send_kbps', 'video_receive_kbps',
         }
         values = {key: value for key, value in fields.items() if key in allowed}
         if not values:
@@ -412,6 +432,9 @@ class DeviceStore:
             for key in (
                 'ice_state', 'peer_state', 'local_candidates', 'remote_candidates',
                 'local_audio_tracks', 'remote_audio_tracks',
+                'rtt_ms', 'jitter_ms', 'audio_packets_lost',
+                'video_packets_lost', 'video_send_kbps',
+                'video_receive_kbps',
             ):
                 if key in safe_details:
                     updates[key] = safe_details[key]
