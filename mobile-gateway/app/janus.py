@@ -5,6 +5,8 @@ import secrets
 from collections.abc import Awaitable, Callable
 
 import websockets
+import dns.asyncresolver
+import dns.exception
 
 from .config import settings
 from .models import DeviceRecord
@@ -37,6 +39,7 @@ class JanusSipSession:
         self._keepalive_task = None
         self.master_id: int | None = helper_master_id
         self._registered = asyncio.Event()
+        self.sip_srv_records: list[dict[str, str | int]] = []
 
     async def start(self):
         self.ws = await websockets.connect(
@@ -65,8 +68,79 @@ class JanusSipSession:
             'janus': 'attach', 'session_id': self.session_id, 'plugin': 'janus.plugin.sip'
         })
         self.handle_id = int(attached['data']['id'])
+        if self.helper_master_id is None:
+            await self._log_sip_srv_resolution()
         await self._message(self._register_body())
         self._keepalive_task = asyncio.create_task(self._keepalive())
+
+    async def _log_sip_srv_resolution(self):
+        if self.device.sip_proxy:
+            logger.info(
+                '[VH-DIAG] event=sip_route_configured realm=%s proxy=configured',
+                self.device.sip_realm,
+            )
+            return
+
+        realm = self.device.sip_realm.strip().rstrip('.')
+        if not realm:
+            return
+
+        services = (
+            [('_sips._tcp', 'tls')]
+            if settings.sip_tls
+            else [('_sip._udp', 'udp'), ('_sip._tcp', 'tcp')]
+        )
+        records: list[dict[str, str | int]] = []
+        resolver = dns.asyncresolver.Resolver()
+        for service, transport in services:
+            query = f'{service}.{realm}'
+            try:
+                answer = await resolver.resolve(query, 'SRV')
+            except (dns.exception.DNSException, OSError) as error:
+                logger.info(
+                    '[VH-DIAG] event=sip_srv_lookup query=%s transport=%s result=none reason=%s',
+                    query,
+                    transport,
+                    type(error).__name__,
+                )
+                continue
+            for item in answer:
+                target = str(item.target).rstrip('.')
+                records.append({
+                    'transport': transport,
+                    'target': target,
+                    'port': int(item.port),
+                    'priority': int(item.priority),
+                    'weight': int(item.weight),
+                })
+
+        self.sip_srv_records = sorted(
+            records,
+            key=lambda item: (
+                int(item['priority']),
+                str(item['transport']),
+                -int(item['weight']),
+                str(item['target']),
+            ),
+        )
+        if not self.sip_srv_records:
+            logger.info(
+                '[VH-DIAG] event=sip_srv_resolution realm=%s records=0',
+                realm,
+            )
+            return
+
+        summary = ','.join(
+            f"{item['transport']}:{item['target']}:{item['port']}"
+            f"(p={item['priority']},w={item['weight']})"
+            for item in self.sip_srv_records
+        )
+        logger.info(
+            '[VH-DIAG] event=sip_srv_resolution realm=%s records=%s candidates=%s',
+            realm,
+            len(self.sip_srv_records),
+            summary,
+        )
 
     async def stop(self):
         for task in (self._keepalive_task, self._reader_task):
