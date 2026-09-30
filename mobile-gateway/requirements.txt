@@ -5,3 +5,4 @@ httpx[http2]==0.28.1
 PyJWT[crypto]==2.10.1
 cryptography==45.0.7
 pydantic-settings==2.10.1
+dnspython==2.8.0
