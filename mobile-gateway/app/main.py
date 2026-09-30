@@ -365,6 +365,21 @@ async def admin_calls(request: Request):
         media_text = f'{media_ip}:{media_port}' if media_port else media_ip
         ice_state = item.get('ice_state') or '—'
         media_status = item.get('media_status') or 'unknown'
+        sip_host = item.get('sip_selected_host') or 'Awaiting Janus telemetry'
+        sip_ip = item.get('sip_selected_ip') or ''
+        sip_port = item.get('sip_selected_port')
+        sip_peer = sip_host
+        if sip_ip:
+            sip_peer += f' · {sip_ip}'
+        if sip_port:
+            sip_peer += f':{sip_port}'
+        sip_route_meta = ' · '.join(
+            value for value in (
+                item.get('sip_transport') or '',
+                item.get('sip_media_encryption') or '',
+            )
+            if value
+        ) or '—'
         status_class = (
             'ok' if media_status == 'connected'
             else 'bad' if media_status in {'failed', 'disconnected'}
@@ -380,6 +395,8 @@ async def admin_calls(request: Request):
                 · handle {html.escape(str(item.get('janus_handle_id') or '—'))}</div></td>
             <td>{html.escape(media_text)}
                 <div class="muted">{html.escape(item.get('janus_candidate_type') or '—')}</div></td>
+            <td><strong>{html.escape(sip_peer)}</strong>
+                <div class="muted">{html.escape(item.get('sip_realm') or '—')} · {html.escape(sip_route_meta)}</div></td>
             <td><span class="status {status_class}">{html.escape(media_status)}</span>
                 <div class="muted">{html.escape(ice_state)}</div></td>
             <td>{html.escape(item.get('call_status') or '—')}</td>
@@ -388,7 +405,7 @@ async def admin_calls(request: Request):
         """)
 
     table_rows = ''.join(rows) or """
-      <tr><td colspan="7" class="empty">No calls match the selected filters.</td></tr>
+      <tr><td colspan="8" class="empty">No calls match the selected filters.</td></tr>
     """
     failed_checked = ' checked' if failed_only else ''
     ice_value = html.escape(selected_ice, quote=True)
@@ -421,7 +438,7 @@ async def admin_calls(request: Request):
     .panel-head {{ padding:16px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; }}
     .panel-head h2 {{ margin:0; font-size:17px; }}
     .table-wrap {{ overflow-x:auto; }}
-    table {{ width:100%; border-collapse:collapse; min-width:1120px; }}
+    table {{ width:100%; border-collapse:collapse; min-width:1320px; }}
     th,td {{ text-align:left; padding:12px 14px; border-bottom:1px solid var(--border); vertical-align:top; }}
     th {{ background:#fafafa; color:#475467; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
     .muted {{ color:var(--muted); font-size:12px; margin-top:3px; }}
@@ -455,7 +472,7 @@ async def admin_calls(request: Request):
       <table>
         <thead><tr>
           <th>Started</th><th>Device</th><th>Janus</th><th>Media candidate</th>
-          <th>ICE / media</th><th>Call</th><th>Details</th>
+          <th>SIP route</th><th>ICE / media</th><th>Call</th><th>Details</th>
         </tr></thead>
         <tbody>{table_rows}</tbody>
       </table>
@@ -505,6 +522,13 @@ async def admin_call_detail(call_id: str):
         ('Janus peer', peer_text),
         ('Janus session', str(call.get('janus_session_id') or '—')),
         ('Janus handle', str(call.get('janus_handle_id') or '—')),
+        ('SIP realm', call.get('sip_realm') or '—'),
+        ('SIP transport', call.get('sip_transport') or '—'),
+        ('SIP media encryption', call.get('sip_media_encryption') or '—'),
+        ('Selected SIP host', call.get('sip_selected_host') or 'Awaiting Janus telemetry'),
+        ('Selected SIP IP', call.get('sip_selected_ip') or '—'),
+        ('Selected SIP port', str(call.get('sip_selected_port') or '—')),
+        ('SRV candidates', call.get('sip_srv_candidates') or '—'),
         ('Janus media candidate', media_text),
         ('Candidate type', call.get('janus_candidate_type') or '—'),
         ('ICE state', call.get('ice_state') or '—'),
