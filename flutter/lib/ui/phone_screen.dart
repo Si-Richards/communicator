@@ -1161,6 +1161,371 @@ class _InlineInCallKeypad extends StatelessWidget {
   }
 }
 
+
+Future<void> _showInCallPbxFeatures(
+  BuildContext context, {
+  required MobileCallCoordinator mobileCalls,
+  required PhoneController controller,
+  required PbxFeatureConfiguration features,
+  required bool gatewayCall,
+}) async {
+  Future<void> run(
+    BuildContext sheetContext,
+    Future<void> Function() action,
+  ) async {
+    Navigator.of(sheetContext).pop();
+    await action();
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Call features',
+              style: Theme.of(sheetContext).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            if (features.callParking)
+              ListTile(
+                leading: const Icon(Icons.local_parking),
+                title: const Text('Park call'),
+                subtitle: Text('Park using ${features.parkCode}'),
+                onTap: () => run(
+                  sheetContext,
+                  () => gatewayCall
+                      ? mobileCalls.parkActiveCall(features.parkCode)
+                      : controller.parkCall(features.parkCode),
+                ),
+              ),
+            if (features.recordingControl) ...[
+              ListTile(
+                leading: const Icon(Icons.pause_circle_outline),
+                title: const Text('Pause call recording'),
+                subtitle: const Text('Sends the platform recording mute code'),
+                onTap: () => run(
+                  sheetContext,
+                  () => gatewayCall
+                      ? mobileCalls.setRecordingPaused(
+                          true,
+                          muteSequence: features.recordingMuteSequence,
+                          unmuteSequence: features.recordingUnmuteSequence,
+                        )
+                      : controller.sendDtmfSequence(
+                          features.recordingMuteSequence,
+                        ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.fiber_manual_record),
+                title: const Text('Resume call recording'),
+                subtitle:
+                    const Text('Sends the platform recording unmute code'),
+                onTap: () => run(
+                  sheetContext,
+                  () => gatewayCall
+                      ? mobileCalls.setRecordingPaused(
+                          false,
+                          muteSequence: features.recordingMuteSequence,
+                          unmuteSequence: features.recordingUnmuteSequence,
+                        )
+                      : controller.sendDtmfSequence(
+                          features.recordingUnmuteSequence,
+                        ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _showPbxFeatureMenu(
+  BuildContext context, {
+  required MobileCallCoordinator mobileCalls,
+  required PbxFeatureConfiguration features,
+}) async {
+  Future<void> dialFromPrompt(
+    String title,
+    String hint,
+    String Function(String value) dialString,
+  ) async {
+    final value = await _promptPbxValue(context, title: title, hint: hint);
+    if (value == null || value.trim().isEmpty) return;
+    await mobileCalls.placePbxFeatureCall(dialString(value.trim()));
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'PBX features',
+              style: Theme.of(sheetContext).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            if (features.callParking)
+              ListTile(
+                leading: const Icon(Icons.unarchive_outlined),
+                title: const Text('Retrieve parked call'),
+                subtitle: const Text('Enter the parking reference'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await dialFromPrompt(
+                    'Retrieve parked call',
+                    'Parking reference',
+                    (value) => value,
+                  );
+                },
+              ),
+            if (features.pickup) ...[
+              ListTile(
+                leading: const Icon(Icons.call_received),
+                title: const Text('Pickup extension'),
+                subtitle: const Text('Answer a ringing extension'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await dialFromPrompt(
+                    'Pickup extension',
+                    'Seat / extension number',
+                    (value) => '${features.pickupExtensionPrefix}$value',
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.groups_outlined),
+                title: const Text('Pickup group'),
+                subtitle: const Text('Answer a ringing pickup group'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await dialFromPrompt(
+                    'Pickup group',
+                    'Pickup group ID',
+                    (value) => '${features.pickupGroupPrefix}$value',
+                  );
+                },
+              ),
+            ],
+            if (features.callGroups)
+              ListTile(
+                leading: const Icon(Icons.group_add_outlined),
+                title: const Text('Call group'),
+                subtitle: const Text('Ring a configured call group'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await dialFromPrompt(
+                    'Call group',
+                    'Group number',
+                    (value) =>
+                        '${features.callGroupPrefix}$value${features.callGroupSuffix}',
+                  );
+                },
+              ),
+            if (features.queues) ...[
+              ListTile(
+                leading: const Icon(Icons.login),
+                title: const Text('Join call queue'),
+                subtitle: const Text('Log this extension into a queue'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await dialFromPrompt(
+                    'Join call queue',
+                    'Queue number',
+                    (value) => '${features.queueLoginPrefix}$value',
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('Leave call queue'),
+                subtitle: const Text('Log this extension out of a queue'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await dialFromPrompt(
+                    'Leave call queue',
+                    'Queue number',
+                    (value) => '${features.queueLogoutPrefix}$value',
+                  );
+                },
+              ),
+            ],
+            if (features.monitoring)
+              ListTile(
+                leading: const Icon(Icons.headset_mic_outlined),
+                title: const Text('Monitor / whisper'),
+                subtitle: const Text('Supervisor listen or whisper'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  final request = await _showMonitoringDialog(context);
+                  if (request == null) return;
+                  await mobileCalls.startCallMonitoring(
+                    monitorCode: features.monitorCode,
+                    seat: request.seat,
+                    password: request.password,
+                    whisper: request.whisper,
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Future<String?> _promptPbxValue(
+  BuildContext context, {
+  required String title,
+  required String hint,
+}) async {
+  final controller = TextEditingController();
+  try {
+    return await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.phone,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            labelText: hint,
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (_) {
+            final value = controller.text.trim();
+            if (value.isNotEmpty) Navigator.of(dialogContext).pop(value);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) Navigator.of(dialogContext).pop(value);
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    controller.dispose();
+  }
+}
+
+class _MonitoringRequest {
+  const _MonitoringRequest({
+    required this.seat,
+    required this.password,
+    required this.whisper,
+  });
+
+  final String seat;
+  final String password;
+  final bool whisper;
+}
+
+Future<_MonitoringRequest?> _showMonitoringDialog(BuildContext context) async {
+  final seatController = TextEditingController();
+  final passwordController = TextEditingController();
+  var whisper = false;
+  try {
+    return await showDialog<_MonitoringRequest>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Monitor call'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: seatController,
+                autofocus: true,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Seat / extension number',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Supervisor password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.hearing),
+                    label: Text('Listen'),
+                  ),
+                  ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.record_voice_over),
+                    label: Text('Whisper'),
+                  ),
+                ],
+                selected: {whisper},
+                onSelectionChanged: (values) {
+                  setState(() => whisper = values.first);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final seat = seatController.text.trim();
+                final password = passwordController.text.trim();
+                if (seat.isEmpty || password.isEmpty) return;
+                Navigator.of(dialogContext).pop(
+                  _MonitoringRequest(
+                    seat: seat,
+                    password: password,
+                    whisper: whisper,
+                  ),
+                );
+              },
+              child: const Text('Start'),
+            ),
+          ],
+        ),
+      ),
+    );
+  } finally {
+    seatController.dispose();
+    passwordController.dispose();
+  }
+}
+
 class _TransferRequest {
   const _TransferRequest({required this.target, required this.attended});
 
