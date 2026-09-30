@@ -20,7 +20,7 @@ class AppConfig {
 
   static const provisioningUrl = String.fromEnvironment(
     'VOICEHOST_PROVISIONING_URL',
-    defaultValue: '',
+    defaultValue: 'https://provision.voicehost.io',
   );
   static const pushEnvironment = String.fromEnvironment(
     'VOICEHOST_PUSH_ENVIRONMENT',
