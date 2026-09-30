@@ -31,6 +31,9 @@ class ProvisioningConfiguration {
   final Map<String, bool> features;
   final Map<String, dynamic> policy;
 
+  PbxFeatureConfiguration get pbxFeatures =>
+      PbxFeatureConfiguration.fromConfiguration(this);
+
   factory ProvisioningConfiguration.fromJson(
     Map<String, dynamic> json, {
     int? fallbackVersion,
@@ -104,6 +107,88 @@ class ProvisioningConfiguration {
   static int? _int(dynamic value) {
     if (value is int) return value;
     return int.tryParse(value?.toString() ?? '');
+  }
+}
+
+
+class PbxFeatureConfiguration {
+  const PbxFeatureConfiguration({
+    this.callParking = true,
+    this.recordingControl = true,
+    this.pickup = true,
+    this.callGroups = true,
+    this.queues = true,
+    this.monitoring = true,
+    this.parkCode = '1900',
+    this.recordingMuteSequence = '#1',
+    this.recordingUnmuteSequence = '#2',
+    this.pickupGroupPrefix = '*0#',
+    this.pickupExtensionPrefix = '**',
+    this.callGroupPrefix = '*',
+    this.callGroupSuffix = '*',
+    this.queueLoginPrefix = '120*',
+    this.queueLogoutPrefix = '121*',
+    this.monitorCode = '154',
+  });
+
+  final bool callParking;
+  final bool recordingControl;
+  final bool pickup;
+  final bool callGroups;
+  final bool queues;
+  final bool monitoring;
+
+  final String parkCode;
+  final String recordingMuteSequence;
+  final String recordingUnmuteSequence;
+  final String pickupGroupPrefix;
+  final String pickupExtensionPrefix;
+  final String callGroupPrefix;
+  final String callGroupSuffix;
+  final String queueLoginPrefix;
+  final String queueLogoutPrefix;
+  final String monitorCode;
+
+  factory PbxFeatureConfiguration.fromConfiguration(
+    ProvisioningConfiguration config,
+  ) {
+    final raw = _map(config.policy['pbx_features']);
+
+    bool enabled(String key, bool fallback) {
+      final configured = config.features[key];
+      if (configured != null) return configured;
+      final value = raw[key];
+      return value is bool ? value : fallback;
+    }
+
+    String code(String key, String fallback) {
+      final value = raw[key]?.toString().trim() ?? '';
+      return value.isEmpty ? fallback : value;
+    }
+
+    return PbxFeatureConfiguration(
+      callParking: enabled('call_parking', true),
+      recordingControl: enabled('recording_control', true),
+      pickup: enabled('call_pickup', true),
+      callGroups: enabled('call_groups', true),
+      queues: enabled('dynamic_queues', true),
+      monitoring: enabled('call_monitoring', true),
+      parkCode: code('park_code', '1900'),
+      recordingMuteSequence: code('recording_mute_sequence', '#1'),
+      recordingUnmuteSequence: code('recording_unmute_sequence', '#2'),
+      pickupGroupPrefix: code('pickup_group_prefix', '*0#'),
+      pickupExtensionPrefix: code('pickup_extension_prefix', '**'),
+      callGroupPrefix: code('call_group_prefix', '*'),
+      callGroupSuffix: code('call_group_suffix', '*'),
+      queueLoginPrefix: code('queue_login_prefix', '120*'),
+      queueLogoutPrefix: code('queue_logout_prefix', '121*'),
+      monitorCode: code('monitor_code', '154'),
+    );
+  }
+
+  static Map<String, dynamic> _map(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
   }
 }
 
