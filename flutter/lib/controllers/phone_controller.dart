@@ -859,6 +859,23 @@ class PhoneController extends ChangeNotifier {
     }
   }
 
+  Future<void> sendDtmfSequence(String sequence) async {
+    const allowedDigits = '0123456789*#ABCD';
+    final digits = sequence
+        .toUpperCase()
+        .split('')
+        .where(allowedDigits.contains)
+        .toList(growable: false);
+    for (final digit in digits) {
+      if (!callState.isConnected) return;
+      await sendDtmf(digit);
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+    }
+  }
+
+  Future<void> parkCall(String parkCode) =>
+      blindTransfer(parkCode.trim());
+
   void updateVoicemailSummary({
     required bool waiting,
     required int newMessages,
