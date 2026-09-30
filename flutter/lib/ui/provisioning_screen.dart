@@ -2,35 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
 import '../controllers/provisioning_controller.dart';
+import '../core/app_config.dart';
 
 class ProvisioningScreen extends StatefulWidget {
   const ProvisioningScreen({
     super.key,
     required this.phone,
     required this.provisioning,
+    this.activationGate = false,
   });
 
   final PhoneController phone;
   final ProvisioningController provisioning;
+  final bool activationGate;
 
   @override
   State<ProvisioningScreen> createState() => _ProvisioningScreenState();
 }
 
 class _ProvisioningScreenState extends State<ProvisioningScreen> {
-  late final TextEditingController _serverUrl;
   final TextEditingController _code = TextEditingController();
   bool _showCode = false;
 
   @override
-  void initState() {
-    super.initState();
-    _serverUrl = TextEditingController(text: widget.phone.provisioningUrl);
-  }
-
-  @override
   void dispose() {
-    _serverUrl.dispose();
     _code.dispose();
     super.dispose();
   }
@@ -38,7 +33,7 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
   Future<void> _activate() async {
     try {
       await widget.provisioning.activate(
-        serverUrl: _serverUrl.text,
+        serverUrl: AppConfig.provisioningUrl,
         code: _code.text,
       );
       if (!mounted) return;
@@ -60,8 +55,8 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Remove managed configuration?'),
         content: const Text(
-          'This removes the provisioned device credentials from this app and '
-          'returns to manual configuration.',
+          'This removes the provisioned device credentials from this app. '
+          'A new activation code will be required before the app can be used again.',
         ),
         actions: [
           TextButton(
@@ -87,7 +82,9 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
         final model = widget.provisioning;
         final config = model.configuration;
         return Scaffold(
-          appBar: AppBar(title: const Text('Provisioning')),
+          appBar: widget.activationGate
+              ? null
+              : AppBar(title: const Text('Provisioning')),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -102,7 +99,9 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                             ? 'Re-activate device'
                             : model.isEnrolled
                                 ? 'Managed device'
-                                : 'Activate device',
+                                : widget.activationGate
+                                    ? 'Activate VoiceHost'
+                                    : 'Activate device',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 8),
@@ -135,17 +134,16 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                 ),
               ),
               if (!model.isEnrolled || model.credentialsInvalid) ...[
-                const SizedBox(height: 4),
-                TextField(
-                  controller: _serverUrl,
-                  keyboardType: TextInputType.url,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Provisioning server',
-                    hintText: 'https://provision.voicehost.io',
+                if (widget.activationGate) ...[
+                  const SizedBox(height: 10),
+                  Center(
+                    child: Text(
+                      'Enter the activation code supplied by your administrator.',
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
+                  const SizedBox(height: 18),
+                ],
                 TextField(
                   controller: _code,
                   obscureText: !_showCode,
@@ -162,6 +160,9 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                       ),
                     ),
                   ),
+                  onSubmitted: (_) {
+                    if (!model.busy) _activate();
+                  },
                 ),
                 const SizedBox(height: 18),
                 FilledButton.icon(
@@ -171,7 +172,7 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.link),
+                      : const Icon(Icons.key_outlined),
                   label: Text(
                     model.credentialsInvalid
                         ? 'Re-activate Device'
