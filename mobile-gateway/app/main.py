@@ -539,6 +539,12 @@ async def admin_call_detail(call_id: str):
         ('Remote candidates', str(call.get('remote_candidates') if call.get('remote_candidates') is not None else '—')),
         ('Local audio tracks', str(call.get('local_audio_tracks') if call.get('local_audio_tracks') is not None else '—')),
         ('Remote audio tracks', str(call.get('remote_audio_tracks') if call.get('remote_audio_tracks') is not None else '—')),
+        ('RTT', f"{call.get('rtt_ms')} ms" if call.get('rtt_ms') is not None else '—'),
+        ('Jitter', f"{call.get('jitter_ms')} ms" if call.get('jitter_ms') is not None else '—'),
+        ('Audio packets lost', str(call.get('audio_packets_lost') if call.get('audio_packets_lost') is not None else '—')),
+        ('Video packets lost', str(call.get('video_packets_lost') if call.get('video_packets_lost') is not None else '—')),
+        ('Video send', f"{call.get('video_send_kbps')} kbps" if call.get('video_send_kbps') is not None else '—'),
+        ('Video receive', f"{call.get('video_receive_kbps')} kbps" if call.get('video_receive_kbps') is not None else '—'),
         ('Started', call.get('started_at') or '—'),
         ('Connected', call.get('connected_at') or '—'),
         ('Ended', call.get('ended_at') or '—'),
@@ -901,6 +907,12 @@ async def diagnostics(body: DiagnosticEvent):
             'ice_state', 'peer_state', 'local_candidates', 'remote_candidates',
             'local_audio_tracks', 'remote_audio_tracks', 'sdp_length',
             'app_state', 'callkit_audio', 'gateway_event',
+            'stage', 'elapsed_ms', 'recovered', 'incoming_video_offered',
+            'enabled', 'available', 'jsep',
+            'audio_packets_lost', 'video_packets_lost', 'rtt_ms', 'jitter_ms',
+            'video_width', 'video_height', 'video_fps',
+            'video_send_kbps', 'video_receive_kbps',
+            'local_video', 'remote_video',
         }
     }
     diag_logger.info(
