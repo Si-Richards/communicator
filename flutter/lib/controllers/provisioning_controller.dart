@@ -42,6 +42,13 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   ProvisioningConfiguration? get configuration => _state?.configuration;
   bool get isLocked => deviceState == 'locked';
   bool get isRevoked => deviceState == 'revoked';
+  bool get isRetired => deviceState == 'retired';
+  bool get canUseApp =>
+      isEnrolled &&
+      !_credentialsInvalid &&
+      !isLocked &&
+      !isRevoked &&
+      !isRetired;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -71,6 +78,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     } else {
       notifyListeners();
     }
+    await mobileCalls.setProvisioningAccess(canUseApp);
   }
 
   Future<void> activate({
@@ -143,6 +151,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         phone.applyProvisionedConfiguration(result.configuration);
         mobileCalls.applyProvisionedConfiguration(result.configuration);
         _syncPolling();
+        await mobileCalls.setProvisioningAccess(canUseApp);
         unawaited(mobileCalls.setAdministrativeLocked(isLocked));
         _credentialsInvalid = false;
         _error = null;
@@ -208,6 +217,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       await _repository.save(updated);
       _credentialsInvalid = false;
       _syncPolling();
+      await mobileCalls.setProvisioningAccess(canUseApp);
       await mobileCalls.setAdministrativeLocked(isLocked);
       _error = null;
       _status = switch (updated.deviceState) {
@@ -288,6 +298,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       _state = updated;
       await _repository.save(updated);
       _syncPolling();
+      await mobileCalls.setProvisioningAccess(canUseApp);
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       phone.applyProvisionedConfiguration(config);
       mobileCalls.applyProvisionedConfiguration(config);
@@ -327,9 +338,12 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _state = null;
     _credentialsInvalid = false;
     _syncPolling();
+    await mobileCalls.setProvisioningAccess(false);
     await mobileCalls.setAdministrativeLocked(false);
-    await phone.setConfigurationSource(ConfigurationSource.manual);
-    await phone.reloadManualConfiguration();
+    await phone.setConfigurationSource(
+      ConfigurationSource.provisioning,
+      provisioningUrl: AppConfig.provisioningUrl,
+    );
     _error = null;
     _status = 'Not provisioned';
     _setBusy(false);
