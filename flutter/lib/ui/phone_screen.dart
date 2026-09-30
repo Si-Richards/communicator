@@ -6,6 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../controllers/phone_controller.dart';
 import '../controllers/provisioning_controller.dart';
 import '../models/call_state.dart';
+import '../models/provisioning.dart';
 import '../services/mobile_call_coordinator.dart';
 import 'settings_screen.dart';
 
@@ -193,6 +194,9 @@ class _PhoneScreenState extends State<PhoneScreen> {
                           return _CallControls(
                             controller: controller,
                             mobileCalls: widget.mobileCalls,
+                            pbxFeatures: widget.provisioning.configuration
+                                    ?.pbxFeatures ??
+                                const PbxFeatureConfiguration(),
                             onShowKeypad: () {
                               setState(() => _showInCallKeypad = true);
                             },
@@ -252,6 +256,9 @@ class _PhoneScreenState extends State<PhoneScreen> {
                             _CallControls(
                               controller: controller,
                               mobileCalls: widget.mobileCalls,
+                              pbxFeatures: widget.provisioning.configuration
+                                      ?.pbxFeatures ??
+                                  const PbxFeatureConfiguration(),
                               onShowKeypad: () {
                                 setState(() => _showInCallKeypad = true);
                               },
@@ -458,11 +465,13 @@ class _CallControls extends StatelessWidget {
   const _CallControls({
     required this.controller,
     required this.mobileCalls,
+    required this.pbxFeatures,
     required this.onShowKeypad,
   });
 
   final PhoneController controller;
   final MobileCallCoordinator mobileCalls;
+  final PbxFeatureConfiguration pbxFeatures;
   final VoidCallback onShowKeypad;
 
   @override
@@ -617,6 +626,19 @@ class _CallControls extends StatelessWidget {
                           );
                         }
                       },
+              ),
+              _InCallAction(
+                icon: Icons.more_horiz,
+                label: 'More',
+                onTap: connected
+                    ? () => _showInCallPbxFeatures(
+                          context,
+                          mobileCalls: mobileCalls,
+                          controller: controller,
+                          features: pbxFeatures,
+                          gatewayCall: true,
+                        )
+                    : null,
               ),
             ],
           ),
@@ -799,6 +821,19 @@ class _CallControls extends StatelessWidget {
                 avatar: const Icon(Icons.swap_horiz),
                 label: const Text('Transfer'),
               ),
+              _InCallAction(
+                icon: Icons.more_horiz,
+                label: 'More',
+                onTap: state.isConnected
+                    ? () => _showInCallPbxFeatures(
+                          context,
+                          mobileCalls: mobileCalls,
+                          controller: controller,
+                          features: pbxFeatures,
+                          gatewayCall: false,
+                        )
+                    : null,
+              ),
             ],
           ),
           if (controller.hasDirectTransfer ||
@@ -866,6 +901,16 @@ class _CallControls extends StatelessWidget {
                     video: true,
                   )
               : null,
+        ),
+        _RoundAction(
+          icon: Icons.apps,
+          color: const Color(0xFFFF6600),
+          label: 'PBX',
+          onTap: () => _showPbxFeatureMenu(
+            context,
+            mobileCalls: mobileCalls,
+            features: pbxFeatures,
+          ),
         ),
       ],
     );
