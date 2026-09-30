@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import time
 import re
@@ -317,6 +318,13 @@ class MobileSessionManager:
             janus_session_id=session.session_id,
             janus_handle_id=session.handle_id,
             sip_call_id=call.sip_call_id,
+            sip_realm=session.device.sip_realm,
+            sip_transport='tls' if settings.sip_tls else 'udp',
+            sip_media_encryption=settings.sip_srtp,
+            sip_srv_candidates=json.dumps(
+                session.sip_srv_records,
+                separators=(',', ':'),
+            ) if session.sip_srv_records else None,
         )
 
     def _release_call_session(self, call: CallRuntime):
@@ -542,6 +550,33 @@ class MobileSessionManager:
         call = self._call_for_session(session)
         if not call:
             return
+
+        telemetry = result.get('sip_peer') or data.get('sip_peer')
+        if isinstance(telemetry, dict):
+            peer_host = str(telemetry.get('host') or '').strip()
+            peer_ip = str(telemetry.get('ip') or '').strip()
+            peer_port = telemetry.get('port')
+            peer_transport = str(telemetry.get('transport') or '').strip()
+            updates = {}
+            if peer_host:
+                updates['sip_selected_host'] = peer_host
+            if peer_ip:
+                updates['sip_selected_ip'] = peer_ip
+            if isinstance(peer_port, int) and 0 < peer_port < 65536:
+                updates['sip_selected_port'] = peer_port
+            if peer_transport:
+                updates['sip_transport'] = peer_transport.lower()
+            if updates:
+                self.store.update_call(call.id, **updates)
+                self.store.add_call_event(call.id, 'sip_peer_selected', updates)
+                logger.info(
+                    '[VH-DIAG] event=sip_peer_selected call=%s host=%s ip=%s port=%s transport=%s',
+                    _safe_ref(call.id),
+                    peer_host or '-',
+                    peer_ip or '-',
+                    peer_port or '-',
+                    peer_transport or '-',
+                )
 
         sip_call_id = data.get('call_id')
         if sip_call_id:
