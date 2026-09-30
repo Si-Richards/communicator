@@ -954,6 +954,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
             _startGatewayStats(context);
             unawaited(FlutterCallkitIncoming.setCallConnected(context.id));
             notifyListeners();
+            if (context.postConnectDtmf.isNotEmpty &&
+                !context.postConnectDtmfSent) {
+              unawaited(_runPostConnectDtmf(context));
+            }
             unawaited(_diag(
               'gateway_accepted',
               callId: context.id,
@@ -1124,6 +1128,79 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> placeCall(
     String number, {
     bool video = false,
+  }) =>
+      _placeCall(number, video: video);
+
+  Future<void> placePbxFeatureCall(String dialString) =>
+      _placeCall(dialString);
+
+  Future<void> parkActiveCall(String parkCode) async {
+    final code = parkCode.trim();
+    if (code.isEmpty || !gatewayCallConnected) return;
+    final callId = _activeGatewayCallId;
+    if (callId != null) {
+      await _diag('call_park_requested', callId: callId);
+    }
+    await blindTransferActiveCall(code);
+  }
+
+  Future<void> setRecordingPaused(
+    bool paused, {
+    required String muteSequence,
+    required String unmuteSequence,
+  }) async {
+    final active = _activeGatewayCall;
+    if (active == null || !active.connected) return;
+    final sequence = paused ? muteSequence : unmuteSequence;
+    await _sendDtmfSequence(active, sequence);
+    await _diag(
+      paused ? 'recording_pause_requested' : 'recording_resume_requested',
+      callId: active.id,
+    );
+  }
+
+  Future<void> startCallMonitoring({
+    required String monitorCode,
+    required String seat,
+    required String password,
+    required bool whisper,
+  }) async {
+    final cleanCode = monitorCode.trim();
+    final cleanSeat = seat.trim();
+    final cleanPassword = password.trim();
+    if (cleanCode.isEmpty || cleanSeat.isEmpty || cleanPassword.isEmpty) return;
+
+    if (!_gatewayProvisioned || _deviceId == null) {
+      // Direct-mode fallback intentionally does not persist or log the
+      // supervisor credential. The user can complete the IVR via the keypad.
+      await phone.placeCall(cleanCode);
+      _appendDiagnostic(
+        'Call monitoring access started in direct mode · '
+        'complete credentials with keypad',
+      );
+      return;
+    }
+
+    await _placeCall(
+      cleanCode,
+      postConnectDtmf: [
+        _PbxDtmfStep('*$cleanSeat', const Duration(milliseconds: 900)),
+        _PbxDtmfStep(
+          '$cleanPassword*',
+          const Duration(milliseconds: 500),
+        ),
+        _PbxDtmfStep(
+          whisper ? '2' : '1',
+          const Duration(milliseconds: 500),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _placeCall(
+    String number, {
+    bool video = false,
+    List<_PbxDtmfStep> postConnectDtmf = const [],
   }) async {
     if (_administrativelyLocked) {
       _appendDiagnostic('Outgoing call blocked by administrative lock');
@@ -1190,6 +1267,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       ..startedAt = DateTime.now()
       ..outgoing = true
       ..gatewayStarted = false
+      ..postConnectDtmf = List<_PbxDtmfStep>.from(postConnectDtmf)
       ..phase = 'calling';
     _gatewayCalls[callId] = context;
     _activeGatewayCallId = callId;
@@ -1772,9 +1850,47 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       await gateway.sendDtmf(active.id, digit);
-      _appendDiagnostic('DTMF sent · digit=$digit');
+      _appendDiagnostic('DTMF sent');
     } catch (error) {
       _appendDiagnostic('DTMF failed: $error');
+    }
+  }
+
+  Future<void> _sendDtmfSequence(
+    _GatewayCallContext context,
+    String sequence,
+  ) async {
+    const allowedDigits = '0123456789*#ABCD';
+    final digits = sequence
+        .toUpperCase()
+        .split('')
+        .where(allowedDigits.contains)
+        .toList(growable: false);
+    for (final digit in digits) {
+      if (!context.connected || context.closing || context.gatewayEnded) return;
+      await gateway.sendDtmf(context.id, digit);
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+    }
+  }
+
+  Future<void> _runPostConnectDtmf(_GatewayCallContext context) async {
+    if (context.postConnectDtmfSent || context.postConnectDtmf.isEmpty) return;
+    context.postConnectDtmfSent = true;
+    try {
+      for (final step in context.postConnectDtmf) {
+        await Future<void>.delayed(step.delay);
+        if (!context.connected || context.closing || context.gatewayEnded) {
+          return;
+        }
+        await _sendDtmfSequence(context, step.sequence);
+      }
+      await _diag(
+        'pbx_feature_sequence_sent',
+        callId: context.id,
+        details: {'stage': 'complete'},
+      );
+    } catch (error) {
+      _appendDiagnostic('PBX feature sequence failed: $error');
     }
   }
 
@@ -2012,5 +2128,14 @@ class _GatewayCallContext {
   DateTime? connectedAt;
   int localCandidateCount = 0;
   int remoteCandidateCount = 0;
+  List<_PbxDtmfStep> postConnectDtmf = const [];
+  bool postConnectDtmfSent = false;
   Timer? statsTimer;
+}
+
+class _PbxDtmfStep {
+  const _PbxDtmfStep(this.sequence, this.delay);
+
+  final String sequence;
+  final Duration delay;
 }
