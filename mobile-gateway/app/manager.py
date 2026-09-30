@@ -847,12 +847,14 @@ class MobileSessionManager:
         call.transfer_mode = 'blind'
         call.transfer_target = target
         logger.info(
-            '[VH-DIAG] event=blind_transfer_requested call=%s target=%s',
+            '[VH-DIAG] event=blind_transfer_requested call=%s target_ref=%s realm=%s',
             _safe_ref(call_id),
-            uri,
+            _safe_ref(uri),
+            session.device.sip_realm,
         )
         self.store.add_call_event(call.id, 'blind_transfer_requested', {
-            'target': uri,
+            'target_ref': _safe_ref(uri),
+            'realm': session.device.sip_realm,
         })
         await session.transfer(uri)
         asyncio.create_task(self._transfer_watchdog(call.id, 'blind'))
