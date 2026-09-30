@@ -132,7 +132,20 @@ class _MainShellState extends State<MainShell> {
     return AnimatedBuilder(
       animation: Listenable.merge([controller, widget.provisioning]),
       builder: (context, _) {
-        if (widget.provisioning.isLocked) {
+        if (!widget.provisioning.initialized) {
+          return const _ProvisioningLoadingScreen();
+        }
+
+        if (!widget.provisioning.isEnrolled ||
+            widget.provisioning.credentialsInvalid) {
+          return ProvisioningScreen(
+            phone: controller,
+            provisioning: widget.provisioning,
+            activationGate: true,
+          );
+        }
+
+        if (!widget.provisioning.canUseApp) {
           return _ProvisioningLockedScreen(
             controller: controller,
             provisioning: widget.provisioning,
@@ -171,6 +184,44 @@ class _MainShellState extends State<MainShell> {
           ),
         );
       },
+    );
+  }
+}
+
+
+class _ProvisioningLoadingScreen extends StatelessWidget {
+  const _ProvisioningLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    const orange = Color(0xFFFF6600);
+    const navy = Color(0xFF113B53);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.phone_in_talk, size: 64, color: orange),
+                const SizedBox(height: 24),
+                Text(
+                  'VoiceHost',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: navy,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 24),
+                const CircularProgressIndicator(),
+                const SizedBox(height: 14),
+                const Text('Checking device provisioning…'),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
