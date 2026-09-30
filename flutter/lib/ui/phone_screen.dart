@@ -295,6 +295,8 @@ class _StatusStrip extends StatelessWidget {
         : mobileCalls.gatewayProvisioning
             ? 'Mobile connecting…'
             : controller.registrationStatus;
+    final encryptedMediaActive =
+        mobileCalls.gatewayMediaConnected || controller.callState.isConnected;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
       child: Row(
@@ -305,11 +307,33 @@ class _StatusStrip extends StatelessWidget {
             decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
           ),
           const SizedBox(width: 7),
-          Text(
-            controller.doNotDisturb
-                ? '$registrationLabel · DND'
-                : registrationLabel,
-            style: Theme.of(context).textTheme.bodySmall,
+          Flexible(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    controller.doNotDisturb
+                        ? '$registrationLabel · DND'
+                        : registrationLabel,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (encryptedMediaActive) ...[
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message:
+                        'Encrypted WebRTC media between this device and Janus',
+                    child: Icon(
+                      Icons.lock,
+                      size: 14,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
           const Spacer(),
           Flexible(
