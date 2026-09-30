@@ -59,11 +59,17 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     if (_state != null) {
       _status = 'Provisioned';
       final config = _state!.configuration;
-      if (config != null &&
-          phone.configurationSource == ConfigurationSource.provisioning) {
+      if (config != null) {
         phone.applyProvisionedConfiguration(config);
         mobileCalls.applyProvisionedConfiguration(config);
       }
+      final managedUrl = phone.provisioningUrl.trim().isNotEmpty
+          ? phone.provisioningUrl.trim()
+          : AppConfig.provisioningUrl;
+      await phone.setConfigurationSource(
+        ConfigurationSource.provisioning,
+        provisioningUrl: managedUrl,
+      );
       _syncPolling();
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
       notifyListeners();
@@ -150,10 +156,10 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         );
         phone.applyProvisionedConfiguration(result.configuration);
         mobileCalls.applyProvisionedConfiguration(result.configuration);
+        _credentialsInvalid = false;
         _syncPolling();
         await mobileCalls.setProvisioningAccess(canUseApp);
         unawaited(mobileCalls.setAdministrativeLocked(isLocked));
-        _credentialsInvalid = false;
         _error = null;
         _status = 'Provisioned';
       } finally {
