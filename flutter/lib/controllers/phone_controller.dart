@@ -203,6 +203,8 @@ class PhoneController extends ChangeNotifier {
 
     final managedJanus = config.janusUrl?.trim() ?? '';
     if (managedJanus.isNotEmpty) janusUrl = managedJanus;
+    // Provisioning is authoritative: do not reuse an old manual/testing secret.
+    janusApiSecret = config.janusApiSecret?.trim() ?? '';
 
     notifyListeners();
   }
@@ -232,13 +234,6 @@ class PhoneController extends ChangeNotifier {
     this.configurationSource = configurationSource;
     this.provisioningUrl = provisioningUrl.trim();
     await _persistSettings();
-    notifyListeners();
-  }
-
-  Future<void> setJanusApiSecretForTesting(String secret) async {
-    final value = secret.trim();
-    await _settingsRepository.saveJanusApiSecret(value);
-    janusApiSecret = value;
     notifyListeners();
   }
 
