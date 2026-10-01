@@ -69,12 +69,15 @@ For the current transitional client, SIP credentials can also be returned:
 {
   "extension": "1001",
   "display_name": "Simon",
+  "janus_api_secret": "development-only-janus-secret",
   "sip_username": "1001",
   "sip_password": "development-only-secret",
   "sip_realm": "hpbx.sipconvergence.co.uk",
   "sip_proxy": "sip.example.net"
 }
 ```
+
+The app receives `janus_api_secret` from provisioning in `telephony.janus_api_secret`; it is read-only in managed app settings. Because the current test endpoint is plain HTTP, the secret is exposed in transit. Restrict access and move provisioning to HTTPS before using real or production credentials.
 
 Do not use that transitional pattern as the final mobile security model. The target is for RANDY to receive telephony credentials server-to-server so SIP passwords do not need to reach the handset.
 
