@@ -17,6 +17,10 @@ class Settings:
         "PROVISIONING_JANUS_URL",
         "wss://devrtc.voicehost.io:443",
     )
+    refresh_retry_key: str = os.getenv('PROVISIONING_REFRESH_RETRY_KEY', '')
+    refresh_retry_grace_seconds: int = int(
+        os.getenv('REFRESH_RETRY_GRACE_SECONDS', '30')
+    )
     access_token_ttl_seconds: int = int(
         os.getenv("ACCESS_TOKEN_TTL_SECONDS", "900"),
     )
