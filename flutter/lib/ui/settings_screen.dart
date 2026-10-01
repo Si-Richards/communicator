@@ -246,7 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     enabled: !managed,
                     obscureText: true,
                     autocorrect: false,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'API secret',
                       helperText: managed
                           ? 'Managed by provisioning.'
