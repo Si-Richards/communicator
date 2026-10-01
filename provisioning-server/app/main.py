@@ -20,7 +20,11 @@ app = FastAPI(
     title="VoiceHost Provisioning Service",
     version="0.1.0",
 )
-store = Store(settings.database_path)
+store = Store(
+    settings.database_path,
+    retry_key=settings.refresh_retry_key,
+    retry_grace_seconds=settings.refresh_retry_grace_seconds,
+)
 
 
 def error(code: str, message: str, status_code: int) -> HTTPException:
@@ -206,6 +210,7 @@ def refresh(request: RefreshRequest, response: Response) -> dict:
         settings.access_token_ttl_seconds,
     )
     if result is None:
+        store.audit('token_refresh_rejected', detail={'reason': 'invalid_expired_or_revoked'})
         raise error(
             "refresh_token_invalid",
             "The refresh credential is invalid or expired.",
