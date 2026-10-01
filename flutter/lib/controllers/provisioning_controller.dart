@@ -276,6 +276,9 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       } else {
         _status = 'Provisioning unavailable';
       }
+      if (_credentialsInvalid) {
+        await mobileCalls.setProvisioningAccess(false);
+      }
       _error = error.toString();
       debugPrint('[VoiceHost Provisioning] check-in failed: $error');
     } finally {
@@ -311,8 +314,16 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       _error = null;
       _status = 'Provisioned';
     } catch (error) {
+      if (error is ProvisioningException &&
+          error.code == 'refresh_token_invalid') {
+        _credentialsInvalid = true;
+        _syncPolling();
+        await mobileCalls.setProvisioningAccess(false);
+        _status = 'Re-activation required';
+      } else {
+        _status = 'Configuration refresh failed';
+      }
       _error = error.toString();
-      _status = 'Configuration refresh failed';
       rethrow;
     } finally {
       service.close();
@@ -364,7 +375,22 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   Future<void> _refreshToken(ProvisioningService service) async {
     final current = _state;
     if (current == null) return;
-    final result = await service.refresh(current.refreshToken);
+    // A lost HTTP response does not mean rotation failed server-side.
+    // Retry the *same* token once; the server's short idempotent replay
+    // window returns the same successor pair rather than revoking the device.
+    TokenRefreshResult result;
+    try {
+      result = await service.refresh(current.refreshToken);
+    } on TimeoutException {
+      result = await service.refresh(current.refreshToken);
+    } on SocketException {
+      result = await service.refresh(current.refreshToken);
+    }
+    if (result.accessToken.isEmpty || result.refreshToken.isEmpty) {
+      throw const ProvisioningException(
+        'Provisioning server returned incomplete refreshed credentials.',
+      );
+    }
     final updated = current.copyWith(
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
