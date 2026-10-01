@@ -85,6 +85,8 @@ def build_configuration(source: dict, state: str = "active") -> dict:
     }
     if source.get("janus_url"):
         telephony["janus_url"] = source["janus_url"]
+    if source.get("janus_api_secret"):
+        telephony["janus_api_secret"] = source["janus_api_secret"]
 
     if source.get("sip_username"):
         telephony["sip"] = {
