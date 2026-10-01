@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.store import Store
 
@@ -52,6 +53,23 @@ class RefreshRotationTests(unittest.TestCase):
 
     def test_invalid_token_does_not_rotate(self):
         self.assertIsNone(self.store.rotate_refresh("invalid-token", 900))
+        self.assertIsNotNone(self.store.rotate_refresh(self.refresh, 900))
+
+    def test_failed_rotation_preserves_original_refresh_token(self):
+        from app.store import hash_secret
+        calls = 0
+
+        def fail_successor_hash(value):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("Simulated database write failure")
+            return hash_secret(value)
+
+        with patch("app.store.hash_secret", side_effect=fail_successor_hash):
+            with self.assertRaises(RuntimeError):
+                self.store.rotate_refresh(self.refresh, 900)
+        # The update to revoke the original credential must roll back.
         self.assertIsNotNone(self.store.rotate_refresh(self.refresh, 900))
 
     def test_rotation_without_retry_key_is_still_atomic(self):
