@@ -9,6 +9,7 @@ class ProvisioningConfiguration {
     this.deviceState,
     this.randyUrl,
     this.janusUrl,
+    this.janusApiSecret,
     this.extension,
     this.sipUsername,
     this.sipPassword,
@@ -23,6 +24,7 @@ class ProvisioningConfiguration {
   final String? deviceState;
   final String? randyUrl;
   final String? janusUrl;
+  final String? janusApiSecret;
   final String? extension;
   final String? sipUsername;
   final String? sipPassword;
@@ -56,6 +58,7 @@ class ProvisioningConfiguration {
       randyUrl: services['randy_url']?.toString(),
       janusUrl: telephony['janus_url']?.toString() ??
           services['janus_url']?.toString(),
+      janusApiSecret: telephony['janus_api_secret']?.toString(),
       extension: telephony['extension']?.toString(),
       sipUsername: sip['username']?.toString(),
       sipPassword: sip['password']?.toString(),
@@ -84,6 +87,7 @@ class ProvisioningConfiguration {
           'mode': telephonyMode,
           if (extension != null) 'extension': extension,
           if (janusUrl != null) 'janus_url': janusUrl,
+          if (janusApiSecret != null) 'janus_api_secret': janusApiSecret,
           if (sipUsername != null ||
               sipPassword != null ||
               sipRealm != null ||
