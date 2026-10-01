@@ -1,4 +1,6 @@
+import base64
 import hashlib
+import hmac
 import json
 import secrets
 import sqlite3
@@ -25,8 +27,10 @@ def hash_secret(value: str) -> str:
 
 
 class Store:
-    def __init__(self, path: str):
+    def __init__(self, path: str, retry_key: str = '', retry_grace_seconds: int = 30):
         self.path = path
+        self._retry_key = retry_key.encode('utf-8')
+        self._retry_grace_seconds = retry_grace_seconds
         self._lock = threading.RLock()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._init()
@@ -332,45 +336,120 @@ class Store:
             return None
         return self.get_device(row["device_id"])
 
+    def _successor_tokens(self, previous_token: str) -> tuple[str, str]:
+        """Derive the replacement only while the original token is available.
+
+        Allows a short replay of a lost refresh response without storing
+        plaintext credentials in SQLite. Keep the configured key stable.
+        """
+        def derive(purpose: bytes) -> str:
+            digest = hmac.new(
+                self._retry_key,
+                purpose + previous_token.encode("utf-8"),
+                hashlib.sha256,
+            ).digest()
+            return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+        return derive(b"access:"), derive(b"refresh:")
+
     def rotate_refresh(
         self,
         token: str,
         access_ttl: int,
+        refresh_ttl: int = 60 * 60 * 24 * 30,
     ) -> tuple[dict[str, Any], str, str, int] | None:
         digest = hash_secret(token)
+        now = utcnow()
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT device_id, expires_at, revoked_at
-                FROM refresh_tokens
-                WHERE token_hash = ?
+                FROM refresh_tokens WHERE token_hash = ?
                 """,
                 (digest,),
             ).fetchone()
-            if (
-                row is None
-                or row["revoked_at"] is not None
-                or parse_time(row["expires_at"]) <= utcnow()
-            ):
-                conn.rollback()
+            if row is None or parse_time(row["expires_at"]) <= now:
                 return None
-            device = self.get_device(row["device_id"])
-            if device is None or device["state"] in {"revoked", "retired"}:
-                conn.rollback()
+
+            device_row = conn.execute(
+                "SELECT state FROM devices WHERE id = ?",
+                (row["device_id"],),
+            ).fetchone()
+            if device_row is None or device_row["state"] in {"revoked", "retired"}:
                 return None
-            now = utcnow()
+
+            # A retry is accepted only for the immediately preceding token,
+            # during the configured grace window, while its successor is live.
+            if row["revoked_at"] is not None:
+                if not self._retry_key or (
+                    now - parse_time(row["revoked_at"])
+                ).total_seconds() > self._retry_grace_seconds:
+                    return None
+                access, refresh = self._successor_tokens(token)
+                successor = conn.execute(
+                    """
+                    SELECT expires_at FROM refresh_tokens
+                    WHERE token_hash = ? AND device_id = ?
+                      AND revoked_at IS NULL
+                    """,
+                    (hash_secret(refresh), row["device_id"]),
+                ).fetchone()
+                access_row = conn.execute(
+                    """
+                    SELECT expires_at FROM access_tokens
+                    WHERE token_hash = ? AND device_id = ?
+                      AND revoked_at IS NULL
+                    """,
+                    (hash_secret(access), row["device_id"]),
+                ).fetchone()
+                if successor is None or access_row is None or (
+                    parse_time(successor["expires_at"]) <= now
+                    or parse_time(access_row["expires_at"]) <= now
+                ):
+                    return None
+                remaining = max(
+                    1, int((parse_time(access_row["expires_at"]) - now).total_seconds()),
+                )
+                return self.get_device(row["device_id"]), access, refresh, remaining
+
+            if self._retry_key:
+                access, refresh = self._successor_tokens(token)
+            else:
+                access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
             conn.execute(
-                """
-                UPDATE refresh_tokens SET revoked_at = ?
-                WHERE token_hash = ?
-                """,
+                "UPDATE refresh_tokens SET revoked_at = ? WHERE token_hash = ?",
                 (iso(now), digest),
             )
+            conn.execute(
+                """
+                INSERT INTO access_tokens (token_hash, device_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    hash_secret(access),
+                    row["device_id"],
+                    iso(now + timedelta(seconds=access_ttl)),
+                    iso(now),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO refresh_tokens (token_hash, device_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    hash_secret(refresh),
+                    row["device_id"],
+                    iso(now + timedelta(seconds=refresh_ttl)),
+                    iso(now),
+                ),
+            )
+            # The old token is invalidated and its replacements are committed
+            # together; on an exception SQLite rolls back the entire rotation.
             conn.commit()
 
-        access, refresh, ttl = self.issue_tokens(device["id"], access_ttl)
-        return device, access, refresh, ttl
+        return self.get_device(row["device_id"]), access, refresh, access_ttl
 
     def revoke_device_tokens(self, device_id: str) -> None:
         now = iso(utcnow())
