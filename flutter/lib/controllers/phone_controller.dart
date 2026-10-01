@@ -235,6 +235,13 @@ class PhoneController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setJanusApiSecretForTesting(String secret) async {
+    final value = secret.trim();
+    await _settingsRepository.saveJanusApiSecret(value);
+    janusApiSecret = value;
+    notifyListeners();
+  }
+
   Future<void> setDoNotDisturb(bool enabled) async {
     doNotDisturb = enabled;
     await _settingsRepository.saveDoNotDisturb(enabled);
