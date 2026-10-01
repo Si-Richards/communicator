@@ -115,6 +115,9 @@ class SettingsRepository {
     }
   }
 
+  Future<void> saveJanusApiSecret(String secret) =>
+      _secureStorage.write(key: _janusSecretKey, value: secret);
+
   Future<void> saveDoNotDisturb(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_dndKey, enabled);
