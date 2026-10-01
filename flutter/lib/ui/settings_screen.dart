@@ -94,27 +94,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveJanusSecret() async {
-    if (_saving) return;
-    setState(() => _saving = true);
-    try {
-      await widget.controller.setJanusApiSecretForTesting(_janusSecret.text);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Janus API secret saved')),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to save Janus API secret: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final model = widget.controller;
@@ -264,20 +243,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   TextField(
                     controller: _janusSecret,
-                    enabled: true,
+                    enabled: !managed,
                     obscureText: true,
                     autocorrect: false,
                     decoration: const InputDecoration(
                       labelText: 'API secret',
-                      helperText: 'Testing only. Stored in secure device storage.',
+                      helperText: managed
+                          ? 'Managed by provisioning.'
+                          : 'Development only; never compile this into the app.',
                     ),
                   ),
-                  if (managed)
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : _saveJanusSecret,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Save Janus API secret'),
-                    ),
                 ],
               ),
               _SectionCard(
