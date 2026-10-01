@@ -66,6 +66,7 @@ class AdminActivationRequest(BaseModel):
     telephony_mode: Literal["randy_managed", "direct_janus"] = "randy_managed"
     randy_url: str | None = None
     janus_url: str | None = None
+    janus_api_secret: str | None = None
     sip_username: str | None = None
     sip_password: str | None = None
     sip_realm: str | None = None
