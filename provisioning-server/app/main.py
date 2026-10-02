@@ -286,6 +286,11 @@ def configuration(
     config["device"] = dict(config.get("device", {}))
     config["device"]["state"] = device["state"]
     config["version"] = device["configuration_version"]
+    config["policy"] = {
+        **config.get("policy", {}),
+        "allow_manual_fallback": False,
+        "allow_settings_edit": False,
+    }
     return config
 
 
