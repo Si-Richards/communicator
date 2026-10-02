@@ -87,7 +87,7 @@ Do not use that transitional pattern as the final mobile security model. The tar
 
 ```bash
 curl -sS -X POST \
-  http://127.0.0.1:8081/api/v1/admin/devices/dev_xxx/state \
+  http://127.0.0.1:8082/api/v1/admin/devices/dev_xxx/state \
   -H 'Content-Type: application/json' \
   -H 'X-Admin-Key: change-me' \
   -d '{"state":"locked"}'
@@ -139,7 +139,7 @@ Build/run the Flutter app with a default provisioning endpoint if desired:
 
 ```bash
 flutter run \
-  --dart-define=VOICEHOST_PROVISIONING_URL=https://provision-dev.voicehost.io
+  --dart-define=VOICEHOST_PROVISIONING_URL=https://provisioning.softphone.voicehost.io
 ```
 
 Then open:
@@ -170,7 +170,7 @@ Inventory example (the response deliberately excludes configuration and push sec
 
 ```bash
 curl -sS -H "X-Admin-Key: YOUR_ADMIN_KEY" \
-  'http://127.0.0.1:8081/api/v1/admin/devices?limit=50&offset=0&state=active'
+  'http://127.0.0.1:8082/api/v1/admin/devices?limit=50&offset=0&state=active'
 ```
 
 Housekeeping preview (safe default):
@@ -179,7 +179,7 @@ Housekeeping preview (safe default):
 curl -sS -X POST -H "X-Admin-Key: YOUR_ADMIN_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"retention_days":90,"dry_run":true}' \
-  http://127.0.0.1:8081/api/v1/admin/maintenance/housekeeping
+  http://127.0.0.1:8082/api/v1/admin/maintenance/housekeeping
 ```
 
 After reviewing the counts, set `dry_run` to `false` to delete *only*
@@ -199,124 +199,80 @@ staging environment and review existing duplicate installations. The local
 development Compose binding is loopback-only. Always use an HTTPS reverse
 proxy for remote mobile devices and never expose the staging admin key.
 
-## Separate HTTPS ingress (release 0.3 foundation)
+## Shared mobile-gateway NGINX and Certbot
 
-Use `nginx/provisioning.softphone.voicehost.io.conf` as the reference
-reverse-proxy configuration on the same host. Obtain a certificate covering
-`provisioning.softphone.voicehost.io`; replace example certificate paths if
-your certificate manager uses different paths.
+The provisioning server **does not** publish public 80/443/8443 ports or
+run a second NGINX. Both provisioning API containers join the existing
+`mobile-gateway_default` network. The existing `mobile-gateway-nginx-1`
+owns all public TLS listeners and uses the existing host certificate
+directory `/etc/letsencrypt`. Keep its existing RANDY routing intact.
 
-- Device API: `https://provisioning.softphone.voicehost.io` (443, public).
-- Administration API/Swagger: `https://provisioning.softphone.voicehost.io:8443/docs`
-  (8443, limited to VoiceHost management networks/VPN).
-- Public Uvicorn: `127.0.0.1:8081` (no administration routes registered).
-- Admin Uvicorn: `127.0.0.1:8082` (no device routes registered).
-- Admin API still requires `X-Admin-Key` in staging; a portal-authenticated
-  web UI, individual administrator sessions, MFA and RBAC have **not**
-  been implemented. Do not distribute the shared key to browser clients.
+**Prerequisites:** DNS for `provisioning.softphone.voicehost.io` must
+resolve to this host, and inbound 80/443 must reach the existing gateway
+NGINX. Port 8443 should be firewalled to VoiceHost management/VPN
+sources. Preserve the existing `.env` and provisioning-data volume.
 
-Before enabling NGINX, create
-`/etc/nginx/snippets/softphone-provisioning-admin-allowlist.conf` with
-explicit `allow <management IP or VPN CIDR>;` entries followed by `deny all;`.
-Restrict port 8443 at the host firewall as an additional layer, and ensure
-8081/8082 are not externally exposed. If NGINX runs on a *different* host,
-replace loopback backends with private network addresses and firewall them
-accordingly. NGINX must already be installed, its included configuration
-must not conflict with existing listeners, and TLS certificates and DNS must
-be in place before changing the mobile default URL.
-
-Check route isolation and health after deploying:
-
-```bash
-docker compose up -d --build
-curl -sS http://127.0.0.1:8081/health
-curl -sS http://127.0.0.1:8082/health
-curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8081/api/v1/admin/devices
-curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8082/api/v1/device/configuration
-```
-
-Both route probes should return 404. API documentation on each port
-advertises only its respective routes. Once NGINX is enabled also check
-that port 443 returns 404 for admin routes and that access to 8443 is denied
-from outside authorised networks. Existing installed Flutter builds may
-retain a previously saved provisioning URL; reconfigure or migrate those
-installations deliberately after the new HTTPS endpoint is available.
-
-## Containerised NGINX and Certbot (new deployment)
-
-The Compose stack now includes `nginx` and an on-demand `certbot` service.
-The former exposes 80 (ACME/redirect), 443 (device API) and 8443
-(restricted administration API). The API containers continue to publish
-their development ports only on host loopback. The web UI, session
-authentication, MFA and RBAC are still future work.
-
-**Prerequisites:** Ensure that the DNS A/AAAA records for
-`provisioning.softphone.voicehost.io` point to this host and that no
-other service owns host ports 80, 443 or 8443. Allow incoming port 80
-for Let's Encrypt HTTP-01 validation and port 443 for the mobile clients.
-Restrict ingress on 8443 to management/VPN sources at the upstream and
-host firewall as well as the NGINX allowlist. Docker-published ports may
-bypass some host firewall policies: validate the actual ingress rules.
-When a reverse proxy/CDN precedes NGINX, configure trusted proxy IP
-handling correctly, or enforce admin access at the upstream network.
-
-1. Back up the existing database and preserve the current `.env` and
-   `PROVISIONING_REFRESH_RETRY_KEY`. Pull the branch, then configure
-   `nginx/snippets/admin-allowlist.conf` with explicit `allow IP/CIDR;`
-   lines preceding the final `deny all;`. The committed default denies
-   everyone on 8443.
-
-2. Start the HTTP bootstrap (NGINX intentionally has no TLS listeners
-   until the certificate exists):
+1. Update both Compose projects and restart the provisioning backends:
 
    ```bash
-   mkdir -p certbot/www certbot/letsencrypt
-   docker compose up -d --build
+   cd /opt/communicator && git pull origin feature/flutter-softphone
+   cd provisioning-server && docker compose up -d --build --remove-orphans
    ```
 
-3. Obtain the certificate (replace the example address with a real
-   administrator email; do not request a live certificate until DNS
-   and port 80 are ready):
+   This removes the obsolete provisioning NGINX container that previously
+   conflicted with the gateway's ports. Do not stop the mobile gateway.
+
+2. Recreate only the gateway NGINX to add the shared ACME webroot and
+   staged vhost mount. Run from the `mobile-gateway` directory:
+
+   ```bash
+   cd /opt/communicator/mobile-gateway
+   mkdir -p certbot/www/.well-known/acme-challenge nginx/provisioning-enabled
+   docker compose up -d --no-deps --force-recreate nginx
+   echo voicehost-cert-test > certbot/www/.well-known/acme-challenge/test
+   curl -fsS http://provisioning.softphone.voicehost.io/.well-known/acme-challenge/test
+   ```
+
+   The curl should return `voicehost-cert-test` **without** an HTTPS
+   redirect. Do not request a certificate until this works. The HTTP
+   server serves the ACME exception while redirecting ordinary paths.
+
+3. Request the certificate using the **mobile-gateway** Certbot service,
+   which stores certificates in the same host `/etc/letsencrypt` mounted
+   read-only in gateway NGINX:
 
    ```bash
    docker compose run --rm --no-deps certbot certonly --webroot \
-     --webroot-path /var/www/certbot \
-     --email YOU@YOUR-DOMAIN --agree-tos --no-eff-email \
+     --webroot-path /var/www/certbot --email simon@voicehost.co.uk \
+     --agree-tos --no-eff-email \
      -d provisioning.softphone.voicehost.io
    ```
 
-4. Enable TLS only after the files exist:
+   If another host Certbot installation already manages renewal of the
+   existing gateway certificates, configure renewal of this certificate
+   in that existing scheduler rather than installing a competing one.
+
+4. Edit `nginx/provisioning-tls.conf.example`: insert explicit
+   `allow <VoiceHost management CIDR>;` rules before `deny all;`
+   in the administration (8443) server. Its committed default is
+   deny-all. Apply upstream firewall restrictions too. Then activate
+   this configuration **after** the certificate is present:
 
    ```bash
-   cp nginx/https.conf.template nginx/conf.d/https.conf
+   cp nginx/provisioning-tls.conf.example nginx/provisioning-enabled/provisioning.conf
    docker compose exec -T nginx nginx -t
    docker compose exec -T nginx nginx -s reload
    ```
 
-5. Test both health endpoints and ensure route isolation:
+5. Verify `https://provisioning.softphone.voicehost.io/health`
+   returns `{"status":"ok"}`, while an attempt to visit
+   `https://provisioning.softphone.voicehost.io/api/v1/admin/devices`
+   returns 404. From an authorised management IP, open
+   `https://provisioning.softphone.voicehost.io:8443/docs`.
+   From elsewhere it must be blocked or return 403. The staging
+   administration endpoints also require the `X-Admin-Key` header.
 
-   ```bash
-   curl -fsS https://provisioning.softphone.voicehost.io/health
-   curl -s -o /dev/null -w '%{http_code}\\n' \
-     https://provisioning.softphone.voicehost.io/api/v1/admin/devices
-   ```
-
-   The first call should return JSON `{"status":"ok"}`; the second
-   should return 404. From an authorised management source, confirm
-   `https://provisioning.softphone.voicehost.io:8443/docs` loads.
-   From an unauthorised source it must return 403 or be blocked by the
-   firewall. Requests to the admin API still require `X-Admin-Key`.
-
-6. Schedule daily renewal with host cron, for example:
-
-   ```cron
-   17 3 * * * cd /opt/communicator/provisioning-server && sh renew-certificates.sh >> /var/log/softphone-cert-renewal.log 2>&1
-   ```
-
-   The script runs `certbot renew`, tests the NGINX configuration and
-   reloads NGINX; monitor the cron job and test renewal using
-   `docker compose run --rm --no-deps certbot renew --dry-run`.
-   Keep the Certbot storage backed up and protected: it contains the
-   TLS private key. The former host-NGINX example
-   `nginx/provisioning.softphone.voicehost.io.conf` is retained for
-   reference only and is **not** mounted in this container deployment.
+If using NGINX behind an upstream proxy, the source-IP allowlist must
+use correctly validated client IPs or be enforced upstream. Do not
+trust client-controlled `X-Forwarded-For` headers. The web admin UI,
+individual administrator sessions, MFA and RBAC remain future work.
