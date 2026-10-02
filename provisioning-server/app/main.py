@@ -19,7 +19,7 @@ from .store import Store
 
 app = FastAPI(
     title="VoiceHost Provisioning Service",
-    version="0.2.0",
+    version="0.3.0",
 )
 store = Store(
     settings.database_path,
@@ -317,3 +317,25 @@ def logout(
     store.set_device_state(device["id"], "retired")
     store.audit("device_logout", device["id"], {"reason": request.reason})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# Separate ASGI applications: public port 443 never registers administrative
+# routes. Admin is served by a separate Uvicorn process on private port 8082.
+admin_app = FastAPI(
+    title="VoiceHost Provisioning Administration",
+    version="0.3.0",
+)
+admin_app.add_exception_handler(HTTPException, http_exception_handler)
+admin_routes = [
+    route for route in app.router.routes
+    if getattr(route, "path", "").startswith("/api/v1/admin/")
+]
+admin_app.router.routes.extend(admin_routes)
+app.router.routes = [
+    route for route in app.router.routes if route not in admin_routes
+]
+
+
+@admin_app.get("/health")
+def admin_health() -> dict:
+    return {"status": "ok"}
