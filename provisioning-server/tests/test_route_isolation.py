@@ -5,9 +5,7 @@ from pathlib import Path
 
 # Importing the ASGI module initialises the store. Use an isolated test DB.
 _test_directory = tempfile.TemporaryDirectory()
-os.environ.setdefault(
-    "PROVISIONING_DATABASE", str(Path(_test_directory.name) / "route-test.db")
-)
+os.environ["PROVISIONING_DATABASE"] = str(Path(_test_directory.name) / "route-test.db")
 
 from app.main import app, admin_app  # noqa: E402
 
