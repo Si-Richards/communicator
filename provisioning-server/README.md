@@ -241,3 +241,82 @@ that port 443 returns 404 for admin routes and that access to 8443 is denied
 from outside authorised networks. Existing installed Flutter builds may
 retain a previously saved provisioning URL; reconfigure or migrate those
 installations deliberately after the new HTTPS endpoint is available.
+
+## Containerised NGINX and Certbot (new deployment)
+
+The Compose stack now includes `nginx` and an on-demand `certbot` service.
+The former exposes 80 (ACME/redirect), 443 (device API) and 8443
+(restricted administration API). The API containers continue to publish
+their development ports only on host loopback. The web UI, session
+authentication, MFA and RBAC are still future work.
+
+**Prerequisites:** Ensure that the DNS A/AAAA records for
+`provisioning.softphone.voicehost.io` point to this host and that no
+other service owns host ports 80, 443 or 8443. Allow incoming port 80
+for Let's Encrypt HTTP-01 validation and port 443 for the mobile clients.
+Restrict ingress on 8443 to management/VPN sources at the upstream and
+host firewall as well as the NGINX allowlist. Docker-published ports may
+bypass some host firewall policies: validate the actual ingress rules.
+When a reverse proxy/CDN precedes NGINX, configure trusted proxy IP
+handling correctly, or enforce admin access at the upstream network.
+
+1. Back up the existing database and preserve the current `.env` and
+   `PROVISIONING_REFRESH_RETRY_KEY`. Pull the branch, then configure
+   `nginx/snippets/admin-allowlist.conf` with explicit `allow IP/CIDR;`
+   lines preceding the final `deny all;`. The committed default denies
+   everyone on 8443.
+
+2. Start the HTTP bootstrap (NGINX intentionally has no TLS listeners
+   until the certificate exists):
+
+   ```bash
+   mkdir -p certbot/www certbot/letsencrypt
+   docker compose up -d --build
+   ```
+
+3. Obtain the certificate (replace the example address with a real
+   administrator email; do not request a live certificate until DNS
+   and port 80 are ready):
+
+   ```bash
+   docker compose run --rm --no-deps certbot certonly --webroot \
+     --webroot-path /var/www/certbot \
+     --email YOU@YOUR-DOMAIN --agree-tos --no-eff-email \
+     -d provisioning.softphone.voicehost.io
+   ```
+
+4. Enable TLS only after the files exist:
+
+   ```bash
+   cp nginx/https.conf.template nginx/conf.d/https.conf
+   docker compose exec -T nginx nginx -t
+   docker compose exec -T nginx nginx -s reload
+   ```
+
+5. Test both health endpoints and ensure route isolation:
+
+   ```bash
+   curl -fsS https://provisioning.softphone.voicehost.io/health
+   curl -s -o /dev/null -w '%{http_code}\\n' \
+     https://provisioning.softphone.voicehost.io/api/v1/admin/devices
+   ```
+
+   The first call should return JSON `{"status":"ok"}`; the second
+   should return 404. From an authorised management source, confirm
+   `https://provisioning.softphone.voicehost.io:8443/docs` loads.
+   From an unauthorised source it must return 403 or be blocked by the
+   firewall. Requests to the admin API still require `X-Admin-Key`.
+
+6. Schedule daily renewal with host cron, for example:
+
+   ```cron
+   17 3 * * * cd /opt/communicator/provisioning-server && sh renew-certificates.sh >> /var/log/softphone-cert-renewal.log 2>&1
+   ```
+
+   The script runs `certbot renew`, tests the NGINX configuration and
+   reloads NGINX; monitor the cron job and test renewal using
+   `docker compose run --rm --no-deps certbot renew --dry-run`.
+   Keep the Certbot storage backed up and protected: it contains the
+   TLS private key. The former host-NGINX example
+   `nginx/provisioning.softphone.voicehost.io.conf` is retained for
+   reference only and is **not** mounted in this container deployment.
