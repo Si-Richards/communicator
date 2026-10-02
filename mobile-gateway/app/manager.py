@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from .apns import APNSClient, APNSError
-from .janus import JanusSipSession
+from .janus import JanusSipSession, SipRegistrationError
 from .config import settings
 from .models import DeviceRecord
 
@@ -114,7 +114,27 @@ class MobileSessionManager:
 
     async def restore(self):
         for device in self.store.all():
-            asyncio.create_task(self.ensure_session(device))
+            asyncio.create_task(self.ensure_session_safely(device))
+
+    async def ensure_session_safely(self, device: DeviceRecord):
+        """Do not leak background registration task exceptions to the event loop."""
+        try:
+            await self.ensure_session(device)
+        except SipRegistrationError as error:
+            logger.warning(
+                '[VH-DIAG] event=background_registration_failed device=%s code=%s',
+                _safe_ref(device.device_id), error.code,
+            )
+        except TimeoutError:
+            logger.warning(
+                '[VH-DIAG] event=background_registration_timeout device=%s',
+                _safe_ref(device.device_id),
+            )
+        except Exception:
+            logger.exception(
+                '[VH-DIAG] event=background_session_failed device=%s',
+                _safe_ref(device.device_id),
+            )
 
     async def ensure_session(self, device: DeviceRecord):
         lock = self._locks.setdefault(device.device_id, asyncio.Lock())
@@ -210,8 +230,14 @@ class MobileSessionManager:
             trickle,
             helper_master_id=helper_master_id,
         )
-        await session.start()
-        await session.wait_registered()
+        try:
+            await session.start()
+            await session.wait_registered()
+        except BaseException:
+            # A partially created Janus session must never remain connected
+            # after an unsuccessful registration or cancelled request.
+            await session.stop()
+            raise
         if helper_master_id is None:
             try:
                 await session.subscribe_message_summary()
