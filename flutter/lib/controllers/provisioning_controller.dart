@@ -63,9 +63,10 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         phone.applyProvisionedConfiguration(config);
         mobileCalls.applyProvisionedConfiguration(config);
       }
-      final managedUrl = phone.provisioningUrl.trim().isNotEmpty
-          ? phone.provisioningUrl.trim()
-          : AppConfig.provisioningUrl;
+      // Managed clients always use the provisioning endpoint supplied by
+      // the current build. Migrate legacy saved development IP addresses
+      // without clearing the existing device ID or refresh credentials.
+      final managedUrl = AppConfig.provisioningUrl;
       await phone.setConfigurationSource(
         ConfigurationSource.provisioning,
         provisioningUrl: managedUrl,
