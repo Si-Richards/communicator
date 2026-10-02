@@ -1,0 +1,53 @@
+# Copy into nginx/provisioning-enabled/provisioning.conf ONLY after obtaining
+# /etc/letsencrypt/live/provisioning.softphone.voicehost.io/{fullchain,privkey}.pem.
+# The provisioning and provisioning-admin containers must be up on
+# mobile-gateway_default before restarting/reloading the gateway NGINX.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name provisioning.softphone.voicehost.io;
+
+    ssl_certificate /etc/letsencrypt/live/provisioning.softphone.voicehost.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/provisioning.softphone.voicehost.io/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 128k;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    location / {
+        proxy_pass http://provisioning:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+server {
+    listen 8443 ssl;
+    # Change only after reviewing host/upstream firewall rules; 8443 must
+    # never be exposed to the public internet without network restrictions.
+    server_name provisioning.softphone.voicehost.io;
+
+    ssl_certificate /etc/letsencrypt/live/provisioning.softphone.voicehost.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/provisioning.softphone.voicehost.io/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 128k;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Replace with explicit VoiceHost VPN or management CIDRs before enabling.
+    # Example: allow 192.0.2.10/32;
+    deny all;
+
+    location / {
+        proxy_pass http://provisioning-admin:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
