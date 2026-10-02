@@ -17,6 +17,14 @@ TrickleCallback = Callable[[dict], Awaitable[None]]
 logger = logging.getLogger('uvicorn.error')
 
 
+class SipRegistrationError(RuntimeError):
+    """Registration rejected by Janus; never expose raw SIP responses to clients."""
+
+    def __init__(self, code: int | str | None = None):
+        self.code = str(code)[:10] if code is not None else 'unknown'
+        super().__init__('SIP registration failed')
+
+
 class JanusSipSession:
     def __init__(
         self,
@@ -39,6 +47,8 @@ class JanusSipSession:
         self._keepalive_task = None
         self.master_id: int | None = helper_master_id
         self._registered = asyncio.Event()
+        self._registration_finished = asyncio.Event()
+        self._registration_error: SipRegistrationError | None = None
         self.sip_srv_records: list[dict[str, str | int]] = []
 
     async def start(self):
@@ -151,7 +161,9 @@ class JanusSipSession:
         self.ws = None
 
     async def wait_registered(self, timeout: float = 10):
-        await asyncio.wait_for(self._registered.wait(), timeout)
+        await asyncio.wait_for(self._registration_finished.wait(), timeout)
+        if self._registration_error is not None:
+            raise self._registration_error
         return self.master_id
 
     async def call(self, uri: str, sdp: str):
@@ -324,11 +336,18 @@ class JanusSipSession:
             if message.get('janus') == 'event':
                 data = (message.get('plugindata') or {}).get('data') or {}
                 result = data.get('result') or {}
+                if result.get('event') == 'registration_failed':
+                    self._registration_error = SipRegistrationError(result.get('code'))
+                    self._registration_finished.set()
                 if result.get('event') == 'registered':
                     value = result.get('master_id')
                     if value is not None:
                         self.master_id = int(value)
                     self._registered.set()
+                    self._registration_finished.set()
+                if data.get('error') and not self._registration_finished.is_set():
+                    self._registration_error = SipRegistrationError(data.get('error_code'))
+                    self._registration_finished.set()
                 try:
                     await self.on_plugin(data, message.get('jsep'))
                 except Exception:
