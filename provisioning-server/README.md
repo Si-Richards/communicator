@@ -33,7 +33,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-The container listens on port 8080 and the supplied compose file binds it to `127.0.0.1:8081`.
+Two isolated containers listen on port 8080 internally. Compose binds the public API to `127.0.0.1:8081` and administration to `127.0.0.1:8082`. Both share the SQLite Docker volume.
 
 Health:
 
@@ -44,7 +44,7 @@ curl http://127.0.0.1:8081/health
 Swagger:
 
 ```text
-http://127.0.0.1:8081/docs
+http://127.0.0.1:8081/docs (device API only)\nhttp://127.0.0.1:8082/docs (administration API only)
 ```
 
 ## Create an activation code
@@ -52,7 +52,7 @@ http://127.0.0.1:8081/docs
 A RANDY-managed test endpoint that relies on existing/manual SIP credentials:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8081/api/v1/admin/activations \
+curl -sS -X POST http://127.0.0.1:8082/api/v1/admin/activations \
   -H 'Content-Type: application/json' \
   -H 'X-Admin-Key: change-me' \
   -d '{
@@ -198,3 +198,46 @@ Before deployment, back up the SQLite volume; validate the tests in a
 staging environment and review existing duplicate installations. The local
 development Compose binding is loopback-only. Always use an HTTPS reverse
 proxy for remote mobile devices and never expose the staging admin key.
+
+## Separate HTTPS ingress (release 0.3 foundation)
+
+Use `nginx/provisioning.softphone.voicehost.io.conf` as the reference
+reverse-proxy configuration on the same host. Obtain a certificate covering
+`provisioning.softphone.voicehost.io`; replace example certificate paths if
+your certificate manager uses different paths.
+
+- Device API: `https://provisioning.softphone.voicehost.io` (443, public).
+- Administration API/Swagger: `https://provisioning.softphone.voicehost.io:8443/docs`
+  (8443, limited to VoiceHost management networks/VPN).
+- Public Uvicorn: `127.0.0.1:8081` (no administration routes registered).
+- Admin Uvicorn: `127.0.0.1:8082` (no device routes registered).
+- Admin API still requires `X-Admin-Key` in staging; a portal-authenticated
+  web UI, individual administrator sessions, MFA and RBAC have **not**
+  been implemented. Do not distribute the shared key to browser clients.
+
+Before enabling NGINX, create
+`/etc/nginx/snippets/softphone-provisioning-admin-allowlist.conf` with
+explicit `allow <management IP or VPN CIDR>;` entries followed by `deny all;`.
+Restrict port 8443 at the host firewall as an additional layer, and ensure
+8081/8082 are not externally exposed. If NGINX runs on a *different* host,
+replace loopback backends with private network addresses and firewall them
+accordingly. NGINX must already be installed, its included configuration
+must not conflict with existing listeners, and TLS certificates and DNS must
+be in place before changing the mobile default URL.
+
+Check route isolation and health after deploying:
+
+```bash
+docker compose up -d --build
+curl -sS http://127.0.0.1:8081/health
+curl -sS http://127.0.0.1:8082/health
+curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8081/api/v1/admin/devices
+curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8082/api/v1/device/configuration
+```
+
+Both route probes should return 404. API documentation on each port
+advertises only its respective routes. Once NGINX is enabled also check
+that port 443 returns 404 for admin routes and that access to 8443 is denied
+from outside authorised networks. Existing installed Flutter builds may
+retain a previously saved provisioning URL; reconfigure or migrate those
+installations deliberately after the new HTTPS endpoint is available.
