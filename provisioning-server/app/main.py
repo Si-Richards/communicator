@@ -1,4 +1,5 @@
-import hmac\nfrom typing import Annotated
+import hmac
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -77,7 +78,8 @@ def bearer_device(
 def admin_auth(
     x_admin_key: Annotated[str | None, Header(alias="X-Admin-Key")] = None,
 ) -> None:
-    if (not settings.admin_key or not x_admin_key\n            or not hmac.compare_digest(x_admin_key, settings.admin_key)):
+    if (not settings.admin_key or not x_admin_key
+            or not hmac.compare_digest(x_admin_key, settings.admin_key)):
         raise error("admin_unauthorized", "Administrator credential required.", 401)
 
 
