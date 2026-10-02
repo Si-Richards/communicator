@@ -1,0 +1,43 @@
+# Activate AFTER Certbot has issued the first certificate by copying this file
+# to nginx/conf.d/https.conf. Do not expose the admin listener without an allowlist.
+server {
+    listen 443 ssl;
+    server_name provisioning.softphone.voicehost.io;
+    ssl_certificate /etc/letsencrypt/live/provisioning.softphone.voicehost.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/provisioning.softphone.voicehost.io/privkey.pem;
+
+    client_max_body_size 128k;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    location / {
+        proxy_pass http://provisioning:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 8443 ssl;
+    server_name provisioning.softphone.voicehost.io;
+    ssl_certificate /etc/letsencrypt/live/provisioning.softphone.voicehost.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/provisioning.softphone.voicehost.io/privkey.pem;
+
+    # Restrict every administration route, including Swagger and OpenAPI.
+    include /etc/nginx/snippets/admin-allowlist.conf;
+    client_max_body_size 128k;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    location / {
+        proxy_pass http://provisioning-admin:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
