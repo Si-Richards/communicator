@@ -9,6 +9,9 @@ services:
       - "127.0.0.1:8081:8080"
     volumes:
       - provisioning-data:/data
+    networks:
+      - default
+      - mobile-gateway-shared
 
   provisioning-admin:
     build: .
@@ -21,30 +24,10 @@ services:
     volumes:
       - provisioning-data:/data
 
-
-  nginx:
-    image: nginx:1.28-alpine
-    restart: unless-stopped
-    depends_on:
-      - provisioning
-      - provisioning-admin
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8443:8443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/snippets:/etc/nginx/snippets:ro
-      - ./certbot/www:/var/www/certbot:ro
-      - ./certbot/letsencrypt:/etc/letsencrypt:ro
-
-  certbot:
-    image: certbot/certbot:latest
-    profiles: ["tools"]
-    volumes:
-      - ./certbot/www:/var/www/certbot
-      - ./certbot/letsencrypt:/etc/letsencrypt
-
-
 volumes:
   provisioning-data:
+
+networks:
+  mobile-gateway-shared:
+    external: true
+    name: mobile-gateway_default
