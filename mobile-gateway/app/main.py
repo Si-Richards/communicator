@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from .apns import APNSClient, APNSError
 from .config import settings
 from .manager import MobileSessionManager
+from .janus import SipRegistrationError
 from .models import (
     AnswerRequest,
     AttendedTransferStartRequest,
@@ -636,7 +637,7 @@ async def register_device(body: DeviceRegistration):
         token_fp,
     )
     device = store.upsert(body)
-    asyncio.create_task(manager.ensure_session(device))
+    asyncio.create_task(manager.ensure_session_safely(device))
     return {'ok': True, 'device_id': device.device_id}
 
 
@@ -666,6 +667,34 @@ async def start_call(device_id: str, body: OutboundCallRequest):
         )
     except KeyError:
         raise HTTPException(404, 'device not found')
+    except SipRegistrationError as error:
+        diag_logger.warning(
+            '[VH-DIAG] event=outbound_registration_rejected device=%s code=%s',
+            _safe_ref(device_id), error.code,
+        )
+        raise HTTPException(503, {
+            'code': 'sip_registration_failed',
+            'message': 'The SIP account has not registered with the PBX.',
+            'janus_code': error.code,
+        }) from error
+    except TimeoutError as error:
+        diag_logger.warning(
+            '[VH-DIAG] event=outbound_registration_timeout device=%s',
+            _safe_ref(device_id),
+        )
+        raise HTTPException(504, {
+            'code': 'sip_registration_timeout',
+            'message': 'Timed out while waiting for SIP registration.',
+        }) from error
+    except (ConnectionError, OSError) as error:
+        diag_logger.warning(
+            '[VH-DIAG] event=outbound_gateway_unavailable device=%s type=%s',
+            _safe_ref(device_id), type(error).__name__,
+        )
+        raise HTTPException(503, {
+            'code': 'sip_gateway_unavailable',
+            'message': 'The SIP gateway connection is unavailable.',
+        }) from error
     except RuntimeError as error:
         raise HTTPException(409, str(error))
     return {'ok': True, 'call_id': call.id}
