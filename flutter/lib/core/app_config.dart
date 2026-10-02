@@ -20,7 +20,7 @@ class AppConfig {
 
   static const provisioningUrl = String.fromEnvironment(
     'VOICEHOST_PROVISIONING_URL',
-    defaultValue: 'http://149.19.177.56:8081/',
+    defaultValue: 'https://provisioning.softphone.voicehost.io',
   );
   static const pushEnvironment = String.fromEnvironment(
     'VOICEHOST_PUSH_ENVIRONMENT',
