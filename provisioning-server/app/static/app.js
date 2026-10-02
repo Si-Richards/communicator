@@ -169,7 +169,9 @@ async function boot() {
       connection_strategy:el("telephony-mode").value === "direct_janus" ? "direct_janus" : "managed_mobile",
       telephony_mode:el("telephony-mode").value,
       sip_username:el("sip-user").value.trim() || null,
-      sip_password:el("sip-password").value || null
+      sip_password:el("sip-password").value || null,
+      sip_realm:el("sip-realm").value.trim() || "hpbx.sipconvergence.co.uk",
+      sip_proxy:el("sip-proxy").value.trim() || null
     };
     try {
       const result = await api("activations", {method:"POST",body:JSON.stringify(body)});
