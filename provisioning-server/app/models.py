@@ -84,7 +84,7 @@ class AdminActivationRequest(BaseModel):
     policy: dict[str, Any] = Field(
         default_factory=lambda: {
             "allow_settings_edit": False,
-            "allow_manual_fallback": True,
+            "allow_manual_fallback": False,
             "minimum_app_build": 23,
             "force_update": False,
         },
@@ -93,3 +93,7 @@ class AdminActivationRequest(BaseModel):
 
 class AdminDeviceStateRequest(BaseModel):
     state: Literal["active", "locked", "revoked", "retired"]
+
+class AdminHousekeepingRequest(BaseModel):
+    retention_days: int = Field(default=90, ge=1, le=3650)
+    dry_run: bool = True
