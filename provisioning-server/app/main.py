@@ -341,3 +341,7 @@ app.router.routes = [
 @admin_app.get("/health")
 def admin_health() -> dict:
     return {"status": "ok"}
+
+# The portal exists only in the administration ASGI application.
+from .portal import make_router
+admin_app.include_router(make_router(store, settings))
