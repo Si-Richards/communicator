@@ -23,6 +23,9 @@ services:
       - "127.0.0.1:8082:8080"
     volumes:
       - provisioning-data:/data
+    networks:
+      - default
+      - mobile-gateway-shared
 
 volumes:
   provisioning-data:
