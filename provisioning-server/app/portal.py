@@ -9,6 +9,7 @@ import secrets
 import threading
 import time
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -116,6 +117,9 @@ def make_router(store, settings) -> APIRouter:
             raise HTTPException(503, "Administrator login is not configured.")
         # Enforce a small lockout per remote address; the management VPN and
         # upstream rate limits remain the primary perimeter.
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != settings.portal_origin.rstrip("/"):
+            raise HTTPException(403, "Untrusted origin.")
         address = request.client.host if request.client else "unknown"
         now = time.monotonic()
         with failure_lock:
@@ -162,7 +166,7 @@ def make_router(store, settings) -> APIRouter:
             count = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
             waiting = conn.execute(
                 "SELECT COUNT(*) FROM activations WHERE consumed_at IS NULL AND expires_at > ?",
-                (__import__("datetime").datetime.now(__import__("datetime").UTC).isoformat().replace("+00:00", "Z"),),
+                (datetime.now(UTC).isoformat().replace("+00:00", "Z"),),
             ).fetchone()[0]
         return protect(JSONResponse({
             "devices": count,
