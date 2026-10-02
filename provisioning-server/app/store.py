@@ -108,6 +108,114 @@ class Store:
                 """
             )
 
+    def activate_device(self, code: str, descriptor: dict, config_factory, push: dict | None,
+                        access_ttl: int, refresh_ttl: int = 60 * 60 * 24 * 30):
+        """Consume an activation, register an installation and issue tokens atomically.
+
+        A duplicate active installation is rejected without consuming its code.
+        Administrators must explicitly retire/revoke the old installation first.
+        """
+        now = utcnow()
+        device_id = "dev_" + secrets.token_hex(12)
+        access = secrets.token_urlsafe(32)
+        refresh = secrets.token_urlsafe(48)
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            activation = conn.execute(
+                "SELECT * FROM activations WHERE code_hash = ?",
+                (hash_secret(code.strip().upper()),),
+            ).fetchone()
+            if (activation is None or activation["consumed_at"] is not None
+                    or parse_time(activation["expires_at"]) <= now):
+                return None, "activation_code_invalid"
+            existing = conn.execute(
+                """SELECT id, state FROM devices
+                   WHERE installation_id = ? AND platform = ?
+                   ORDER BY created_at DESC""",
+                (descriptor["installation_id"], descriptor["platform"]),
+            ).fetchall()
+            if any(item["state"] not in ("revoked", "retired") for item in existing):
+                return None, "installation_already_registered"
+            source = json.loads(activation["config_json"])
+            config = config_factory(source)
+            conn.execute(
+                """INSERT INTO devices (
+                    id, installation_id, platform, device_type, device_name,
+                    app_version, app_build, os_version, state,
+                    configuration_version, config_json, push_json,
+                    last_seen_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (device_id, descriptor["installation_id"], descriptor["platform"],
+                 descriptor["device_type"], descriptor.get("device_name"),
+                 descriptor["app_version"], descriptor["app_build"],
+                 descriptor.get("os_version"), "active",
+                 int(config.get("version", 1)), json.dumps(config),
+                 json.dumps(push) if push else None, iso(now), iso(now), iso(now)),
+            )
+            conn.execute(
+                "INSERT INTO access_tokens (token_hash, device_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+                (hash_secret(access), device_id, iso(now + timedelta(seconds=access_ttl)), iso(now)),
+            )
+            conn.execute(
+                "INSERT INTO refresh_tokens (token_hash, device_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+                (hash_secret(refresh), device_id, iso(now + timedelta(seconds=refresh_ttl)), iso(now)),
+            )
+            conn.execute("UPDATE activations SET consumed_at = ? WHERE id = ?",
+                         (iso(now), activation["id"]))
+            conn.execute(
+                "INSERT INTO audit_log (event, device_id, detail_json, created_at) VALUES (?, ?, ?, ?)",
+                ("device_activated", device_id, json.dumps({"activation_id": activation["id"]}), iso(now)),
+            )
+        return (device_id, access, refresh, access_ttl, config), None
+
+    def list_devices(self, limit: int = 50, offset: int = 0,
+                     state: str | None = None, query: str | None = None) -> dict:
+        conditions = []
+        params: list = []
+        if state is not None:
+            conditions.append("state = ?")
+            params.append(state)
+        if query:
+            conditions.append("(installation_id LIKE ? OR device_name LIKE ? OR id LIKE ?)")
+            pattern = "%" + query.replace("%", r"\\%").replace("_", r"\\_") + "%"
+            conditions[-1] = conditions[-1].replace("LIKE ?", "LIKE ? ESCAPE '\\\\'")
+            params.extend([pattern] * 3)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        with self._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM devices" + where, params).fetchone()[0]
+            rows = conn.execute(
+                """SELECT id, installation_id, platform, device_type, device_name,
+                          app_version, app_build, os_version, state,
+                          configuration_version, last_seen_at, created_at, updated_at
+                   FROM devices""" + where +
+                " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
+        return {"items": [dict(row) for row in rows], "total": count,
+                "limit": limit, "offset": offset}
+
+    def housekeeping(self, retention_days: int = 90, dry_run: bool = True) -> dict:
+        """Prune only expired credential/activation rows; retain devices and audit history."""
+        cutoff = iso(utcnow() - timedelta(days=retention_days))
+        rules = {
+            "access_tokens": "(expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)) AND created_at < ?",
+            "refresh_tokens": "(expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)) AND created_at < ?",
+            "activations": "(expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)) AND created_at < ?",
+        }
+        results = {}
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for table, predicate in rules.items():
+                args = (cutoff, cutoff, cutoff)
+                results[table] = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {predicate}", args
+                ).fetchone()[0]
+                if not dry_run:
+                    conn.execute(f"DELETE FROM {table} WHERE {predicate}", args)
+            if dry_run:
+                conn.rollback()
+        return {"dry_run": dry_run, "retention_days": retention_days, "deleted_or_eligible": results}
+
     def create_activation(
         self,
         config: dict[str, Any],
