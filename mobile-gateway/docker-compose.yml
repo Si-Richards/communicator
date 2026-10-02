@@ -31,6 +31,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "8443:8443"
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./secrets/admin.htpasswd:/etc/nginx/admin.htpasswd:ro
