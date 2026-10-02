@@ -276,3 +276,63 @@ If using NGINX behind an upstream proxy, the source-IP allowlist must
 use correctly validated client IPs or be enforced upstream. Do not
 trust client-controlled `X-Forwarded-For` headers. The web admin UI,
 individual administrator sessions, MFA and RBAC remain future work.
+
+## Web administration portal (release 0.3 initial UI)
+
+The first VoiceHost-branded portal is served **only** by the administration
+ASGI application on restricted TLS port 8443:
+
+- `https://provisioning.softphone.voicehost.io:8443/portal/login` — sign in
+- `https://provisioning.softphone.voicehost.io:8443/portal` — dashboard
+- Dashboard: device counts by state, available activations, recent devices
+- Devices: search, filter, paginate, lock/unlock, revoke and retire
+- Provisioning: single-use activation creation, optional transitional SIP
+  credentials, copyable activation code shown **only at creation**
+- Maintenance: housekeeping preview and confirmed deletion
+
+The browser never receives `PROVISIONING_ADMIN_KEY`. Portal operations use
+server-side store methods and are audited. The login password is stored as a
+PBKDF2-SHA256 hash; an independently generated secret signs the Secure,
+HttpOnly, SameSite=Strict, eight-hour session cookie. Mutations require a
+session-bound CSRF token. Login is rate-limited per source address within a
+single worker. The UI must stay restricted to trusted VoiceHost management
+networks, including the existing NGINX 8443 IP allowlist and upstream firewall.
+
+### One-time administrator setup
+
+From `/opt/communicator/provisioning-server` after pulling:
+
+```bash
+python3 generate-portal-credentials.py
+```
+
+Enter a strong, unique password twice. Copy **both** generated assignments to
+the existing `.env` (the values are secrets; do not commit or send them in
+support messages):
+
+```text
+PROVISIONING_PORTAL_SECRET=<generated secret>
+PROVISIONING_PORTAL_PASSWORD_HASH=<generated password hash>
+PROVISIONING_PORTAL_ORIGIN=https://provisioning.softphone.voicehost.io:8443
+```
+
+Preserve `PROVISIONING_ADMIN_KEY`, `PROVISIONING_REFRESH_RETRY_KEY` and the
+existing database volume. Rebuild/recreate the admin and public services:
+
+```bash
+docker compose up -d --build provisioning provisioning-admin
+docker compose run --rm --no-deps provisioning python -m unittest discover -s tests -v
+```
+
+The suite now contains **13 tests**. Check `/health` on both local loopback
+ports and verify the portal login over HTTPS from an authorised IP. Check
+`https://provisioning.softphone.voicehost.io/portal` on public port 443
+returns 404; the portal must only be present on 8443.
+
+**Scope and limitations:** This first release supports one shared portal
+administrator with a strong password and eight-hour signed sessions; it
+does not yet provide individual user identities, MFA, RBAC, server-side
+session revocation or reseller tenancy. Keep it restricted to the internal
+management/VPN network. The separate staging administration API under
+`/api/v1/admin/` still accepts the existing `X-Admin-Key` and is similarly
+restricted by NGINX. Do not expose either administrative surface publicly.
