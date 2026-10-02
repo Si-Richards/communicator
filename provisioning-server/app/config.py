@@ -9,6 +9,9 @@ class Settings:
         "/data/provisioning.db",
     )
     admin_key: str = os.getenv("PROVISIONING_ADMIN_KEY", "")
+    portal_secret: str = os.getenv("PROVISIONING_PORTAL_SECRET", "")
+    portal_password_hash: str = os.getenv("PROVISIONING_PORTAL_PASSWORD_HASH", "")
+    portal_origin: str = os.getenv("PROVISIONING_PORTAL_ORIGIN", "https://provisioning.softphone.voicehost.io:8443")
     randy_url: str = os.getenv(
         "PROVISIONING_RANDY_URL",
         "https://randy.voicehost.io",
