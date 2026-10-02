@@ -8,8 +8,20 @@ server {
     listen [::]:80;
     server_name ${GATEWAY_HOSTNAME};
 
-    return 301 https://$host$request_uri;
+    # Serve HTTP-01 challenges for gateway and provisioning certificates.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
+
+# Activated provisioning TLS virtual hosts are staged separately after the
+# provisioning.softphone.voicehost.io certificate has been issued.
+include /etc/nginx/conf.d/provisioning-enabled/*.conf;
 
 server {
     listen 443 ssl;
