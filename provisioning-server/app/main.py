@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from .config import settings
@@ -8,6 +8,7 @@ from .models import (
     ActivationRequest,
     AdminActivationRequest,
     AdminDeviceStateRequest,
+    AdminHousekeepingRequest,
     CheckInRequest,
     LogoutRequest,
     PushTokenUpdateRequest,
@@ -18,7 +19,7 @@ from .store import Store
 
 app = FastAPI(
     title="VoiceHost Provisioning Service",
-    version="0.1.0",
+    version="0.2.0",
 )
 store = Store(
     settings.database_path,
@@ -113,7 +114,7 @@ def build_configuration(source: dict, state: str = "active") -> dict:
         },
         "telephony": telephony,
         "features": source.get("features", {}),
-        "policy": source.get("policy", {}),
+        "policy": {**source.get("policy", {}), "allow_manual_fallback": False, "allow_settings_edit": False},
     }
 
 
@@ -158,6 +159,27 @@ def change_device_state(
     return {"device_id": device_id, "state": request.state}
 
 
+@app.get("/api/v1/admin/devices")
+def admin_list_devices(
+    _: Annotated[None, Depends(admin_auth)],
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    state: str | None = Query(default=None, pattern="^(pending|active|locked|revoked|retired)$"),
+    query: str | None = Query(default=None, max_length=200),
+) -> dict:
+    return store.list_devices(limit=limit, offset=offset, state=state, query=query)
+
+
+@app.post("/api/v1/admin/maintenance/housekeeping")
+def admin_housekeeping(
+    request: AdminHousekeepingRequest,
+    _: Annotated[None, Depends(admin_auth)],
+) -> dict:
+    result = store.housekeeping(retention_days=request.retention_days, dry_run=request.dry_run)
+    store.audit("housekeeping_run", detail=result)
+    return result
+
+
 @app.get("/api/v1/admin/devices/{device_id}")
 def admin_get_device(
     device_id: str,
@@ -173,32 +195,34 @@ def admin_get_device(
 
 @app.post("/api/v1/device/activate", status_code=status.HTTP_201_CREATED)
 def activate(request: ActivationRequest, response: Response) -> dict:
-    source = store.consume_activation(request.code)
-    if source is None:
+    result, failure = store.activate_device(
+        request.code,
+        request.device.model_dump(),
+        build_configuration,
+        request.push.model_dump(exclude_none=True) if request.push else None,
+        settings.access_token_ttl_seconds,
+    )
+    if failure:
+        if failure == "installation_already_registered":
+            raise error(
+                failure,
+                "This installation is already registered. An administrator must retire "
+                "or revoke the previous registration before re-provisioning.",
+                409,
+            )
         raise error(
             "activation_code_invalid",
             "The activation code is invalid, expired or already used.",
             409,
         )
-
-    config = build_configuration(source)
-    device = store.create_device(
-        request.device.model_dump(),
-        config,
-        request.push.model_dump(exclude_none=True) if request.push else None,
-    )
-    access, refresh, ttl = store.issue_tokens(
-        device["id"],
-        settings.access_token_ttl_seconds,
-    )
-    store.audit("device_activated", device["id"])
+    device_id, access, refresh_token, ttl, config = result
     response.headers["Cache-Control"] = "no-store"
     return {
-        "device_id": device["id"],
+        "device_id": device_id,
         "access_token": access,
-        "refresh_token": refresh,
+        "refresh_token": refresh_token,
         "expires_in": ttl,
-        "configuration_version": device["configuration_version"],
+        "configuration_version": int(config.get("version", 1)),
         "configuration": config,
     }
 
