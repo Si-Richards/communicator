@@ -307,6 +307,8 @@ def logout(
     request: LogoutRequest,
     device: Annotated[dict, Depends(bearer_device)],
 ) -> Response:
-    store.revoke_device_tokens(device["id"])
+    # A signed-out installation must be eligible for a new activation code.
+    # Retiring revokes both token families in the same transaction.
+    store.set_device_state(device["id"], "retired")
     store.audit("device_logout", device["id"], {"reason": request.reason})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
