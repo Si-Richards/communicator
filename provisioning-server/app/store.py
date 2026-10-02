@@ -177,8 +177,7 @@ class Store:
             params.append(state)
         if query:
             conditions.append("(installation_id LIKE ? OR device_name LIKE ? OR id LIKE ?)")
-            pattern = "%" + query.replace("%", r"\\%").replace("_", r"\\_") + "%"
-            conditions[-1] = conditions[-1].replace("LIKE ?", "LIKE ? ESCAPE '\\\\'")
+            pattern = "%" + query + "%"
             params.extend([pattern] * 3)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         with self._connect() as conn:
