@@ -1,6 +1,6 @@
 # VoiceHost Provisioning Server
 
-Standalone reference/staging implementation of the VoiceHost endpoint provisioning API.
+Standalone reference/staging implementation of the VoiceHost endpoint provisioning API. Configuration is **VoiceHost managed only**; the Flutter settings screen no longer offers manual SIP or Janus editing.
 
 This service is intentionally separate from RANDY. It owns activation, device identity, device state and managed endpoint configuration. RANDY remains the mobile telephony runtime.
 
@@ -18,7 +18,7 @@ Implemented client endpoints:
 Staging administration endpoints:
 
 - `POST /api/v1/admin/activations`
-- `GET /api/v1/admin/devices/{device_id}`
+- `GET /api/v1/admin/devices` (paginated; optional state and query filters)\n- `POST /api/v1/admin/maintenance/housekeeping` (dry-run by default)\n- `GET /api/v1/admin/devices/{device_id}`
 - `POST /api/v1/admin/devices/{device_id}/state`
 
 The admin-key surface is for development/staging and should be replaced by the VoiceHost portal/SSO authorization model before production.
@@ -149,3 +149,52 @@ Settings -> Provision device
 ```
 
 and enter the generated activation code.
+
+## Release 0.2: installation lifecycle and maintenance
+
+Activation is atomic: the activation code, device row, both credentials and the
+activation audit entry are committed together. A failure rolls everything back.
+An active or locked installation using the same installation ID and platform
+returns HTTP 409 with `installation_already_registered` **without consuming
+the new activation code**. Retire or revoke the old device explicitly before
+re-provisioning; logout retires the previous installation. Existing duplicate
+records are left intact for review rather than automatically deleted.
+
+Managed policy overrides manual fallback and managed-settings editing both
+when issuing a new configuration and when returning an existing configuration.
+The Flutter settings screen exposes only managed provisioning, diagnostics and
+application information. Older client builds need upgrading; a server-side
+policy cannot remove controls from an already installed old client.
+
+Inventory example (the response deliberately excludes configuration and push secrets):
+
+```bash
+curl -sS -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  'http://127.0.0.1:8081/api/v1/admin/devices?limit=50&offset=0&state=active'
+```
+
+Housekeeping preview (safe default):
+
+```bash
+curl -sS -X POST -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"retention_days":90,"dry_run":true}' \
+  http://127.0.0.1:8081/api/v1/admin/maintenance/housekeeping
+```
+
+After reviewing the counts, set `dry_run` to `false` to delete *only*
+eligible expired or old revoked access/refresh credentials and expired or
+consumed activation codes older than the configured retention threshold.
+Device rows and audit events are retained. Automatic scheduling, data-model
+migration, portal SSO and a web administration UI remain future work.
+
+Run regression tests from this directory:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Before deployment, back up the SQLite volume; validate the tests in a
+staging environment and review existing duplicate installations. The local
+development Compose binding is loopback-only. Always use an HTTPS reverse
+proxy for remote mobile devices and never expose the staging admin key.
