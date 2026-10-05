@@ -56,36 +56,56 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _state = await _repository.load();
     _initialized = true;
 
-    if (_state != null) {
-      _status = 'Provisioned';
-      final config = _state!.configuration;
-      if (config != null) {
-        phone.applyProvisionedConfiguration(config);
-        mobileCalls.applyProvisionedConfiguration(config);
-      }
-      // Managed clients always use the provisioning endpoint supplied by
-      // the current build. Migrate legacy saved development IP addresses
-      // without clearing the existing device ID or refresh credentials.
-      final managedUrl = AppConfig.provisioningUrl;
+    if (_state == null) {
+      notifyListeners();
+      await mobileCalls.setProvisioningAccess(false);
+      return;
+    }
+
+    // A previously provisioned device must be usable from its cached managed
+    // configuration even when the provisioning service is unavailable.
+    _status = 'Provisioned';
+    final config = _state!.configuration;
+    if (config != null) {
+      phone.applyProvisionedConfiguration(config);
+      mobileCalls.applyProvisionedConfiguration(config);
+    }
+
+    // Release the startup gate immediately. Network/configuration-source
+    // maintenance below is deliberately not allowed to hold the UI hostage.
+    await mobileCalls.setProvisioningAccess(canUseApp);
+    unawaited(mobileCalls.setAdministrativeLocked(isLocked));
+    notifyListeners();
+
+    // Managed clients always use the provisioning endpoint supplied by the
+    // current build. Migrate legacy saved development IP addresses without
+    // clearing the existing device ID or refresh credentials. A failure here
+    // is non-fatal because the cached managed configuration remains valid.
+    final managedUrl = AppConfig.provisioningUrl;
+    try {
       await phone.setConfigurationSource(
         ConfigurationSource.provisioning,
         provisioningUrl: managedUrl,
       );
-      _syncPolling();
-      unawaited(mobileCalls.setAdministrativeLocked(isLocked));
-      notifyListeners();
+    } catch (error) {
       debugPrint(
-        '[VoiceHost Provisioning] cached state=$deviceState '
-        'source=${phone.configurationSource.name} '
-        'url=${phone.provisioningUrl.trim().isEmpty ? 'missing' : 'configured'}',
+        '[VoiceHost Provisioning] provisioning URL migration failed: $error',
       );
-      if (phone.provisioningUrl.trim().isNotEmpty) {
-        unawaited(checkIn());
-      }
-    } else {
-      notifyListeners();
     }
-    await mobileCalls.setProvisioningAccess(canUseApp);
+
+    _syncPolling();
+    debugPrint(
+      '[VoiceHost Provisioning] cached state=$deviceState '
+      'source=${phone.configurationSource.name} '
+      'url=${phone.provisioningUrl.trim().isEmpty ? 'missing' : 'configured'}',
+    );
+
+    // Synchronize authoritative state in the background. Transient failures
+    // leave the cached active configuration usable; only an explicit managed
+    // lock/revoke/retire or invalid refresh credential blocks the app.
+    if (phone.provisioningUrl.trim().isNotEmpty) {
+      unawaited(checkIn());
+    }
   }
 
   Future<void> activate({
