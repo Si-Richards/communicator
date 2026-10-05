@@ -62,6 +62,37 @@ class DeviceManagementTests(unittest.TestCase):
         self.assertNotIn("push_json", page["items"][0])
         self.assertEqual(self.store.list_devices(state="locked")["total"], 0)
 
+    def test_configuration_update_increments_version(self):
+        result, error = self.activate()
+        self.assertIsNone(error)
+        device_id = result[0]
+        current = self.store.get_device(device_id)
+        self.assertEqual(current["configuration_version"], 1)
+
+        updated = self.store.update_device_configuration(
+            device_id,
+            {
+                "version": 1,
+                "device": {"display_name": "Reception"},
+                "telephony": {
+                    "extension": "201",
+                    "sip": {
+                        "username": "tenant*201",
+                        "password": "secret",
+                        "realm": "hpbx.voicehost.co.uk",
+                        "proxy": None,
+                    },
+                },
+            },
+        )
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["configuration_version"], 2)
+        self.assertEqual(updated["config"]["version"], 2)
+        self.assertEqual(
+            updated["config"]["telephony"]["sip"]["realm"],
+            "hpbx.voicehost.co.uk",
+        )
+
     def test_housekeeping_defaults_to_dry_run(self):
         self.activate()
         with self.store._connect() as conn:
