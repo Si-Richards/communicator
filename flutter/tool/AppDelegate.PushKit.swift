@@ -244,7 +244,7 @@ import flutter_callkit_incoming
         let userInfo = notification.request.content.userInfo
         if userInfo["type"] as? String == "voicemail" {
             notificationChannel?.invokeMethod(
-                "notificationTapped",
+                "notificationReceived",
                 arguments: "voicemail"
             )
         }
