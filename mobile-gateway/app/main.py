@@ -258,6 +258,7 @@ async def admin_devices(request: Request):
         dnd = 'On' if item['dnd'] else 'Off'
         status_class = 'ok' if session_online else 'bad'
         status_text = 'Online' if session_online else 'Offline'
+        notifications_ready = bool(item.get('notification_token_valid'))
 
         safe_nickname = html.escape(nickname)
         safe_username = html.escape(item['sip_username'])
@@ -278,6 +279,7 @@ async def admin_devices(request: Request):
             <td>
               <div class="actions">
                 <button class="secondary" onclick="testPush({js_device_id}, this)">Test push</button>
+                <button class="secondary" {'' if notifications_ready else 'disabled title="No notification token available"'} onclick="openNotification({js_device_id}, {js_nickname})">Send message</button>
                 <button class="danger" {'disabled title="Cannot delete while calls are active"' if active_calls else ''} onclick="deleteDevice({js_device_id}, {js_nickname})">Delete</button>
               </div>
             </td>
@@ -354,6 +356,22 @@ async def admin_devices(request: Request):
       padding:12px 14px; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,.18);
       display:none;
     }}
+    .modal-backdrop {{
+      position:fixed; inset:0; background:rgba(17,59,83,.48); display:none;
+      align-items:center; justify-content:center; padding:20px; z-index:20;
+    }}
+    .modal {{
+      width:min(560px,100%); background:white; border-radius:14px; padding:20px;
+      box-shadow:0 20px 60px rgba(0,0,0,.25);
+    }}
+    .modal h3 {{ margin:0 0 4px; color:var(--navy); }}
+    .modal label {{ display:block; margin-top:14px; font-size:13px; font-weight:700; }}
+    .modal input,.modal textarea {{
+      width:100%; margin-top:6px; border:1px solid var(--border); border-radius:9px;
+      padding:10px 11px; font:inherit;
+    }}
+    .modal textarea {{ min-height:120px; resize:vertical; }}
+    .modal-actions {{ display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }}
     @media (max-width:700px) {{ header {{ padding:16px 18px; }} main {{ margin-top:18px; }} }}
   </style>
 </head>
@@ -390,6 +408,20 @@ async def admin_devices(request: Request):
     </div>
   </section>
 </main>
+<div id="notificationModal" class="modal-backdrop">
+  <div class="modal">
+    <h3>Send notification</h3>
+    <div class="muted" id="notificationTarget"></div>
+    <label for="notificationTitle">Title</label>
+    <input id="notificationTitle" maxlength="80" value="VoiceHost">
+    <label for="notificationMessage">Message</label>
+    <textarea id="notificationMessage" maxlength="500" placeholder="Enter the message to send"></textarea>
+    <div class="modal-actions">
+      <button class="secondary" onclick="closeNotification()">Cancel</button>
+      <button id="notificationSend" onclick="sendNotification()">Send notification</button>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
 <script>
   function toast(message, error=false) {{
@@ -410,6 +442,61 @@ async def admin_devices(request: Request):
     try {{ data = await response.json(); }} catch (_) {{}}
     if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
     return data;
+  }}
+
+  let notificationDeviceId = null;
+
+  async function adminPostJson(url, body) {{
+    const response = await fetch(url, {{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{{
+        'X-Admin-Action':'1',
+        'Content-Type':'application/json'
+      }},
+      body:JSON.stringify(body)
+    }});
+    let data = {{}};
+    try {{ data = await response.json(); }} catch (_) {{}}
+    if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
+    return data;
+  }}
+
+  function openNotification(deviceId, label) {{
+    notificationDeviceId = deviceId;
+    document.getElementById('notificationTarget').textContent = label;
+    document.getElementById('notificationMessage').value = '';
+    document.getElementById('notificationModal').style.display = 'flex';
+    document.getElementById('notificationMessage').focus();
+  }}
+
+  function closeNotification() {{
+    notificationDeviceId = null;
+    document.getElementById('notificationModal').style.display = 'none';
+  }}
+
+  async function sendNotification() {{
+    if (!notificationDeviceId) return;
+    const title = document.getElementById('notificationTitle').value.trim();
+    const message = document.getElementById('notificationMessage').value.trim();
+    if (!title || !message) {{
+      toast('Title and message are required', true);
+      return;
+    }}
+    const button = document.getElementById('notificationSend');
+    button.disabled = true;
+    try {{
+      const data = await adminPostJson(
+        '/admin/devices/' + encodeURIComponent(notificationDeviceId) + '/notifications',
+        {{title, message}}
+      );
+      closeNotification();
+      toast('Notification sent via ' + (data.environment || 'APNs'));
+    }} catch (error) {{
+      toast('Notification failed: ' + error.message, true);
+    }} finally {{
+      button.disabled = false;
+    }}
   }}
 
   async function testPush(deviceId, button) {{
