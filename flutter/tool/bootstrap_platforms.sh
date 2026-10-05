@@ -45,6 +45,8 @@ root = Path(os.environ['ROOT'])
 plist_path = root / 'ios' / 'Runner' / 'Info.plist'
 with plist_path.open('rb') as fh:
     plist = plistlib.load(fh)
+plist['CFBundleDisplayName'] = 'Softphone'
+plist['CFBundleName'] = 'Softphone'
 plist['NSMicrophoneUsageDescription'] = 'VoiceHost needs microphone access for telephone calls.'
 plist['NSCameraUsageDescription'] = 'VoiceHost needs camera access for video calls.'
 background = list(plist.get('UIBackgroundModes', []))
