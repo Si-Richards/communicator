@@ -91,6 +91,25 @@ class AdminActivationRequest(BaseModel):
     )
 
 
+class AdminDeviceConfigurationRequest(BaseModel):
+    extension: str = Field(min_length=1, max_length=80)
+    display_name: str | None = Field(default=None, max_length=120)
+    connection_strategy: Literal["managed_mobile", "direct_janus"] = (
+        "managed_mobile"
+    )
+    telephony_mode: Literal["randy_managed", "direct_janus"] = "randy_managed"
+    randy_url: str | None = None
+    janus_url: str | None = None
+    janus_api_secret: str | None = None
+    sip_username: str | None = None
+    # Null/empty means retain the existing managed SIP secret.
+    sip_password: str | None = None
+    sip_realm: str | None = None
+    sip_proxy: str | None = None
+
+
+
+
 class AdminDeviceStateRequest(BaseModel):
     state: Literal["active", "locked", "revoked", "retired"]
 
