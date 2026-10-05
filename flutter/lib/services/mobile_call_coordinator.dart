@@ -186,6 +186,19 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           await FlutterCallkitIncoming.endCall(id);
         } catch (_) {}
       }
+
+      final deviceId = _deviceId;
+      if (gateway.enabled && deviceId != null) {
+        try {
+          await gateway.deactivateDevice(deviceId);
+          _appendDiagnostic('Mobile gateway registration deactivated');
+        } catch (error) {
+          // Local lockout must still succeed if RANDY is temporarily
+          // unreachable. A later successful registration re-enables PushKit.
+          _appendDiagnostic('Mobile gateway deactivation failed: $error');
+        }
+      }
+
       await phone.disconnectDirectRegistrationIfIdle();
       _appendDiagnostic('Provisioning access disabled');
     } else {
