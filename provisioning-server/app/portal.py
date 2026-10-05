@@ -17,7 +17,12 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
-from .models import AdminActivationRequest, AdminDeviceStateRequest, AdminHousekeepingRequest
+from .models import (
+    AdminActivationRequest,
+    AdminDeviceConfigurationRequest,
+    AdminDeviceStateRequest,
+    AdminHousekeepingRequest,
+)
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "vh_portal"
@@ -183,6 +188,55 @@ def make_router(store, settings) -> APIRouter:
         if state and state not in {"pending", "active", "locked", "revoked", "retired"}:
             raise HTTPException(422, "Invalid device state.")
         return protect(JSONResponse(store.list_devices(limit=limit, offset=offset, state=state, query=query)))
+
+    @router.get("/portal/api/devices/{device_id}")
+    def device_detail(device_id: str, request: Request):
+        session(request)
+        device = store.get_device(device_id)
+        if device is None:
+            raise HTTPException(404, "Device not found.")
+        config = dict(device.get("config") or {})
+        managed_device = dict(config.get("device") or {})
+        services = dict(config.get("services") or {})
+        telephony = dict(config.get("telephony") or {})
+        sip = dict(telephony.get("sip") or {})
+        return protect(JSONResponse({
+            "id": device["id"],
+            "state": device["state"],
+            "configuration_version": device["configuration_version"],
+            "extension": telephony.get("extension") or "",
+            "display_name": managed_device.get("display_name") or "",
+            "connection_strategy": config.get("connection_strategy") or "managed_mobile",
+            "telephony_mode": telephony.get("mode") or "randy_managed",
+            "randy_url": services.get("randy_url") or "",
+            "janus_url": telephony.get("janus_url") or services.get("janus_url") or "",
+            "sip_username": sip.get("username") or "",
+            "sip_realm": sip.get("realm") or "",
+            "sip_proxy": sip.get("proxy") or "",
+            "sip_password_configured": bool(sip.get("password")),
+        }))
+
+    @router.put("/portal/api/devices/{device_id}/configuration")
+    def device_configuration(
+        device_id: str,
+        body: AdminDeviceConfigurationRequest,
+        request: Request,
+    ):
+        data = session(request)
+        csrf_check(request, data)
+        # Imported lazily to avoid a module import cycle: portal routes are
+        # attached after app.main has finished defining this helper.
+        from .main import update_managed_configuration
+        updated = update_managed_configuration(device_id, body)
+        store.audit(
+            "portal_device_configuration_updated",
+            device_id,
+            {"configuration_version": updated["configuration_version"]},
+        )
+        return protect(JSONResponse({
+            "device_id": device_id,
+            "configuration_version": updated["configuration_version"],
+        }))
 
     @router.post("/portal/api/devices/{device_id}/state")
     def device_state(device_id: str, body: AdminDeviceStateRequest, request: Request):
