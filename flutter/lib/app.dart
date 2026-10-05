@@ -130,7 +130,7 @@ class _MainShellState extends State<MainShell> {
   void _handleNotificationNavigation() {
     if (!mounted) return;
     final target = widget.mobileCalls.consumeNavigationTarget();
-    if (target != 'voicemail') return;
+    if (target != 'voicemail' || !widget.provisioning.canUseApp) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       Navigator.of(context).push(
