@@ -53,6 +53,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final List<String> _diagnosticLogs = [];
   static const MethodChannel _nativeCallKitChannel =
       MethodChannel('voicehost/callkit');
+  static const MethodChannel _nativeNotificationChannel =
+      MethodChannel('voicehost/notifications');
 
   StreamSubscription<CallEvent?>? _callKitSubscription;
   StreamSubscription<dynamic>? _transferEventSubscription;
@@ -60,6 +62,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeGatewayCallId;
   String? _deviceId;
   String? _pushToken;
+  String? _notificationToken;
+  String? _pendingNavigationTarget;
   String? _lastProvisionSignature;
   bool _provisioning = false;
   bool _gatewayProvisioned = false;
@@ -119,7 +123,15 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? get transferTarget => _transferTarget;
   bool get hasPushToken => _pushToken?.isNotEmpty == true;
   String? get voipPushToken => _pushToken;
+  String? get notificationPushToken => _notificationToken;
+  String? get pendingNavigationTarget => _pendingNavigationTarget;
   String? get runtimeDeviceId => _deviceId;
+
+  String? consumeNavigationTarget() {
+    final target = _pendingNavigationTarget;
+    _pendingNavigationTarget = null;
+    return target;
+  }
   List<String> get diagnosticLogs =>
       List<String>.unmodifiable(_diagnosticLogs.reversed);
 
@@ -316,7 +328,23 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
     _callKitSubscription =
         FlutterCallkitIncoming.onEvent.listen(_handleCallKitEvent);
+    _nativeNotificationChannel.setMethodCallHandler(_handleNativeNotification);
     _pushToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+    try {
+      _notificationToken = await _nativeNotificationChannel
+          .invokeMethod<String>('getNotificationToken');
+      final pending = await _nativeNotificationChannel
+          .invokeMethod<List<dynamic>>('drainPendingActions');
+      for (final item in pending ?? const <dynamic>[]) {
+        if (item?.toString() == 'voicemail') {
+          _pendingNavigationTarget = 'voicemail';
+        }
+      }
+    } on MissingPluginException {
+      _notificationToken = null;
+    } catch (error) {
+      debugPrint('[VoiceHost Mobile] notification bridge startup failed: $error');
+    }
     phone.addListener(_phoneChanged);
     _phoneChanged();
     _appendDiagnostic(
@@ -332,6 +360,28 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       (_) => unawaited(_refreshVoicemail()),
     );
     unawaited(_refreshVoicemail());
+  }
+
+  Future<dynamic> _handleNativeNotification(MethodCall call) async {
+    switch (call.method) {
+      case 'notificationTokenUpdated':
+        final token = call.arguments?.toString() ?? '';
+        if (token.isNotEmpty && token != _notificationToken) {
+          _notificationToken = token;
+          _lastProvisionSignature = null;
+          _appendDiagnostic('APNs notification token updated');
+          _phoneChanged();
+        }
+        break;
+      case 'notificationTapped':
+        if (call.arguments?.toString() == 'voicemail') {
+          _pendingNavigationTarget = 'voicemail';
+          notifyListeners();
+          unawaited(_refreshVoicemail());
+        }
+        break;
+    }
+    return null;
   }
 
   void _schedulePushTokenRefreshRetries() {
@@ -394,6 +444,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     final token = _pushToken ?? '';
     final signature = [
       token,
+      _notificationToken ?? '',
       phone.sipUsername,
       phone.sipPassword,
       phone.sipRealm,
@@ -419,6 +470,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await gateway.registerDevice(
         deviceId: deviceId,
         pushToken: token,
+        notificationToken: _notificationToken,
         sipUsername: phone.sipUsername,
         sipPassword: phone.sipPassword,
         sipRealm: phone.sipRealm,
