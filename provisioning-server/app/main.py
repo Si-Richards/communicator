@@ -444,4 +444,4 @@ def admin_health() -> dict:
 
 # The portal exists only in the administration ASGI application.
 from .portal import make_router
-admin_app.include_router(make_router(store, settings))
+admin_app.include_router(make_router(store, settings, update_managed_configuration))
