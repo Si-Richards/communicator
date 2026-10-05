@@ -14,6 +14,7 @@ from .config import settings
 from .manager import MobileSessionManager
 from .janus import SipRegistrationError
 from .models import (
+    AdminNotificationRequest,
     AnswerRequest,
     AttendedTransferStartRequest,
     CandidateRequest,
@@ -146,6 +147,64 @@ async def _send_test_notification(device_id: str) -> str:
     )
     return environment
 
+
+async def _send_admin_notification(
+    device_id: str,
+    title: str,
+    message: str,
+) -> str:
+    try:
+        device = store.get(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+
+    token = device.notification_token
+    if not token or not store.is_notification_token_valid(device_id, token):
+        raise HTTPException(409, 'device has no valid notification token')
+
+    try:
+        environment = await apns.send_notification(
+            token,
+            {
+                'aps': {
+                    'alert': {
+                        'title': title.strip(),
+                        'body': message.strip(),
+                    },
+                    'sound': 'default',
+                    'thread-id': 'admin-messages',
+                },
+                'type': 'admin_message',
+            },
+        )
+    except APNSError as error:
+        if error.reason in {
+            'Unregistered',
+            'BadDeviceToken',
+            'DeviceTokenNotForTopic',
+        }:
+            store.invalidate_notification_token(
+                device.device_id,
+                token,
+                error.reason,
+            )
+        diag_logger.warning(
+            '[VH-DIAG] event=admin_notification_failed device=%s reason=%s',
+            _safe_ref(device_id),
+            str(error),
+        )
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    diag_logger.info(
+        '[VH-DIAG] event=admin_notification_sent device=%s environment=%s title_length=%s message_length=%s',
+        _safe_ref(device_id),
+        environment,
+        len(title.strip()),
+        len(message.strip()),
+    )
+    return environment
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -646,6 +705,21 @@ async def admin_test_push(device_id: str):
     environment = await _send_test_push(device_id)
     return {'ok': True, 'environment': environment}
 
+
+@app.post(
+    '/admin/devices/{device_id}/notifications',
+    dependencies=[Depends(admin_action)],
+)
+async def admin_send_notification(
+    device_id: str,
+    body: AdminNotificationRequest,
+):
+    environment = await _send_admin_notification(
+        device_id,
+        body.title,
+        body.message,
+    )
+    return {'ok': True, 'environment': environment}
 
 @app.post('/admin/devices/{device_id}/delete', dependencies=[Depends(admin_action)])
 async def admin_delete_device(device_id: str):
