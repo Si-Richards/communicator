@@ -98,6 +98,55 @@ async def _send_test_push(device_id: str) -> str:
     return environment
 
 
+async def _send_test_notification(device_id: str) -> str:
+    try:
+        device = store.get(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+
+    token = device.notification_token
+    if not token or not store.is_notification_token_valid(device_id, token):
+        raise HTTPException(409, 'device has no valid notification token')
+
+    try:
+        environment = await apns.send_notification(
+            token,
+            {
+                'aps': {
+                    'alert': {
+                        'title': 'Softphone notification test',
+                        'body': 'Standard APNs notifications are working.',
+                    },
+                    'sound': 'default',
+                },
+                'type': 'voicemail',
+                'test': True,
+            },
+            collapse_id=f'test-notification-{device_id}',
+        )
+    except APNSError as error:
+        if error.reason in {
+            'Unregistered',
+            'BadDeviceToken',
+            'DeviceTokenNotForTopic',
+        }:
+            store.invalidate_notification_token(
+                device.device_id,
+                token,
+                error.reason,
+            )
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    diag_logger.info(
+        '[VH-DIAG] event=test_notification_sent device=%s environment=%s',
+        _safe_ref(device_id),
+        environment,
+    )
+    return environment
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if settings.sip_srtp not in {'sdes_mandatory', 'sdes_optional'}:
@@ -673,6 +722,15 @@ async def voicemail_status(device_id: str):
 @app.post('/v1/devices/{device_id}/test-push', dependencies=[Depends(auth)])
 async def test_push(device_id: str):
     environment = await _send_test_push(device_id)
+    return {'ok': True, 'environment': environment}
+
+
+@app.post(
+    '/v1/devices/{device_id}/test-notification',
+    dependencies=[Depends(auth)],
+)
+async def test_notification(device_id: str):
+    environment = await _send_test_notification(device_id)
     return {'ok': True, 'environment': environment}
 
 
