@@ -69,6 +69,12 @@ function renderTable(container, items, actions = false) {
     if (actions) {
       const cell = document.createElement("td"); const bar = document.createElement("div");
       bar.className = "actions";
+      if (d.state === "active" || d.state === "locked") {
+        const edit = document.createElement("button");
+        edit.textContent = "Edit";
+        edit.addEventListener("click", () => openDeviceEditor(d.id).catch(error => note(error.message)));
+        bar.append(edit);
+      }
       const choices = d.state === "active" ? ["locked", "revoked", "retired"]
         : d.state === "locked" ? ["active", "revoked", "retired"] : [];
       choices.forEach(state => {
@@ -94,6 +100,49 @@ function renderTable(container, items, actions = false) {
   });
   table.append(body); container.append(table);
 }
+async function openDeviceEditor(deviceId) {
+  const d = await api("devices/" + encodeURIComponent(deviceId));
+  el("edit-device-id").value = d.id;
+  el("edit-extension").value = d.extension || "";
+  el("edit-display-name").value = d.display_name || "";
+  el("edit-telephony-mode").value = d.telephony_mode || "randy_managed";
+  el("edit-sip-user").value = d.sip_username || "";
+  el("edit-sip-password").value = "";
+  el("edit-sip-realm").value = d.sip_realm || "";
+  el("edit-sip-proxy").value = d.sip_proxy || "";
+  el("edit-device-meta").textContent =
+    d.id + " · version " + d.configuration_version + " · " + d.state;
+  el("edit-password-state").textContent = d.sip_password_configured
+    ? "A SIP password is configured. Leave the field blank to retain it."
+    : "No SIP password is currently configured.";
+  el("device-editor").showModal();
+}
+
+async function saveDeviceEditor() {
+  const deviceId = el("edit-device-id").value;
+  const mode = el("edit-telephony-mode").value;
+  const body = {
+    extension: el("edit-extension").value.trim(),
+    display_name: el("edit-display-name").value.trim() || null,
+    connection_strategy: mode === "direct_janus" ? "direct_janus" : "managed_mobile",
+    telephony_mode: mode,
+    sip_username: el("edit-sip-user").value.trim() || null,
+    sip_password: el("edit-sip-password").value || null,
+    sip_realm: el("edit-sip-realm").value.trim() || null,
+    sip_proxy: el("edit-sip-proxy").value.trim() || null
+  };
+  if (!body.extension) throw new Error("Extension is required.");
+  const result = await api("devices/" + encodeURIComponent(deviceId) + "/configuration", {
+    method: "PUT",
+    body: JSON.stringify(body)
+  });
+  el("device-editor").close();
+  note("Configuration saved as version " + result.configuration_version +
+       ". The device will apply it on its next check-in.", true);
+  await loadDevices();
+  await loadOverview();
+}
+
 async function loadOverview() {
   const result = await api("overview");
   el("stat-total").textContent = result.devices;
@@ -161,6 +210,12 @@ async function boot() {
   el("device-state").addEventListener("change", () => { offset = 0; loadDevices().catch(e => note(e.message)); });
   el("device-prev").addEventListener("click", () => { offset = Math.max(0, offset - 25); loadDevices().catch(e => note(e.message)); });
   el("device-next").addEventListener("click", () => { offset += 25; loadDevices().catch(e => note(e.message)); });
+  el("edit-close").addEventListener("click", () => el("device-editor").close());
+  el("edit-cancel").addEventListener("click", () => el("device-editor").close());
+  el("device-edit-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    try { await saveDeviceEditor(); } catch (error) { note(error.message); }
+  });
   el("activation-form").addEventListener("submit", async event => {
     event.preventDefault();
     const body = {
