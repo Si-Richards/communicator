@@ -312,9 +312,7 @@ class DeviceStore:
                 '''
                 UPDATE devices
                 SET push_token_valid=0,
-                    notification_token_valid=0,
                     push_invalidated_at=CURRENT_TIMESTAMP,
-                    notification_invalidated_at=CURRENT_TIMESTAMP,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE device_id=? AND push_token=?
                 ''',
