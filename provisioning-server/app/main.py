@@ -8,6 +8,7 @@ from .config import settings
 from .models import (
     ActivationRequest,
     AdminActivationRequest,
+    AdminDeviceConfigurationRequest,
     AdminDeviceStateRequest,
     AdminHousekeepingRequest,
     CheckInRequest,
@@ -120,6 +121,90 @@ def build_configuration(source: dict, state: str = "active") -> dict:
     }
 
 
+def update_managed_configuration(
+    device_id: str,
+    request: AdminDeviceConfigurationRequest,
+) -> dict:
+    device = store.get_device(device_id)
+    if device is None:
+        raise error("device_not_found", "Device was not found.", 404)
+    if device["state"] in {"revoked", "retired"}:
+        raise error(
+            "device_inactive",
+            "Revoked or retired devices must be re-provisioned.",
+            409,
+        )
+
+    current = dict(device["config"])
+    current_device = dict(current.get("device", {}))
+    current_services = dict(current.get("services", {}))
+    current_telephony = dict(current.get("telephony", {}))
+    current_sip = dict(current_telephony.get("sip", {}))
+
+    password = request.sip_password
+    if password is None or password == "":
+        password = current_sip.get("password")
+
+    source = {
+        "version": int(device["configuration_version"]) + 1,
+        "extension": request.extension.strip(),
+        "display_name": (
+            request.display_name.strip()
+            if request.display_name and request.display_name.strip()
+            else current_device.get("display_name") or request.extension.strip()
+        ),
+        "connection_strategy": request.connection_strategy,
+        "telephony_mode": request.telephony_mode,
+        "randy_url": (
+            request.randy_url.strip()
+            if request.randy_url and request.randy_url.strip()
+            else current_services.get("randy_url") or settings.randy_url
+        ),
+        "janus_url": (
+            request.janus_url.strip()
+            if request.janus_url and request.janus_url.strip()
+            else current_telephony.get("janus_url")
+            or current_services.get("janus_url")
+            or settings.janus_url
+        ),
+        "janus_api_secret": (
+            request.janus_api_secret
+            if request.janus_api_secret is not None
+            else current_telephony.get("janus_api_secret")
+        ),
+        "sip_username": (
+            request.sip_username.strip()
+            if request.sip_username and request.sip_username.strip()
+            else current_sip.get("username")
+        ),
+        "sip_password": password,
+        "sip_realm": (
+            request.sip_realm.strip()
+            if request.sip_realm and request.sip_realm.strip()
+            else current_sip.get("realm")
+        ),
+        "sip_proxy": (
+            request.sip_proxy.strip()
+            if request.sip_proxy and request.sip_proxy.strip()
+            else None
+        ),
+        "features": dict(current.get("features", {})),
+        "policy": dict(current.get("policy", {})),
+    }
+    config = build_configuration(source, state=device["state"])
+    updated = store.update_device_configuration(device_id, config)
+    if updated is None:
+        raise error("device_not_found", "Device was not found.", 404)
+    store.audit(
+        "device_configuration_updated",
+        device_id,
+        {"configuration_version": updated["configuration_version"]},
+    )
+    return updated
+
+
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -143,6 +228,21 @@ def create_activation(
         "expires_at": expires_at,
         "qr_uri": f"voicehost://provision/{code}",
     }
+
+
+@app.put("/api/v1/admin/devices/{device_id}/configuration")
+def admin_update_device_configuration(
+    device_id: str,
+    request: AdminDeviceConfigurationRequest,
+    _: Annotated[None, Depends(admin_auth)],
+) -> dict:
+    updated = update_managed_configuration(device_id, request)
+    return {
+        "device_id": device_id,
+        "configuration_version": updated["configuration_version"],
+    }
+
+
 
 
 @app.post("/api/v1/admin/devices/{device_id}/state")
