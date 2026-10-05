@@ -27,7 +27,7 @@ class VoiceHostApp extends StatelessWidget {
     const navy = Color(0xFF113B53);
 
     return MaterialApp(
-      title: 'VoiceHost',
+      title: 'Softphone',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
