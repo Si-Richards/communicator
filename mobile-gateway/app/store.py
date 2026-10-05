@@ -256,6 +256,7 @@ class DeviceStore:
                 '''
                 SELECT device_id, platform, sip_username, sip_realm, nickname,
                        dnd, push_token_valid, push_token_updated_at,
+                       notification_token_valid, notification_token_updated_at,
                        push_invalidated_at, last_seen_at, updated_at
                 FROM devices
                 ORDER BY updated_at DESC, sip_username ASC
@@ -271,6 +272,8 @@ class DeviceStore:
                 'dnd': bool(row['dnd']),
                 'push_token_valid': bool(row['push_token_valid']),
                 'push_token_updated_at': row['push_token_updated_at'],
+                'notification_token_valid': bool(row['notification_token_valid']),
+                'notification_token_updated_at': row['notification_token_updated_at'],
                 'push_invalidated_at': row['push_invalidated_at'],
                 'last_seen_at': row['last_seen_at'],
                 'updated_at': row['updated_at'],
