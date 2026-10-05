@@ -16,6 +16,11 @@ class DeviceRegistration(BaseModel):
     dnd: bool = False
 
 
+class AdminNotificationRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=500)
+
+
 class AnswerRequest(BaseModel):
     sdp: str = Field(min_length=1)
 
