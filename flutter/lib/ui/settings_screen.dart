@@ -31,7 +31,7 @@ class SettingsScreen extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: [
             _SectionCard(
-              title: 'VoiceHost managed configuration',
+              title: 'Managed configuration',
               children: [
                 const Text(
                   'Your extension, credentials and connection settings are '
@@ -80,7 +80,7 @@ class SettingsScreen extends StatelessWidget {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
-                  title: const Text('About VoiceHost'),
+                  title: const Text('About'),
                   subtitle: const Text(
                     'Version, build information and licences',
                   ),
