@@ -99,6 +99,12 @@ class MobileGatewayService {
     );
   }
 
+  Future<void> deactivateDevice(String deviceId) =>
+      _jsonRequest(
+        'POST',
+        '/v1/devices/$deviceId/deactivate',
+      );
+
   Future<GatewayVoicemailSummary> getVoicemail(String deviceId) async {
     final json = await _jsonRequest(
       'GET',
