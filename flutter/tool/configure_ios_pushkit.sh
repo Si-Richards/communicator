@@ -21,6 +21,8 @@ root = Path(os.environ['ROOT'])
 plist_path = root / 'ios' / 'Runner' / 'Info.plist'
 with plist_path.open('rb') as fh:
     plist = plistlib.load(fh)
+plist['CFBundleDisplayName'] = 'Softphone'
+plist['CFBundleName'] = 'Softphone'
 plist['NSMicrophoneUsageDescription'] = 'VoiceHost needs microphone access for telephone calls.'
 plist['NSCameraUsageDescription'] = 'VoiceHost uses the camera for video calling features when enabled.'
 plist['NSContactsUsageDescription'] = 'VoiceHost uses your contacts so you can find and dial telephone numbers from the app.'
@@ -49,7 +51,7 @@ with plist_path.open('wb') as fh:
 PY
 
 cat <<'EOF'
-PushKit source, VoiceHost launch screen, and Info.plist configured.
+PushKit, standard notifications, VoiceHost launch screen, and Info.plist configured.
 
 One Xcode capability step remains (Apple controls provisioning):
   Runner target -> Signing & Capabilities -> + Capability -> Push Notifications
