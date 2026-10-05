@@ -65,6 +65,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   bool _gatewayProvisioned = false;
   bool _administrativelyLocked = false;
   bool _provisioningAccessEnabled = false;
+  bool _managedReprovisionPending = false;
   bool _recoveringCallKitState = false;
   String? _transferId;
   String? _transferTarget;
@@ -379,6 +380,17 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   void _phoneChanged() {
     if (!gateway.enabled || !_provisioningAccessEnabled) return;
+    if (hasActiveGatewayCall) {
+      if (!_managedReprovisionPending) {
+        _appendDiagnostic(
+          'Managed gateway registration update deferred while a call is active',
+        );
+      }
+      _managedReprovisionPending = true;
+      _lastProvisionSignature = null;
+      return;
+    }
+    _managedReprovisionPending = false;
     final token = _pushToken ?? '';
     final signature = [
       token,
@@ -2075,6 +2087,11 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     if (_gatewayCalls.isEmpty) {
       _transferWatchdog?.cancel();
       _transferBusy = false;
+      if (_managedReprovisionPending) {
+        _appendDiagnostic('Applying deferred managed gateway registration update');
+        _lastProvisionSignature = null;
+        _phoneChanged();
+      }
       _transferTarget = null;
       _transferStatus = '';
     }
