@@ -321,6 +321,37 @@ class Store:
         )
         return result
 
+    def update_device_configuration(
+        self,
+        device_id: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Replace managed configuration and advance its version atomically."""
+        now = utcnow()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT configuration_version, state FROM devices WHERE id = ?",
+                (device_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            version = int(row["configuration_version"]) + 1
+            updated = dict(config)
+            updated["version"] = version
+            updated["device"] = dict(updated.get("device", {}))
+            updated["device"]["state"] = row["state"]
+            conn.execute(
+                """
+                UPDATE devices
+                SET configuration_version = ?, config_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (version, json.dumps(updated), iso(now), device_id),
+            )
+            conn.commit()
+        return self.get_device(device_id)
+
     def update_checkin(
         self,
         device_id: str,
