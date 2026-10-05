@@ -51,14 +51,27 @@ class APNSClient:
     def _environment_name(sandbox: bool) -> str:
         return 'sandbox' if sandbox else 'production'
 
-    async def _send(self, token: str, payload: dict, sandbox: bool) -> httpx.Response:
+    async def _send(
+        self,
+        token: str,
+        payload: dict,
+        sandbox: bool,
+        *,
+        topic: str,
+        push_type: str,
+        priority: str,
+        expiration: str,
+        collapse_id: str | None = None,
+    ) -> httpx.Response:
         headers = {
             'authorization': f'bearer {self._jwt()}',
-            'apns-topic': f'{settings.apns_bundle_id}.voip',
-            'apns-push-type': 'voip',
-            'apns-priority': '10',
-            'apns-expiration': '0',
+            'apns-topic': topic,
+            'apns-push-type': push_type,
+            'apns-priority': priority,
+            'apns-expiration': expiration,
         }
+        if collapse_id:
+            headers['apns-collapse-id'] = collapse_id
         async with httpx.AsyncClient(http2=True, timeout=10) as client:
             return await client.post(
                 f'https://{self._host(sandbox)}/3/device/{token}',
@@ -93,7 +106,15 @@ class APNSClient:
         last_reason = 'UnknownError'
 
         for index, sandbox in enumerate(environments):
-            response = await self._send(token, payload, sandbox)
+            response = await self._send(
+                token,
+                payload,
+                sandbox,
+                topic=f'{settings.apns_bundle_id}.voip',
+                push_type='voip',
+                priority='10',
+                expiration='0',
+            )
             if response.status_code == 200:
                 self._token_environment[token] = sandbox
                 environment = self._environment_name(sandbox)
@@ -119,6 +140,60 @@ class APNSClient:
 
             # A development token sent to production (or vice versa) is
             # rejected as BadDeviceToken. Retry the opposite environment once.
+            if not (
+                index == 0
+                and settings.apns_fallback_environment
+                and response.status_code == 400
+                and last_reason == 'BadDeviceToken'
+            ):
+                break
+
+        raise APNSError(last_status, last_reason)
+
+
+    async def send_notification(
+        self,
+        token: str,
+        payload: dict,
+        *,
+        collapse_id: str | None = None,
+    ) -> str:
+        if not self.configured:
+            raise RuntimeError('APNs is not configured')
+
+        preferred = self._token_environment.get(token, settings.apns_sandbox)
+        environments = [preferred]
+        if settings.apns_fallback_environment:
+            alternate = not preferred
+            if alternate not in environments:
+                environments.append(alternate)
+
+        last_status = 0
+        last_reason = 'UnknownError'
+        for index, sandbox in enumerate(environments):
+            response = await self._send(
+                token,
+                payload,
+                sandbox,
+                topic=settings.apns_bundle_id,
+                push_type='alert',
+                priority='10',
+                expiration=str(int(time.time()) + 3600),
+                collapse_id=collapse_id,
+            )
+            if response.status_code == 200:
+                self._token_environment[token] = sandbox
+                environment = self._environment_name(sandbox)
+                token_fp = hashlib.sha256(token.encode('utf-8')).hexdigest()[:12]
+                logger.info(
+                    '[VH-DIAG] event=apns_notification_sent environment=%s token_fp=%s',
+                    environment,
+                    token_fp,
+                )
+                return environment
+
+            last_status = response.status_code
+            last_reason = self._failure_reason(response)
             if not (
                 index == 0
                 and settings.apns_fallback_environment
