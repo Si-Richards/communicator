@@ -122,6 +122,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String get transferStatus => _transferStatus;
   String? get transferTarget => _transferTarget;
   bool get hasPushToken => _pushToken?.isNotEmpty == true;
+  bool get hasNotificationPushToken => _notificationToken?.isNotEmpty == true;
   String? get voipPushToken => _pushToken;
   String? get notificationPushToken => _notificationToken;
   String? get pendingNavigationTarget => _pendingNavigationTarget;
@@ -297,6 +298,21 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       rethrow;
     }
   }
+
+  Future<String> sendTestNotification() async {
+    final deviceId = _deviceId;
+    if (!gateway.enabled) {
+      throw StateError('Mobile gateway is not configured in this build.');
+    }
+    if (deviceId == null) {
+      throw StateError('This device is not provisioned with the mobile gateway.');
+    }
+    if (!hasNotificationPushToken) {
+      throw StateError('No standard APNs notification token is available yet.');
+    }
+    return gateway.testNotification(deviceId);
+  }
+
 
   Future<void> initialize() async {
     if (!gateway.enabled || !Platform.isIOS) {
