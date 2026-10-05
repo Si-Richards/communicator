@@ -54,6 +54,14 @@ class DeviceStore:
                     'ALTER TABLE devices ADD COLUMN push_invalidated_at TEXT',
                 'last_seen_at':
                     'ALTER TABLE devices ADD COLUMN last_seen_at TEXT',
+                'notification_token':
+                    'ALTER TABLE devices ADD COLUMN notification_token TEXT',
+                'notification_token_valid':
+                    'ALTER TABLE devices ADD COLUMN notification_token_valid INTEGER NOT NULL DEFAULT 0',
+                'notification_token_updated_at':
+                    'ALTER TABLE devices ADD COLUMN notification_token_updated_at TEXT',
+                'notification_invalidated_at':
+                    'ALTER TABLE devices ADD COLUMN notification_invalidated_at TEXT',
             }
             for name, statement in migrations.items():
                 if name not in columns:
@@ -171,15 +179,19 @@ class DeviceStore:
         with self.lock, self._connect() as db:
             db.execute('''
                 INSERT INTO devices(
-                    device_id, platform, push_token, sip_username,
-                    sip_password, sip_realm, sip_proxy, nickname, dnd,
+                    device_id, platform, push_token, notification_token,
+                    sip_username, sip_password, sip_realm, sip_proxy, nickname, dnd,
                     push_token_valid, push_token_updated_at,
-                    push_invalidated_at, last_seen_at, updated_at
+                    notification_token_valid, notification_token_updated_at,
+                    push_invalidated_at, notification_invalidated_at,
+                    last_seen_at, updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    1, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP,
-                    CURRENT_TIMESTAMP
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    1, CURRENT_TIMESTAMP,
+                    CASE WHEN ? IS NULL THEN 0 ELSE 1 END,
+                    CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+                    NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT(device_id) DO UPDATE SET
                     platform=excluded.platform,
@@ -191,6 +203,24 @@ class DeviceStore:
                     push_token=excluded.push_token,
                     push_token_valid=1,
                     push_invalidated_at=NULL,
+                    notification_token_updated_at=CASE
+                        WHEN excluded.notification_token IS NOT NULL
+                             AND COALESCE(devices.notification_token, '') != excluded.notification_token
+                        THEN CURRENT_TIMESTAMP
+                        ELSE devices.notification_token_updated_at
+                    END,
+                    notification_token=COALESCE(
+                        excluded.notification_token,
+                        devices.notification_token
+                    ),
+                    notification_token_valid=CASE
+                        WHEN excluded.notification_token IS NOT NULL THEN 1
+                        ELSE devices.notification_token_valid
+                    END,
+                    notification_invalidated_at=CASE
+                        WHEN excluded.notification_token IS NOT NULL THEN NULL
+                        ELSE devices.notification_invalidated_at
+                    END,
                     last_seen_at=CURRENT_TIMESTAMP,
                     sip_username=excluded.sip_username,
                     sip_password=excluded.sip_password,
@@ -200,8 +230,10 @@ class DeviceStore:
                     dnd=excluded.dnd,
                     updated_at=CURRENT_TIMESTAMP
             ''', (
-                item.device_id, item.platform, item.push_token, item.sip_username,
-                encrypted, item.sip_realm, item.sip_proxy, item.nickname, int(item.dnd),
+                item.device_id, item.platform, item.push_token,
+                item.notification_token, item.sip_username,
+                encrypted, item.sip_realm, item.sip_proxy, item.nickname,
+                int(item.dnd), item.notification_token, item.notification_token,
             ))
             db.commit()
         return self.get(item.device_id)
@@ -277,9 +309,47 @@ class DeviceStore:
                 '''
                 UPDATE devices
                 SET push_token_valid=0,
+                    notification_token_valid=0,
                     push_invalidated_at=CURRENT_TIMESTAMP,
+                    notification_invalidated_at=CURRENT_TIMESTAMP,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE device_id=? AND push_token=?
+                ''',
+                (device_id, token),
+            )
+            db.commit()
+            return cursor.rowcount > 0
+
+    def is_notification_token_valid(self, device_id: str, token: str) -> bool:
+        with self.lock, self._connect() as db:
+            row = db.execute(
+                '''
+                SELECT notification_token, notification_token_valid
+                FROM devices
+                WHERE device_id=?
+                ''',
+                (device_id,),
+            ).fetchone()
+        return bool(
+            row is not None
+            and row['notification_token'] == token
+            and row['notification_token_valid']
+        )
+
+    def invalidate_notification_token(
+        self,
+        device_id: str,
+        token: str,
+        reason: str = '',
+    ) -> bool:
+        with self.lock, self._connect() as db:
+            cursor = db.execute(
+                '''
+                UPDATE devices
+                SET notification_token_valid=0,
+                    notification_invalidated_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE device_id=? AND notification_token=?
                 ''',
                 (device_id, token),
             )
@@ -584,6 +654,7 @@ class DeviceStore:
     def _row(self, row) -> DeviceRecord:
         return DeviceRecord(
             device_id=row['device_id'], platform=row['platform'], push_token=row['push_token'],
+            notification_token=row['notification_token'],
             sip_username=row['sip_username'],
             sip_password=self.fernet.decrypt(row['sip_password']).decode(),
             sip_realm=row['sip_realm'], sip_proxy=row['sip_proxy'], nickname=row['nickname'],
