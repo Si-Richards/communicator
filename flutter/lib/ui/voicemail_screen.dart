@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
+import '../services/mobile_call_coordinator.dart';
 
 class VoicemailScreen extends StatelessWidget {
   const VoicemailScreen({
     super.key,
     required this.controller,
+    required this.mobileCalls,
     required this.onGoToPhone,
   });
 
   final PhoneController controller;
+  final MobileCallCoordinator mobileCalls;
   final VoidCallback onGoToPhone;
 
   @override
@@ -93,10 +96,14 @@ class VoicemailScreen extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               FilledButton.icon(
-                onPressed: controller.canCallVoicemail
+                onPressed: controller.voicemailNumber.trim().isNotEmpty &&
+                        !controller.callState.isInCall &&
+                        !mobileCalls.hasActiveGatewayCall
                     ? () async {
                         onGoToPhone();
-                        await controller.callVoicemail();
+                        await mobileCalls.placeCall(
+                          controller.voicemailNumber.trim(),
+                        );
                       }
                     : null,
                 icon: const Icon(Icons.phone),
