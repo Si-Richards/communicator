@@ -26,6 +26,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   List<String> _nativeLogs = const [];
   bool _loadingNative = false;
   bool _testingPush = false;
+  bool _testingNotification = false;
   String _version = 'Unknown';
   String _build = 'Unknown';
 
@@ -103,6 +104,32 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     }
   }
 
+  Future<void> _testNotification() async {
+    if (_testingNotification) return;
+    setState(() => _testingNotification = true);
+    try {
+      final environment = await widget.mobileCalls.sendTestNotification();
+      if (!mounted) return;
+      final suffix = environment.isEmpty ? '' : ' via $environment APNs';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Test notification sent$suffix.',
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      await _refreshNative();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Notification test failed: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _testingNotification = false);
+    }
+  }
+
   Future<void> _copyLogs() async {
     final text = _combinedLogs.join('\n');
     await Clipboard.setData(ClipboardData(text: text));
@@ -161,6 +188,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                         value: mobile.hasPushToken ? 'Available' : 'Waiting',
                       ),
                       _StatusRow(
+                        label: 'Notification token',
+                        value: mobile.hasNotificationPushToken
+                            ? 'Available'
+                            : 'Waiting',
+                      ),
+                      _StatusRow(
                         label: 'Mobile gateway',
                         value: mobile.gatewayProvisioned
                             ? 'Provisioned'
@@ -192,6 +225,21 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                       )
                     : const Icon(Icons.notifications_active_outlined),
                 label: const Text('Send Test VoIP Push'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: !_testingNotification &&
+                        mobile.gatewayProvisioned &&
+                        mobile.hasNotificationPushToken
+                    ? _testNotification
+                    : null,
+                icon: _testingNotification
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.mark_email_unread_outlined),
+                label: const Text('Send Test Notification'),
               ),
               const SizedBox(height: 6),
               Text(
