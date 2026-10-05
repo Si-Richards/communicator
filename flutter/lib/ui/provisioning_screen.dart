@@ -205,8 +205,6 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                               label: 'Extension',
                               value: config.extension!,
                             ),
-                          if (config.randyUrl != null)
-                            _Row(label: 'RANDY', value: config.randyUrl!),
                           if (config.janusUrl != null)
                             _Row(label: 'Janus', value: config.janusUrl!),
                         ],
