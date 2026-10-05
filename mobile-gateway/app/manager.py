@@ -418,14 +418,7 @@ class MobileSessionManager:
                 summary = self._parse_message_summary(
                     str(result.get('content') or '')
                 )
-                self.voicemail[device.device_id] = summary
-                logger.info(
-                    '[VH-DIAG] event=mwi_update device=%s waiting=%s new=%s old=%s',
-                    _safe_ref(device.device_id),
-                    summary['waiting'],
-                    summary['new_messages'],
-                    summary['old_messages'],
-                )
+                await self._update_voicemail(device, summary)
                 return
 
         if event == 'incomingcall':
@@ -563,14 +556,7 @@ class MobileSessionManager:
         if event == 'notify' and str(result.get('notify') or '').lower() == 'message-summary':
             content = str(result.get('content') or '')
             summary = self._parse_message_summary(content)
-            self.voicemail[device.device_id] = summary
-            logger.info(
-                '[VH-DIAG] event=voicemail_update device=%s waiting=%s new=%s old=%s',
-                _safe_ref(device.device_id),
-                summary['waiting'],
-                summary['new_messages'],
-                summary['old_messages'],
-            )
+            await self._update_voicemail(device, summary)
             return
 
         call = self._call_for_session(session)
@@ -753,6 +739,90 @@ class MobileSessionManager:
     def _current_transfer(self, device_id: str):
         transfer_id = self.device_transfer.get(device_id)
         return self.transfers.get(transfer_id) if transfer_id else None
+
+    async def _update_voicemail(
+        self,
+        device: DeviceRecord,
+        summary: dict[str, int | bool],
+    ) -> None:
+        previous = self.voicemail.get(device.device_id)
+        self.voicemail[device.device_id] = summary
+        logger.info(
+            '[VH-DIAG] event=mwi_update device=%s waiting=%s new=%s old=%s',
+            _safe_ref(device.device_id),
+            summary['waiting'],
+            summary['new_messages'],
+            summary['old_messages'],
+        )
+
+        # The first NOTIFY after (re)subscription establishes a baseline and
+        # must not generate a stale "new voicemail" alert after RANDY restarts.
+        if previous is None:
+            return
+        new_count = int(summary.get('new_messages') or 0)
+        old_new_count = int(previous.get('new_messages') or 0)
+        if new_count <= old_new_count:
+            return
+
+        token = device.notification_token
+        if not token or not self.store.is_notification_token_valid(
+            device.device_id,
+            token,
+        ):
+            logger.info(
+                '[VH-DIAG] event=voicemail_notification_skipped device=%s reason=no_valid_token',
+                _safe_ref(device.device_id),
+            )
+            return
+
+        body = (
+            'You have 1 new voicemail.'
+            if new_count == 1
+            else f'You have {new_count} new voicemails.'
+        )
+        try:
+            environment = await self.apns.send_notification(
+                token,
+                {
+                    'aps': {
+                        'alert': {'title': 'New voicemail', 'body': body},
+                        'sound': 'default',
+                        'badge': new_count,
+                        'thread-id': 'voicemail',
+                    },
+                    'type': 'voicemail',
+                    'new_messages': new_count,
+                    'old_messages': int(summary.get('old_messages') or 0),
+                },
+                collapse_id=f'voicemail-{device.device_id}',
+            )
+            logger.info(
+                '[VH-DIAG] event=voicemail_notification_sent device=%s environment=%s new=%s',
+                _safe_ref(device.device_id),
+                environment,
+                new_count,
+            )
+        except APNSError as error:
+            if error.reason in {
+                'Unregistered',
+                'BadDeviceToken',
+                'DeviceTokenNotForTopic',
+            }:
+                self.store.invalidate_notification_token(
+                    device.device_id,
+                    token,
+                    error.reason,
+                )
+            logger.warning(
+                '[VH-DIAG] event=voicemail_notification_failed device=%s reason=%s',
+                _safe_ref(device.device_id),
+                str(error),
+            )
+        except Exception:
+            logger.exception(
+                '[VH-DIAG] event=voicemail_notification_failed device=%s',
+                _safe_ref(device.device_id),
+            )
 
     def get_voicemail(self, device_id: str) -> dict[str, int | bool]:
         if device_id not in self.sessions and device_id not in self.voicemail:
