@@ -358,13 +358,15 @@ class DeviceStore:
             return cursor.rowcount > 0
 
     def deactivate(self, device_id: str) -> bool:
-        """Make the handset ineligible for PushKit until it registers again."""
+        """Make the handset ineligible for all push until it registers again."""
         with self.lock, self._connect() as db:
             cursor = db.execute(
                 '''
                 UPDATE devices
                 SET push_token_valid=0,
+                    notification_token_valid=0,
                     push_invalidated_at=CURRENT_TIMESTAMP,
+                    notification_invalidated_at=CURRENT_TIMESTAMP,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE device_id=?
                 ''',
