@@ -5,6 +5,7 @@ import CryptoKit
 import Flutter
 import PushKit
 import UIKit
+import UserNotifications
 import WebRTC
 import flutter_callkit_incoming
 
@@ -21,9 +22,12 @@ import flutter_callkit_incoming
     private var callKitChannel: FlutterMethodChannel?
     private var contactsChannel: FlutterMethodChannel?
     private var appChannel: FlutterMethodChannel?
+    private var notificationChannel: FlutterMethodChannel?
     private let callController = CXCallController()
     private let pendingCallKitActionsKey = "voicehost.pendingCallKitActions"
     private let nativeLogsKey = "voicehost.nativeLogs"
+    private let notificationTokenKey = "voicehost.notificationToken"
+    private let pendingNotificationActionsKey = "voicehost.pendingNotificationActions"
 
     override func application(
         _ application: UIApplication,
@@ -48,6 +52,7 @@ import flutter_callkit_incoming
         )
 
         registerVoiceHostChannels()
+        configureUserNotifications(application)
 
         return launched
     }
@@ -56,7 +61,8 @@ import flutter_callkit_incoming
         if audioChannel != nil &&
             callKitChannel != nil &&
             contactsChannel != nil &&
-            appChannel != nil {
+            appChannel != nil &&
+            notificationChannel != nil {
             return
         }
 
@@ -157,10 +163,125 @@ import flutter_callkit_incoming
         }
         appChannel = app
 
+        let notifications = FlutterMethodChannel(
+            name: "voicehost/notifications",
+            binaryMessenger: messenger
+        )
+        notifications.setMethodCallHandler { [weak self] call, result in
+            guard let self else {
+                result(FlutterMethodNotImplemented)
+                return
+            }
+            switch call.method {
+            case "getNotificationToken":
+                result(UserDefaults.standard.string(forKey: self.notificationTokenKey))
+            case "drainPendingActions":
+                result(self.drainPendingNotificationActions())
+            default:
+                result(FlutterMethodNotImplemented)
+            }
+        }
+        notificationChannel = notifications
+
         recordNativeLog("Application bridge ready")
         recordNativeLog("Native audio channel ready")
         recordNativeLog("Native CallKit recovery channel ready")
         recordNativeLog("Native contacts channel ready")
+        recordNativeLog("Native notification channel ready")
+    }
+
+    private func configureUserNotifications(_ application: UIApplication) {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
+            if let error {
+                self?.recordNativeLog("Notification permission request failed: \(error.localizedDescription)")
+                return
+            }
+            self?.recordNativeLog("Notification permission granted=\(granted)")
+            guard granted else { return }
+            DispatchQueue.main.async {
+                application.registerForRemoteNotifications()
+            }
+        }
+    }
+
+    override func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        super.application(
+            application,
+            didRegisterForRemoteNotificationsWithDeviceToken: deviceToken
+        )
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        UserDefaults.standard.set(token, forKey: notificationTokenKey)
+        recordNativeLog(
+            "APNs notification token updated (\(deviceToken.count) bytes) · fp=\(tokenFingerprint(token))"
+        )
+        notificationChannel?.invokeMethod("notificationTokenUpdated", arguments: token)
+    }
+
+    override func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        super.application(
+            application,
+            didFailToRegisterForRemoteNotificationsWithError: error
+        )
+        recordNativeLog(
+            "APNs notification registration failed: \(error.localizedDescription)"
+        )
+    }
+
+    override func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler:
+            @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let userInfo = notification.request.content.userInfo
+        if userInfo["type"] as? String == "voicemail" {
+            notificationChannel?.invokeMethod(
+                "notificationTapped",
+                arguments: "voicemail"
+            )
+        }
+        completionHandler([.banner, .sound, .badge])
+    }
+
+    override func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        if userInfo["type"] as? String == "voicemail" {
+            persistPendingNotificationAction("voicemail")
+            notificationChannel?.invokeMethod(
+                "notificationTapped",
+                arguments: "voicemail"
+            )
+        }
+        completionHandler()
+    }
+
+    private func persistPendingNotificationAction(_ action: String) {
+        var actions = UserDefaults.standard.stringArray(
+            forKey: pendingNotificationActionsKey
+        ) ?? []
+        actions.append(action)
+        actions = Array(actions.suffix(10))
+        UserDefaults.standard.set(actions, forKey: pendingNotificationActionsKey)
+    }
+
+    private func drainPendingNotificationActions() -> [String] {
+        let actions = UserDefaults.standard.stringArray(
+            forKey: pendingNotificationActionsKey
+        ) ?? []
+        UserDefaults.standard.removeObject(forKey: pendingNotificationActionsKey)
+        return actions
     }
 
     func pushRegistry(
