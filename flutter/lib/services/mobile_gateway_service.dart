@@ -75,6 +75,7 @@ class MobileGatewayService {
   Future<void> registerDevice({
     required String deviceId,
     required String pushToken,
+    String? notificationToken,
     required String sipUsername,
     required String sipPassword,
     required String sipRealm,
@@ -89,6 +90,8 @@ class MobileGatewayService {
         'device_id': deviceId,
         'platform': 'ios',
         'push_token': pushToken,
+        if (notificationToken != null && notificationToken.isNotEmpty)
+          'notification_token': notificationToken,
         'sip_username': sipUsername,
         'sip_password': sipPassword,
         'sip_realm': sipRealm,
