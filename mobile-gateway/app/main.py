@@ -641,6 +641,26 @@ async def register_device(body: DeviceRegistration):
     return {'ok': True, 'device_id': device.device_id}
 
 
+@app.post('/v1/devices/{device_id}/deactivate', dependencies=[Depends(auth)])
+async def deactivate_device(device_id: str):
+    try:
+        store.get(device_id)
+    except KeyError:
+        raise HTTPException(404, 'device not found')
+    if manager.device_calls.get(device_id):
+        raise HTTPException(
+            status_code=409,
+            detail='device has active calls; end them before deactivating',
+        )
+    await manager.remove_device(device_id)
+    store.deactivate(device_id)
+    diag_logger.info(
+        '[VH-DIAG] event=device_deactivated device=%s',
+        _safe_ref(device_id),
+    )
+    return {'ok': True}
+
+
 @app.get('/v1/devices/{device_id}/voicemail', dependencies=[Depends(auth)])
 async def voicemail_status(device_id: str):
     try:
