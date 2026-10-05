@@ -46,7 +46,7 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-def make_router(store, settings) -> APIRouter:
+def make_router(store, settings, configuration_updater=None) -> APIRouter:
     router = APIRouter()
     signer = URLSafeTimedSerializer(settings.portal_secret, salt="voicehost-portal-v1") if settings.portal_secret else None
     failures = defaultdict(list)
@@ -224,10 +224,9 @@ def make_router(store, settings) -> APIRouter:
     ):
         data = session(request)
         csrf_check(request, data)
-        # Imported lazily to avoid a module import cycle: portal routes are
-        # attached after app.main has finished defining this helper.
-        from .main import update_managed_configuration
-        updated = update_managed_configuration(device_id, body)
+        if configuration_updater is None:
+            raise HTTPException(503, "Configuration editing is unavailable.")
+        updated = configuration_updater(device_id, body)
         store.audit(
             "portal_device_configuration_updated",
             device_id,
