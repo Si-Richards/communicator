@@ -7,6 +7,7 @@ class DeviceRegistration(BaseModel):
     device_id: str = Field(min_length=8, max_length=200)
     platform: str = 'ios'
     push_token: str = Field(min_length=16, max_length=512)
+    notification_token: str | None = Field(default=None, min_length=16, max_length=512)
     sip_username: str = Field(min_length=1, max_length=200)
     sip_password: str = Field(min_length=1, max_length=512)
     sip_realm: str = Field(min_length=1, max_length=255)
@@ -64,6 +65,7 @@ class DeviceRecord:
     device_id: str
     platform: str
     push_token: str
+    notification_token: str | None
     sip_username: str
     sip_password: str
     sip_realm: str
