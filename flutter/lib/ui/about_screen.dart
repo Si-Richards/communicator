@@ -13,7 +13,7 @@ class AboutScreen extends StatefulWidget {
 
 class _AboutScreenState extends State<AboutScreen> {
   static const MethodChannel _appChannel = MethodChannel('voicehost/app');
-  static const appName = 'VoiceHost Softphone';
+  static const appName = 'Softphone';
 
   String _version = '0.3.0';
 
