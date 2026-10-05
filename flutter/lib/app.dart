@@ -8,6 +8,7 @@ import 'ui/contacts_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/phone_screen.dart';
 import 'ui/provisioning_screen.dart';
+import 'ui/voicemail_screen.dart';
 
 class VoiceHostApp extends StatelessWidget {
   const VoiceHostApp({
@@ -109,7 +110,44 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    widget.mobileCalls.addListener(_handleNotificationNavigation);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _handleNotificationNavigation(),
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.mobileCalls.removeListener(_handleNotificationNavigation);
+    super.dispose();
+  }
+
   void _goToPhone() => setState(() => _selectedIndex = 0);
+
+  void _handleNotificationNavigation() {
+    if (!mounted) return;
+    final target = widget.mobileCalls.consumeNavigationTarget();
+    if (target != 'voicemail') return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => VoicemailScreen(
+            controller: widget.controller,
+            onGoToPhone: () {
+              if (mounted) {
+                Navigator.of(context).pop();
+                _goToPhone();
+              }
+            },
+          ),
+        ),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
