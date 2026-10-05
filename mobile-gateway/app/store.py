@@ -286,6 +286,22 @@ class DeviceStore:
             db.commit()
             return cursor.rowcount > 0
 
+    def deactivate(self, device_id: str) -> bool:
+        """Make the handset ineligible for PushKit until it registers again."""
+        with self.lock, self._connect() as db:
+            cursor = db.execute(
+                '''
+                UPDATE devices
+                SET push_token_valid=0,
+                    push_invalidated_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE device_id=?
+                ''',
+                (device_id,),
+            )
+            db.commit()
+            return cursor.rowcount > 0
+
     def delete(self, device_id: str) -> bool:
         with self.lock, self._connect() as db:
             cursor = db.execute(
