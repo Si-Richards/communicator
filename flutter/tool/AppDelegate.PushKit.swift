@@ -208,7 +208,7 @@ import flutter_callkit_incoming
 
     override func application(
         _ application: UIApplication,
-        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Foundation.Data
     ) {
         super.application(
             application,
