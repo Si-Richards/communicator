@@ -373,11 +373,23 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
           _phoneChanged();
         }
         break;
+      case 'notificationReceived':
+        if (call.arguments?.toString() == 'voicemail') {
+          unawaited(_refreshVoicemail());
+        }
+        break;
       case 'notificationTapped':
         if (call.arguments?.toString() == 'voicemail') {
           _pendingNavigationTarget = 'voicemail';
           notifyListeners();
           unawaited(_refreshVoicemail());
+          // Clear the native persisted fallback when the live Dart handler
+          // has received the tap, avoiding a duplicate deep link next launch.
+          unawaited(
+            _nativeNotificationChannel
+                .invokeMethod<List<dynamic>>('drainPendingActions')
+                .catchError((_) => <dynamic>[]),
+          );
         }
         break;
     }
