@@ -111,6 +111,7 @@ class MobileSessionManager:
         self.device_transfer: dict[str, str] = {}
         self.voicemail: dict[str, dict[str, int | bool]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._mwi_refresh_tasks: dict[str, asyncio.Task] = {}
 
     async def restore(self):
         for device in self.store.all():
@@ -160,17 +161,7 @@ class MobileSessionManager:
 
             master = await self._create_session(device)
             self.sessions[device.device_id] = master
-            try:
-                await master.subscribe_message_summary()
-                logger.info(
-                    '[VH-DIAG] event=voicemail_subscribed device=%s',
-                    _safe_ref(device.device_id),
-                )
-            except Exception:
-                logger.exception(
-                    '[VH-DIAG] event=voicemail_subscribe_failed device=%s',
-                    _safe_ref(device.device_id),
-                )
+            self._start_mwi_refresh(device.device_id, master)
             logger.info(
                 '[VH-DIAG] event=session_start device=%s master_id=%s peer=%s session=%s handle=%s',
                 _safe_ref(device.device_id),
@@ -252,6 +243,46 @@ class MobileSessionManager:
                 )
         return session
 
+    def _start_mwi_refresh(
+        self,
+        device_id: str,
+        session: JanusSipSession,
+    ) -> None:
+        existing = self._mwi_refresh_tasks.pop(device_id, None)
+        if existing:
+            existing.cancel()
+
+        async def refresh_loop():
+            try:
+                while True:
+                    # Janus SUBSCRIBE uses a 3600 second TTL. Renew with a
+                    # generous margin so transient scheduling delays cannot
+                    # allow the PBX message-summary subscription to expire.
+                    await asyncio.sleep(3000)
+                    current = self.sessions.get(device_id)
+                    if current is not session or not self._session_alive(session):
+                        return
+                    try:
+                        await session.subscribe_message_summary()
+                        logger.info(
+                            '[VH-DIAG] event=mwi_subscription_refreshed device=%s',
+                            _safe_ref(device_id),
+                        )
+                    except Exception:
+                        logger.exception(
+                            '[VH-DIAG] event=mwi_subscription_refresh_failed device=%s',
+                            _safe_ref(device_id),
+                        )
+            except asyncio.CancelledError:
+                return
+
+        self._mwi_refresh_tasks[device_id] = asyncio.create_task(refresh_loop())
+
+    def _stop_mwi_refresh(self, device_id: str) -> None:
+        task = self._mwi_refresh_tasks.pop(device_id, None)
+        if task:
+            task.cancel()
+
     async def _ensure_helpers(
         self,
         device: DeviceRecord,
@@ -284,6 +315,7 @@ class MobileSessionManager:
             )
 
     async def _stop_device_sessions(self, device_id: str):
+        self._stop_mwi_refresh(device_id)
         for helper in self.helpers.pop(device_id, []):
             try:
                 await helper.stop()
