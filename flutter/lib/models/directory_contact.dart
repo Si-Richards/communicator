@@ -12,7 +12,7 @@ class DirectoryContact {
   String get initials {
     final words = name
         .trim()
-        .split(RegExp(r'\\s+'))
+        .split(RegExp(r'\s+'))
         .where((word) => word.isNotEmpty)
         .toList(growable: false);
     if (words.isEmpty) return '?';
