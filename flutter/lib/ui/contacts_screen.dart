@@ -24,6 +24,8 @@ class ContactsScreen extends StatefulWidget {
   State<ContactsScreen> createState() => _ContactsScreenState();
 }
 
+enum _ContactScope { all, personal, company }
+
 class _ContactsScreenState extends State<ContactsScreen>
     with WidgetsBindingObserver {
   static const MethodChannel _contactsChannel =
@@ -41,6 +43,7 @@ class _ContactsScreenState extends State<ContactsScreen>
   bool _permissionDenied = false;
   String? _deviceError;
   String? _ldapError;
+  _ContactScope _scope = _ContactScope.all;
 
   bool get _ldapConfigured =>
       widget.provisioning.configuration?.ldapDirectory?.configured == true;
@@ -95,7 +98,7 @@ class _ContactsScreenState extends State<ContactsScreen>
   void _scheduleLdapSearch() {
     _ldapDebounce?.cancel();
     final query = _search.text.trim();
-    if (!_ldapConfigured || query.isEmpty) {
+    if (!_ldapConfigured || query.isEmpty || _scope == _ContactScope.personal) {
       _ldapSearchGeneration++;
       if (mounted) {
         setState(() {
@@ -164,7 +167,7 @@ class _ContactsScreenState extends State<ContactsScreen>
                   ? map['name'].toString().trim()
                   : numbers.firstOrNull ?? 'Unknown',
               numbers: numbers,
-              source: 'Device',
+              source: 'Personal',
             );
           })
           .where((contact) => contact.numbers.isNotEmpty)
@@ -217,8 +220,9 @@ class _ContactsScreenState extends State<ContactsScreen>
             .toList(growable: false);
 
     final merged = <DirectoryContact>[
-      ...local,
-      if (query.isNotEmpty) ..._ldapContacts,
+      if (_scope != _ContactScope.company) ...local,
+      if (_scope != _ContactScope.personal && query.isNotEmpty)
+        ..._ldapContacts,
     ];
     merged.sort(
       (a, b) {
@@ -228,6 +232,19 @@ class _ContactsScreenState extends State<ContactsScreen>
       },
     );
     return merged;
+  }
+
+  int get _visiblePersonalCount =>
+      _visibleContacts.where((contact) => contact.source == 'Personal').length;
+
+  int get _visibleCompanyCount => _visibleContacts
+      .where((contact) => contact.source == 'Company Directory')
+      .length;
+
+  void _setScope(_ContactScope scope) {
+    if (_scope == scope) return;
+    setState(() => _scope = scope);
+    _scheduleLdapSearch();
   }
 
   Future<void> _openSettings() async {
@@ -321,7 +338,11 @@ class _ContactsScreenState extends State<ContactsScreen>
               ? contact.numbers.first
               : '${contact.numbers.first} · ${contact.numbers.length} numbers';
           return ListTile(
-            leading: CircleAvatar(child: Text(contact.initials)),
+            leading: contact.source == 'Company Directory'
+                ? const CircleAvatar(
+                    child: Icon(Icons.corporate_fare_outlined, size: 20),
+                  )
+                : CircleAvatar(child: Text(contact.initials)),
             title: Text(contact.name),
             subtitle: Text('${contact.source} · $numberText'),
             trailing: const Icon(Icons.phone_outlined),
@@ -350,6 +371,70 @@ class _ContactsScreenState extends State<ContactsScreen>
       body: SafeArea(
         child: Column(
           children: [
+            if (_ldapConfigured)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('All'),
+                          selected: _scope == _ContactScope.all,
+                          onSelected: (_) => _setScope(_ContactScope.all),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Personal'),
+                          selected: _scope == _ContactScope.personal,
+                          onSelected: (_) => _setScope(_ContactScope.personal),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Company'),
+                          selected: _scope == _ContactScope.company,
+                          onSelected: (_) => _setScope(_ContactScope.company),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: .55),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.corporate_fare_outlined, size: 20),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Company Directory',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Connected · Search names, extensions or numbers',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
               child: TextField(
@@ -357,7 +442,7 @@ class _ContactsScreenState extends State<ContactsScreen>
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   hintText: _ldapConfigured
-                      ? 'Search device or company directory'
+                      ? 'Search names, extensions or numbers'
                       : 'Search contacts or numbers',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _search.text.isEmpty
@@ -375,14 +460,15 @@ class _ContactsScreenState extends State<ContactsScreen>
                 ),
               ),
             ),
-            if (_ldapConfigured && query.isEmpty)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(18, 0, 18, 8),
+            if (_ldapConfigured && query.isNotEmpty && !_ldapSearching)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Company directory results appear as you search.',
-                    style: TextStyle(fontSize: 12),
+                    '$_visiblePersonalCount personal · '
+                    '$_visibleCompanyCount company directory results',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
               ),
@@ -507,7 +593,8 @@ class _EmptyContacts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = ldapConfigured && !searching
-        ? 'Search for a name or number to query the company directory.'
+        ? 'Search your personal contacts and company directory by name, '
+            'extension or telephone number.'
         : 'No contacts matched your search.';
     return Center(
       child: Padding(
