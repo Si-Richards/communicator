@@ -15,6 +15,7 @@ class ProvisioningConfiguration {
     this.sipPassword,
     this.sipRealm,
     this.sipProxy,
+    this.ldapDirectory,
   });
 
   final int version;
@@ -30,6 +31,7 @@ class ProvisioningConfiguration {
   final String? sipPassword;
   final String? sipRealm;
   final String? sipProxy;
+  final LdapDirectoryConfiguration? ldapDirectory;
   final Map<String, bool> features;
   final Map<String, dynamic> policy;
 
@@ -46,6 +48,8 @@ class ProvisioningConfiguration {
     final sip = _map(telephony['sip']);
     final rawFeatures = _map(json['features']);
     final rawPolicy = _map(json['policy']);
+    final directory = _map(json['directory']);
+    final ldap = _map(directory['ldap']);
 
     return ProvisioningConfiguration(
       version: _int(json['version']) ?? fallbackVersion ?? 0,
@@ -64,6 +68,9 @@ class ProvisioningConfiguration {
       sipPassword: sip['password']?.toString(),
       sipRealm: sip['realm']?.toString(),
       sipProxy: sip['proxy']?.toString(),
+      ldapDirectory: ldap.isEmpty
+          ? null
+          : LdapDirectoryConfiguration.fromJson(ldap),
       features: {
         for (final entry in rawFeatures.entries)
           if (entry.value is bool) entry.key: entry.value as bool,
@@ -99,6 +106,8 @@ class ProvisioningConfiguration {
               if (sipProxy != null) 'proxy': sipProxy,
             },
         },
+        if (ldapDirectory != null)
+          'directory': {'ldap': ldapDirectory!.toJson()},
         'features': features,
         'policy': policy,
       };
@@ -112,6 +121,96 @@ class ProvisioningConfiguration {
     if (value is int) return value;
     return int.tryParse(value?.toString() ?? '');
   }
+}
+
+
+class LdapDirectoryConfiguration {
+  const LdapDirectoryConfiguration({
+    required this.enabled,
+    required this.host,
+    required this.port,
+    required this.tls,
+    required this.initialQuery,
+    required this.sortMode,
+    required this.nameFilter,
+    required this.numberFilter,
+    required this.nameAttributes,
+    required this.numberAttributes,
+    required this.displayName,
+    this.ou,
+    this.uid,
+    this.baseDn,
+    this.bindDn,
+    this.password,
+  });
+
+  final bool enabled;
+  final String host;
+  final int port;
+  final bool tls;
+  final bool initialQuery;
+  final String sortMode;
+  final String nameFilter;
+  final String numberFilter;
+  final List<String> nameAttributes;
+  final List<String> numberAttributes;
+  final String displayName;
+  final String? ou;
+  final String? uid;
+  final String? baseDn;
+  final String? bindDn;
+  final String? password;
+
+  bool get configured =>
+      enabled &&
+      host.trim().isNotEmpty &&
+      (baseDn?.trim().isNotEmpty ?? false) &&
+      (bindDn?.trim().isNotEmpty ?? false) &&
+      (password?.isNotEmpty ?? false);
+
+  factory LdapDirectoryConfiguration.fromJson(Map<String, dynamic> json) {
+    List<String> strings(dynamic value) => value is List
+        ? value.map((item) => item.toString()).toList(growable: false)
+        : const <String>[];
+
+    return LdapDirectoryConfiguration(
+      enabled: json['enabled'] == true,
+      host: json['host']?.toString() ?? '',
+      port: int.tryParse(json['port']?.toString() ?? '') ?? 389,
+      tls: json['tls'] == true,
+      initialQuery: json['initial_query'] == true,
+      sortMode: json['sort_mode']?.toString() ?? 'client',
+      nameFilter: json['name_filter']?.toString() ?? '',
+      numberFilter: json['number_filter']?.toString() ?? '',
+      nameAttributes: strings(json['name_attributes']),
+      numberAttributes: strings(json['number_attributes']),
+      displayName: json['display_name']?.toString() ?? '%cn',
+      ou: json['ou']?.toString(),
+      uid: json['uid']?.toString(),
+      baseDn: json['base_dn']?.toString(),
+      bindDn: json['bind_dn']?.toString(),
+      password: json['password']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'enabled': enabled,
+        'host': host,
+        'port': port,
+        'tls': tls,
+        'initial_query': initialQuery,
+        'sort_mode': sortMode,
+        'name_filter': nameFilter,
+        'number_filter': numberFilter,
+        'name_attributes': nameAttributes,
+        'number_attributes': numberAttributes,
+        'display_name': displayName,
+        if (ou != null) 'ou': ou,
+        if (uid != null) 'uid': uid,
+        if (baseDn != null) 'base_dn': baseDn,
+        if (bindDn != null) 'bind_dn': bindDn,
+        if (password != null) 'password': password,
+      };
 }
 
 
