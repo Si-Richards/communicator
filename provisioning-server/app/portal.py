@@ -200,6 +200,8 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
         services = dict(config.get("services") or {})
         telephony = dict(config.get("telephony") or {})
         sip = dict(telephony.get("sip") or {})
+        directory = dict(config.get("directory") or {})
+        ldap = dict(directory.get("ldap") or {})
         return protect(JSONResponse({
             "id": device["id"],
             "state": device["state"],
@@ -214,6 +216,14 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
             "sip_realm": sip.get("realm") or "",
             "sip_proxy": sip.get("proxy") or "",
             "sip_password_configured": bool(sip.get("password")),
+            "ldap_enabled": bool(ldap.get("enabled", False)),
+            "ldap_ou": ldap.get("ou") or "",
+            "ldap_uid": ldap.get("uid") or "",
+            "ldap_password_configured": bool(ldap.get("password")),
+            "ldap_server": ldap.get("host") or "ldap.sipconvergence.co.uk",
+            "ldap_port": int(ldap.get("port") or 389),
+            "ldap_base_dn": ldap.get("base_dn") or "",
+            "ldap_bind_dn": ldap.get("bind_dn") or "",
         }))
 
     @router.put("/portal/api/devices/{device_id}/configuration")
