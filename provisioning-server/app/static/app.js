@@ -105,6 +105,7 @@ async function openDeviceEditor(deviceId) {
   el("edit-device-id").value = d.id;
   el("edit-extension").value = d.extension || "";
   el("edit-display-name").value = d.display_name || "";
+  el("edit-branding-name").value = d.branding_name || "VoiceHost";
   el("edit-telephony-mode").value = d.telephony_mode || "randy_managed";
   el("edit-sip-user").value = d.sip_username || "";
   el("edit-sip-password").value = "";
@@ -132,6 +133,7 @@ async function saveDeviceEditor() {
   const body = {
     extension: el("edit-extension").value.trim(),
     display_name: el("edit-display-name").value.trim() || null,
+    branding_name: el("edit-branding-name").value.trim() || "VoiceHost",
     connection_strategy: mode === "direct_janus" ? "direct_janus" : "managed_mobile",
     telephony_mode: mode,
     sip_username: el("edit-sip-user").value.trim() || null,
@@ -235,6 +237,7 @@ async function boot() {
     event.preventDefault();
     const body = {
       extension:el("extension").value.trim(),display_name:el("display-name").value.trim() || null,
+      branding_name:el("branding-name").value.trim() || "VoiceHost",
       expires_in:Number(el("expires").value),
       connection_strategy:el("telephony-mode").value === "direct_janus" ? "direct_janus" : "managed_mobile",
       telephony_mode:el("telephony-mode").value,
