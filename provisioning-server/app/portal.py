@@ -197,6 +197,7 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
             raise HTTPException(404, "Device not found.")
         config = dict(device.get("config") or {})
         managed_device = dict(config.get("device") or {})
+        branding = dict(config.get("branding") or {})
         services = dict(config.get("services") or {})
         telephony = dict(config.get("telephony") or {})
         sip = dict(telephony.get("sip") or {})
@@ -208,6 +209,7 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
             "configuration_version": device["configuration_version"],
             "extension": telephony.get("extension") or "",
             "display_name": managed_device.get("display_name") or "",
+            "branding_name": branding.get("name") or "VoiceHost",
             "connection_strategy": config.get("connection_strategy") or "managed_mobile",
             "telephony_mode": telephony.get("mode") or "randy_managed",
             "randy_url": services.get("randy_url") or "",
