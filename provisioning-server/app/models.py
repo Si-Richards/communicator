@@ -71,6 +71,10 @@ class AdminActivationRequest(BaseModel):
     sip_password: str | None = None
     sip_realm: str | None = None
     sip_proxy: str | None = None
+    ldap_enabled: bool = False
+    ldap_ou: str | None = Field(default=None, max_length=120)
+    ldap_uid: str | None = Field(default=None, max_length=200)
+    ldap_password: str | None = Field(default=None, max_length=512)
     features: dict[str, bool] = Field(
         default_factory=lambda: {
             "video": True,
@@ -106,8 +110,11 @@ class AdminDeviceConfigurationRequest(BaseModel):
     sip_password: str | None = None
     sip_realm: str | None = None
     sip_proxy: str | None = None
-
-
+    ldap_enabled: bool | None = None
+    ldap_ou: str | None = Field(default=None, max_length=120)
+    ldap_uid: str | None = Field(default=None, max_length=200)
+    # Null/empty means retain the existing managed LDAP secret.
+    ldap_password: str | None = Field(default=None, max_length=512)
 
 
 class AdminDeviceStateRequest(BaseModel):
