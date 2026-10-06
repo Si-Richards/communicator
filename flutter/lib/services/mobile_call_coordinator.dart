@@ -53,6 +53,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   final List<String> _diagnosticLogs = [];
   static const MethodChannel _nativeCallKitChannel =
       MethodChannel('voicehost/callkit');
+  static const MethodChannel _nativeAudioChannel =
+      MethodChannel('voicehost/audio');
   static const MethodChannel _nativeNotificationChannel =
       MethodChannel('voicehost/notifications');
 
@@ -1220,6 +1222,35 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       context.held = held;
       context.phase = held ? 'held' : 'connected';
       await context.webRtc.setMuted(held || context.muted);
+
+      if (!held) {
+        try {
+          await _nativeAudioChannel.invokeMethod<void>('ensureWebRtcAudio');
+        } catch (error) {
+          debugPrint(
+            '[VoiceHost Mobile] native resume audio recovery failed: $error',
+          );
+        }
+        try {
+          await context.webRtc.restoreAudioAfterHold(
+            speakerphone: context.speakerphoneOn,
+          );
+        } catch (error) {
+          debugPrint(
+            '[VoiceHost Mobile] WebRTC resume audio recovery failed: $error',
+          );
+        }
+        unawaited(
+          _diag(
+            'call_audio_resume_recovery',
+            callId: context.id,
+            details: {
+              'speakerphone': context.speakerphoneOn,
+              'muted': context.muted,
+            },
+          ),
+        );
+      }
 
       if (syncCallKit) {
         try {
