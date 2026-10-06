@@ -49,6 +49,17 @@ Future<void> _initializeServices(
   debugPrint('[VoiceHost Boot] initialization started');
 
   try {
+    await provisioning.preloadCachedBranding();
+    debugPrint(
+      '[VoiceHost Boot] cached branding preloaded '
+      'after ${DateTime.now().difference(started).inMilliseconds}ms',
+    );
+  } catch (error, stackTrace) {
+    debugPrint('[VoiceHost Boot] cached branding preload failed: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+
+  try {
     debugPrint('[VoiceHost Boot] phone controller initialization started');
     await controller.initialize();
     debugPrint(
