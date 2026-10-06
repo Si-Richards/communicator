@@ -176,7 +176,9 @@ class _MainShellState extends State<MainShell> {
       animation: Listenable.merge([controller, widget.provisioning]),
       builder: (context, _) {
         if (!widget.provisioning.initialized) {
-          return const _ProvisioningLoadingScreen();
+          return _ProvisioningLoadingScreen(
+            brandingName: widget.provisioning.brandingName,
+          );
         }
 
         if (!widget.provisioning.isEnrolled ||
@@ -233,7 +235,11 @@ class _MainShellState extends State<MainShell> {
 
 
 class _ProvisioningLoadingScreen extends StatelessWidget {
-  const _ProvisioningLoadingScreen();
+  const _ProvisioningLoadingScreen({
+    required this.brandingName,
+  });
+
+  final String brandingName;
 
   @override
   Widget build(BuildContext context) {
@@ -250,7 +256,7 @@ class _ProvisioningLoadingScreen extends StatelessWidget {
                 const Icon(Icons.phone_in_talk, size: 64, color: orange),
                 const SizedBox(height: 24),
                 Text(
-                  'VoiceHost',
+                  brandingName,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                         color: navy,
                         fontWeight: FontWeight.w700,
