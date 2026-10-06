@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'controllers/phone_controller.dart';
 import 'controllers/provisioning_controller.dart';
 import 'services/mobile_call_coordinator.dart';
+import 'services/xmpp_service.dart';
 import 'ui/call_history_screen.dart';
 import 'ui/contacts_screen.dart';
 import 'ui/messages_screen.dart';
@@ -107,12 +108,16 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
+  final _messaging = XmppService();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.provisioning.addListener(_syncMessagingAccess);
+    _syncMessagingAccess();
     widget.mobileCalls.addListener(_handleNotificationNavigation);
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _handleNotificationNavigation(),
@@ -121,8 +126,24 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.provisioning.removeListener(_syncMessagingAccess);
+    _messaging.dispose();
     widget.mobileCalls.removeListener(_handleNotificationNavigation);
     super.dispose();
+  }
+
+  void _syncMessagingAccess() =>
+      _messaging.setAccessAllowed(widget.provisioning.canUseApp);
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _messaging.resume();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _messaging.pause();
+    }
   }
 
   void _goToPhone() => setState(() => _selectedIndex = 0);
@@ -158,6 +179,7 @@ class _MainShellState extends State<MainShell> {
         controller: controller,
         mobileCalls: widget.mobileCalls,
         provisioning: widget.provisioning,
+        messaging: _messaging,
       ),
       CallHistoryScreen(
         controller: controller,
@@ -169,7 +191,7 @@ class _MainShellState extends State<MainShell> {
         provisioning: widget.provisioning,
         onGoToPhone: _goToPhone,
       ),
-      const MessagesScreen(),
+      MessagesScreen(messaging: _messaging),
     ];
 
     return AnimatedBuilder(

@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../controllers/phone_controller.dart';
 import '../controllers/provisioning_controller.dart';
 import '../services/mobile_call_coordinator.dart';
+import '../services/xmpp_service.dart';
 import 'about_screen.dart';
 import 'diagnostics_screen.dart';
+import 'messaging_diagnostics_screen.dart';
 import 'provisioning_screen.dart';
 
 /// VoiceHost owns telephony and connection configuration. There are no
@@ -15,11 +18,13 @@ class SettingsScreen extends StatelessWidget {
     required this.controller,
     required this.mobileCalls,
     required this.provisioning,
+    required this.messaging,
   });
 
   final PhoneController controller;
   final MobileCallCoordinator mobileCalls;
   final ProvisioningController provisioning;
+  final XmppService messaging;
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +64,23 @@ class SettingsScreen extends StatelessWidget {
             _SectionCard(
               title: 'Application',
               children: [
+                if (kDebugMode)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.chat_outlined),
+                    title: const Text('Messaging diagnostics'),
+                    subtitle: const Text(
+                      'Connect an ejabberd test account and send a message',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => MessagingDiagnosticsScreen(
+                          messaging: messaging,
+                        ),
+                      ),
+                    ),
+                  ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.monitor_heart_outlined),
