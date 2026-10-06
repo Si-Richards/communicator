@@ -90,6 +90,9 @@ import flutter_callkit_incoming
             case "prepareForWebRtcClose":
                 self?.prepareForWebRtcClose()
                 result(nil)
+            case "ensureWebRtcAudio":
+                self?.ensureWebRtcAudio()
+                result(nil)
             default:
                 result(FlutterMethodNotImplemented)
             }
@@ -380,6 +383,18 @@ import flutter_callkit_incoming
         }
 
         recordNativeLog("CallKit WebRTC audio session activated")
+    }
+
+    private func ensureWebRtcAudio() {
+        let rtcAudioSession = RTCAudioSession.sharedInstance()
+        if rtcCallKitAudioActive {
+            rtcAudioSession.isAudioEnabled = true
+            recordNativeLog("WebRTC audio reasserted after call resume")
+        } else {
+            recordNativeLog(
+                "WebRTC audio resume requested while CallKit audio session inactive"
+            )
+        }
     }
 
     func didDeactivateAudioSession(_ audioSession: AVAudioSession) {
