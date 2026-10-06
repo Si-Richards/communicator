@@ -110,11 +110,19 @@ async function openDeviceEditor(deviceId) {
   el("edit-sip-password").value = "";
   el("edit-sip-realm").value = d.sip_realm || "";
   el("edit-sip-proxy").value = d.sip_proxy || "";
+  el("edit-ldap-enabled").checked = d.ldap_enabled === true;
+  el("edit-ldap-ou").value = d.ldap_ou || "";
+  el("edit-ldap-uid").value = d.ldap_uid || "";
+  el("edit-ldap-password").value = "";
   el("edit-device-meta").textContent =
     d.id + " · version " + d.configuration_version + " · " + d.state;
   el("edit-password-state").textContent = d.sip_password_configured
     ? "A SIP password is configured. Leave the field blank to retain it."
     : "No SIP password is currently configured.";
+  el("edit-ldap-state").textContent = d.ldap_password_configured
+    ? "An LDAP password is configured. Leave the field blank to retain it. Server: " +
+      d.ldap_server + ":" + d.ldap_port
+    : "No LDAP password is currently configured.";
   el("device-editor").showModal();
 }
 
@@ -129,9 +137,16 @@ async function saveDeviceEditor() {
     sip_username: el("edit-sip-user").value.trim() || null,
     sip_password: el("edit-sip-password").value || null,
     sip_realm: el("edit-sip-realm").value.trim() || null,
-    sip_proxy: el("edit-sip-proxy").value.trim() || null
+    sip_proxy: el("edit-sip-proxy").value.trim() || null,
+    ldap_enabled: el("edit-ldap-enabled").checked,
+    ldap_ou: el("edit-ldap-ou").value.trim() || null,
+    ldap_uid: el("edit-ldap-uid").value.trim() || null,
+    ldap_password: el("edit-ldap-password").value || null
   };
   if (!body.extension) throw new Error("Extension is required.");
+  if (body.ldap_enabled && (!body.ldap_ou || !body.ldap_uid)) {
+    throw new Error("LDAP OU and UID are required when LDAP is enabled.");
+  }
   const result = await api("devices/" + encodeURIComponent(deviceId) + "/configuration", {
     method: "PUT",
     body: JSON.stringify(body)
@@ -226,8 +241,16 @@ async function boot() {
       sip_username:el("sip-user").value.trim() || null,
       sip_password:el("sip-password").value || null,
       sip_realm:el("sip-realm").value.trim() || "hpbx.sipconvergence.co.uk",
-      sip_proxy:el("sip-proxy").value.trim() || null
+      sip_proxy:el("sip-proxy").value.trim() || null,
+      ldap_enabled:el("ldap-enabled").checked,
+      ldap_ou:el("ldap-ou").value.trim() || null,
+      ldap_uid:el("ldap-uid").value.trim() || null,
+      ldap_password:el("ldap-password").value || null
     };
+    if (body.ldap_enabled && (!body.ldap_ou || !body.ldap_uid || !body.ldap_password)) {
+      note("LDAP OU, UID and password are required when LDAP is enabled.");
+      return;
+    }
     try {
       const result = await api("activations", {method:"POST",body:JSON.stringify(body)});
       lastActivationCode = result.code;
@@ -235,6 +258,7 @@ async function boot() {
       el("activation-expiry").textContent = "Expires " + new Date(result.expires_at).toLocaleString();
       el("activation-result").hidden = false;
       el("sip-password").value = "";
+      el("ldap-password").value = "";
       note("Activation created. Copy the code now; it cannot be retrieved later.", true);
     } catch (error) { note(error.message); }
   });
