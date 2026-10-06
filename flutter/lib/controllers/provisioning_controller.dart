@@ -32,6 +32,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   bool _cachedStatePreloaded = false;
 
   bool get initialized => _initialized;
+  bool get startupReady => _initialized || _cachedStatePreloaded;
   bool get busy => _busy;
   bool get isEnrolled => _state != null;
   String get status => _status;
@@ -59,8 +60,10 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     if (_cachedStatePreloaded || _initialized) return;
     _state = await _repository.load();
     _cachedStatePreloaded = true;
-    // Keep the provisioning gate closed; this notification only allows the
-    // splash to adopt the cached managed brand before service initialization.
+    // Cached managed state is sufficient to release the Flutter startup gate.
+    // Full phone/gateway/provisioning reconciliation continues in the
+    // background and must never block an answered CallKit call from opening
+    // the application UI.
     notifyListeners();
   }
 
