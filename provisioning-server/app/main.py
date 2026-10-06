@@ -128,31 +128,32 @@ def build_configuration(source: dict, state: str = "active") -> dict:
     ldap_uid = str(source.get("ldap_uid") or "").strip()
     ldap_password = source.get("ldap_password")
 
-    directory = {
-        "ldap": {
-            "enabled": ldap_enabled,
-            "host": LDAP_HOST,
-            "port": LDAP_PORT,
-            "tls": False,
-            "initial_query": False,
-            "sort_mode": "client",
-            "name_filter": LDAP_NAME_FILTER,
-            "number_filter": LDAP_NUMBER_FILTER,
-            "name_filter_during_call": LDAP_NAME_FILTER,
-            "number_filter_during_call": LDAP_NUMBER_FILTER,
-            "name_attributes": LDAP_NAME_ATTRIBUTES,
-            "number_attributes": LDAP_NUMBER_ATTRIBUTES,
-            "display_name": "%cn",
-            "country_code": "",
-            "area_code": "",
-            if ldap_ou: "ou": ldap_ou,
-            if ldap_uid: "uid": ldap_uid,
-            if ldap_ou: "base_dn": f"ou={ldap_ou},{LDAP_SUFFIX}",
-            if ldap_ou and ldap_uid:
-                "bind_dn": f"uid={ldap_uid},ou=auth,ou={ldap_ou},{LDAP_SUFFIX}",
-            if ldap_password: "password": ldap_password,
-        }
+    ldap_config = {
+        "enabled": ldap_enabled,
+        "host": LDAP_HOST,
+        "port": LDAP_PORT,
+        "tls": False,
+        "initial_query": False,
+        "sort_mode": "client",
+        "name_filter": LDAP_NAME_FILTER,
+        "number_filter": LDAP_NUMBER_FILTER,
+        "name_filter_during_call": LDAP_NAME_FILTER,
+        "number_filter_during_call": LDAP_NUMBER_FILTER,
+        "name_attributes": LDAP_NAME_ATTRIBUTES,
+        "number_attributes": LDAP_NUMBER_ATTRIBUTES,
+        "display_name": "%cn",
+        "country_code": "",
+        "area_code": "",
     }
+    if ldap_enabled:
+        ldap_config.update({
+            "ou": ldap_ou,
+            "uid": ldap_uid,
+            "base_dn": f"ou={ldap_ou},{LDAP_SUFFIX}",
+            "bind_dn": f"uid={ldap_uid},ou=auth,ou={ldap_ou},{LDAP_SUFFIX}",
+            "password": ldap_password,
+        })
+    directory = {"ldap": ldap_config}
 
     return {
         "version": int(source.get("version", 1)),
