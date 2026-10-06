@@ -68,7 +68,7 @@ class LdapDirectoryService {
           DirectoryContact(
             name: name.isNotEmpty ? name : uniqueNumbers.first,
             numbers: uniqueNumbers,
-            source: 'LDAP',
+            source: 'Company Directory',
           ),
         );
       }
