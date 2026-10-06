@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 Platform = Literal["ios", "android", "windows", "macos"]
@@ -93,6 +93,16 @@ class AdminActivationRequest(BaseModel):
             "force_update": False,
         },
     )
+
+    @model_validator(mode="after")
+    def validate_ldap(self):
+        if self.ldap_enabled and not (
+            (self.ldap_ou or "").strip()
+            and (self.ldap_uid or "").strip()
+            and self.ldap_password
+        ):
+            raise ValueError("LDAP requires OU, UID and password when enabled.")
+        return self
 
 
 class AdminDeviceConfigurationRequest(BaseModel):
