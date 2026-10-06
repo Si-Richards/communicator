@@ -6,6 +6,7 @@ class ProvisioningConfiguration {
     required this.features,
     required this.policy,
     this.displayName,
+    this.brandingName,
     this.deviceState,
     this.randyUrl,
     this.janusUrl,
@@ -22,6 +23,7 @@ class ProvisioningConfiguration {
   final String connectionStrategy;
   final String telephonyMode;
   final String? displayName;
+  final String? brandingName;
   final String? deviceState;
   final String? randyUrl;
   final String? janusUrl;
@@ -43,6 +45,7 @@ class ProvisioningConfiguration {
     int? fallbackVersion,
   }) {
     final device = _map(json['device']);
+    final branding = _map(json['branding']);
     final services = _map(json['services']);
     final telephony = _map(json['telephony']);
     final sip = _map(telephony['sip']);
@@ -58,6 +61,7 @@ class ProvisioningConfiguration {
       telephonyMode: telephony['mode']?.toString() ?? 'randy_managed',
       displayName: device['display_name']?.toString() ??
           json['display_name']?.toString(),
+      brandingName: branding['name']?.toString(),
       deviceState: device['state']?.toString(),
       randyUrl: services['randy_url']?.toString(),
       janusUrl: telephony['janus_url']?.toString() ??
@@ -86,6 +90,8 @@ class ProvisioningConfiguration {
           if (displayName != null) 'display_name': displayName,
           if (deviceState != null) 'state': deviceState,
         },
+        if (brandingName != null)
+          'branding': {'name': brandingName},
         'services': {
           if (randyUrl != null) 'randy_url': randyUrl,
           if (janusUrl != null) 'janus_url': janusUrl,
