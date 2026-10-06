@@ -155,8 +155,15 @@ def build_configuration(source: dict, state: str = "active") -> dict:
         })
     directory = {"ldap": ldap_config}
 
+    branding_name = str(source.get("branding_name") or "VoiceHost").strip()
+    if not branding_name:
+        branding_name = "VoiceHost"
+
     return {
         "version": int(source.get("version", 1)),
+        "branding": {
+            "name": branding_name,
+        },
         "device": {
             "display_name": source.get("display_name") or source["extension"],
             "state": state,
@@ -189,6 +196,7 @@ def update_managed_configuration(
 
     current = dict(device["config"])
     current_device = dict(current.get("device", {}))
+    current_branding = dict(current.get("branding", {}))
     current_services = dict(current.get("services", {}))
     current_telephony = dict(current.get("telephony", {}))
     current_sip = dict(current_telephony.get("sip", {}))
@@ -231,6 +239,11 @@ def update_managed_configuration(
             request.display_name.strip()
             if request.display_name and request.display_name.strip()
             else current_device.get("display_name") or request.extension.strip()
+        ),
+        "branding_name": (
+            request.branding_name.strip()
+            if request.branding_name and request.branding_name.strip()
+            else str(current_branding.get("name") or "VoiceHost").strip()
         ),
         "connection_strategy": request.connection_strategy,
         "telephony_mode": request.telephony_mode,
