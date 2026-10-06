@@ -164,7 +164,11 @@ class _MainShellState extends State<MainShell> {
         mobileCalls: widget.mobileCalls,
         onGoToPhone: _goToPhone,
       ),
-      ContactsScreen(controller: controller, onGoToPhone: _goToPhone),
+      ContactsScreen(
+        controller: controller,
+        provisioning: widget.provisioning,
+        onGoToPhone: _goToPhone,
+      ),
       const MessagesScreen(),
     ];
 
