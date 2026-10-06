@@ -175,7 +175,7 @@ class _MainShellState extends State<MainShell> {
     return AnimatedBuilder(
       animation: Listenable.merge([controller, widget.provisioning]),
       builder: (context, _) {
-        if (!widget.provisioning.initialized) {
+        if (!widget.provisioning.startupReady) {
           return _ProvisioningLoadingScreen(
             brandingName: widget.provisioning.brandingName,
           );
