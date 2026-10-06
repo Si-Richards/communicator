@@ -461,6 +461,36 @@ class WebRtcService {
 
   Future<void> setSpeakerphone(bool enabled) => Helper.setSpeakerphoneOn(enabled);
 
+  Future<void> restoreAudioAfterHold({required bool speakerphone}) async {
+    final local = _localStream;
+    if (local != null) {
+      for (final track in local.getAudioTracks()) {
+        // The caller's mute state is reapplied by the coordinator immediately
+        // before this method. Do not force-enable the microphone here.
+        onLog?.call(
+          'Resume audio local track ${track.id} enabled=${track.enabled}',
+        );
+      }
+    }
+
+    final remote = _remoteStream;
+    if (remote != null) {
+      for (final track in remote.getAudioTracks()) {
+        track.enabled = true;
+        onLog?.call('Resume audio remote track ${track.id} enabled=true');
+      }
+      if (_remoteRenderer != null) {
+        _remoteRenderer!.srcObject = remote;
+      }
+    }
+
+    await Helper.setSpeakerphoneOn(speakerphone);
+    onLog?.call(
+      'Resume audio route restored · speakerphone=$speakerphone '
+      'remote_audio=${remote?.getAudioTracks().length ?? 0}',
+    );
+  }
+
   Future<void> close() async {
     final pc = _peerConnection;
     _peerConnection = null;
