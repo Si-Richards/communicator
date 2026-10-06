@@ -84,6 +84,25 @@ def admin_auth(
         raise error("admin_unauthorized", "Administrator credential required.", 401)
 
 
+LDAP_HOST = "ldap.sipconvergence.co.uk"
+LDAP_PORT = 389
+LDAP_SUFFIX = "dc=sipconvergence,dc=co,dc=uk"
+LDAP_NAME_FILTER = (
+    "(&(|(sn=%*)(givenName=%*))"
+    "(|(telephoneNumber=*)(mobile=*)(vhVoIPPhone=*)(vhVoIPExt=*)))"
+)
+LDAP_NUMBER_FILTER = (
+    "(|(telephoneNumber=%*)(mobile=%*)(vhVoIPPhone=%*)(vhVoIPExt=%*))"
+)
+LDAP_NAME_ATTRIBUTES = ["cn"]
+LDAP_NUMBER_ATTRIBUTES = [
+    "telephoneNumber",
+    "mobile",
+    "vhVoIPPhone",
+    "vhVoIPExt",
+]
+
+
 def build_configuration(source: dict, state: str = "active") -> dict:
     strategy = source.get("connection_strategy", "managed_mobile")
     telephony_mode = source.get("telephony_mode", "randy_managed")
@@ -104,6 +123,37 @@ def build_configuration(source: dict, state: str = "active") -> dict:
             "proxy": source.get("sip_proxy"),
         }
 
+    ldap_enabled = bool(source.get("ldap_enabled", False))
+    ldap_ou = str(source.get("ldap_ou") or "").strip()
+    ldap_uid = str(source.get("ldap_uid") or "").strip()
+    ldap_password = source.get("ldap_password")
+
+    directory = {
+        "ldap": {
+            "enabled": ldap_enabled,
+            "host": LDAP_HOST,
+            "port": LDAP_PORT,
+            "tls": False,
+            "initial_query": False,
+            "sort_mode": "client",
+            "name_filter": LDAP_NAME_FILTER,
+            "number_filter": LDAP_NUMBER_FILTER,
+            "name_filter_during_call": LDAP_NAME_FILTER,
+            "number_filter_during_call": LDAP_NUMBER_FILTER,
+            "name_attributes": LDAP_NAME_ATTRIBUTES,
+            "number_attributes": LDAP_NUMBER_ATTRIBUTES,
+            "display_name": "%cn",
+            "country_code": "",
+            "area_code": "",
+            if ldap_ou: "ou": ldap_ou,
+            if ldap_uid: "uid": ldap_uid,
+            if ldap_ou: "base_dn": f"ou={ldap_ou},{LDAP_SUFFIX}",
+            if ldap_ou and ldap_uid:
+                "bind_dn": f"uid={ldap_uid},ou=auth,ou={ldap_ou},{LDAP_SUFFIX}",
+            if ldap_password: "password": ldap_password,
+        }
+    }
+
     return {
         "version": int(source.get("version", 1)),
         "device": {
@@ -116,6 +166,7 @@ def build_configuration(source: dict, state: str = "active") -> dict:
             "janus_url": source.get("janus_url") or settings.janus_url,
         },
         "telephony": telephony,
+        "directory": directory,
         "features": source.get("features", {}),
         "policy": {**source.get("policy", {}), "allow_manual_fallback": False, "allow_settings_edit": False},
     }
@@ -140,10 +191,37 @@ def update_managed_configuration(
     current_services = dict(current.get("services", {}))
     current_telephony = dict(current.get("telephony", {}))
     current_sip = dict(current_telephony.get("sip", {}))
+    current_directory = dict(current.get("directory", {}))
+    current_ldap = dict(current_directory.get("ldap", {}))
 
     password = request.sip_password
     if password is None or password == "":
         password = current_sip.get("password")
+
+    ldap_password = request.ldap_password
+    if ldap_password is None or ldap_password == "":
+        ldap_password = current_ldap.get("password")
+    ldap_enabled = (
+        request.ldap_enabled
+        if request.ldap_enabled is not None
+        else bool(current_ldap.get("enabled", False))
+    )
+    ldap_ou = (
+        request.ldap_ou.strip()
+        if request.ldap_ou and request.ldap_ou.strip()
+        else str(current_ldap.get("ou") or "").strip()
+    )
+    ldap_uid = (
+        request.ldap_uid.strip()
+        if request.ldap_uid and request.ldap_uid.strip()
+        else str(current_ldap.get("uid") or "").strip()
+    )
+    if ldap_enabled and (not ldap_ou or not ldap_uid or not ldap_password):
+        raise error(
+            "ldap_configuration_incomplete",
+            "LDAP requires OU, UID and password when enabled.",
+            422,
+        )
 
     source = {
         "version": int(device["configuration_version"]) + 1,
@@ -188,6 +266,10 @@ def update_managed_configuration(
             if request.sip_proxy and request.sip_proxy.strip()
             else None
         ),
+        "ldap_enabled": ldap_enabled,
+        "ldap_ou": ldap_ou,
+        "ldap_uid": ldap_uid,
+        "ldap_password": ldap_password,
         "features": dict(current.get("features", {})),
         "policy": dict(current.get("policy", {})),
     }
