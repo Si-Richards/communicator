@@ -596,6 +596,10 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         newMessages: summary.newMessages,
         oldMessages: summary.oldMessages,
       );
+      _appendDiagnostic(
+        'Voicemail MWI · waiting=${summary.waiting} '
+        'new=${summary.newMessages} old=${summary.oldMessages}',
+      );
     } catch (error) {
       _appendDiagnostic('Voicemail MWI refresh failed: $error');
     }
