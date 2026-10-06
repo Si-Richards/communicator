@@ -40,6 +40,10 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   String get deviceState => _state?.deviceState ?? 'unprovisioned';
   int get configurationVersion => _state?.configurationVersion ?? 0;
   ProvisioningConfiguration? get configuration => _state?.configuration;
+  String get brandingName {
+    final value = _state?.configuration?.brandingName?.trim() ?? '';
+    return value.isEmpty ? 'VoiceHost' : value;
+  }
   bool get isLocked => deviceState == 'locked';
   bool get isRevoked => deviceState == 'revoked';
   bool get isRetired => deviceState == 'retired';
