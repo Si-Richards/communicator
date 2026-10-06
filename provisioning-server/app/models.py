@@ -59,6 +59,7 @@ class LogoutRequest(BaseModel):
 class AdminActivationRequest(BaseModel):
     extension: str
     display_name: str | None = None
+    branding_name: str = Field(default="VoiceHost", min_length=1, max_length=80)
     expires_in: int | None = Field(default=None, ge=60, le=86400)
     connection_strategy: Literal["managed_mobile", "direct_janus"] = (
         "managed_mobile"
@@ -108,6 +109,7 @@ class AdminActivationRequest(BaseModel):
 class AdminDeviceConfigurationRequest(BaseModel):
     extension: str = Field(min_length=1, max_length=80)
     display_name: str | None = Field(default=None, max_length=120)
+    branding_name: str | None = Field(default=None, min_length=1, max_length=80)
     connection_strategy: Literal["managed_mobile", "direct_janus"] = (
         "managed_mobile"
     )
