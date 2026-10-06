@@ -5,7 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class AboutScreen extends StatefulWidget {
-  const AboutScreen({super.key});
+  const AboutScreen({
+    super.key,
+    required this.brandingName,
+  });
+
+  final String brandingName;
 
   @override
   State<AboutScreen> createState() => _AboutScreenState();
@@ -42,6 +47,12 @@ class _AboutScreenState extends State<AboutScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(18, 20, 18, 32),
         children: [
+          Text(
+            widget.brandingName,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 4),
           Text(
             appName,
             textAlign: TextAlign.center,
