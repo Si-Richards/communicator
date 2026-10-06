@@ -71,11 +71,17 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       mobileCalls.applyProvisionedConfiguration(config);
     }
 
-    // Release the startup gate immediately. Network/configuration-source
-    // maintenance below is deliberately not allowed to hold the UI hostage.
-    await mobileCalls.setProvisioningAccess(canUseApp);
-    unawaited(mobileCalls.setAdministrativeLocked(isLocked));
+    // Release the Flutter startup gate immediately from cached state.
+    // PushKit/CallKit can wake the app while provisioning/network recovery is
+    // still happening, so no gateway or provisioning work may sit in front of
+    // this notification.
     notifyListeners();
+
+    // Reconcile the call stack in the background. Cached managed state remains
+    // authoritative for startup; a later explicit lock/revoke response will
+    // still close access through the normal check-in path.
+    unawaited(mobileCalls.setProvisioningAccess(canUseApp));
+    unawaited(mobileCalls.setAdministrativeLocked(isLocked));
 
     // Managed clients always use the provisioning endpoint supplied by the
     // current build. Migrate legacy saved development IP addresses without
