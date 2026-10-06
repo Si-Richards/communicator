@@ -29,6 +29,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   String _status = 'Not provisioned';
   String? _error;
   bool _credentialsInvalid = false;
+  bool _cachedStatePreloaded = false;
 
   bool get initialized => _initialized;
   bool get busy => _busy;
@@ -54,10 +55,22 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       !isRevoked &&
       !isRetired;
 
+  Future<void> preloadCachedBranding() async {
+    if (_cachedStatePreloaded || _initialized) return;
+    _state = await _repository.load();
+    _cachedStatePreloaded = true;
+    // Keep the provisioning gate closed; this notification only allows the
+    // splash to adopt the cached managed brand before service initialization.
+    notifyListeners();
+  }
+
   Future<void> initialize() async {
     if (_initialized) return;
     WidgetsBinding.instance.addObserver(this);
-    _state = await _repository.load();
+    if (!_cachedStatePreloaded) {
+      _state = await _repository.load();
+      _cachedStatePreloaded = true;
+    }
     _initialized = true;
 
     if (_state == null) {
