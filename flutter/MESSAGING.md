@@ -4,15 +4,15 @@ Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-soft
 
 ## Deployment order
 
-1. Check the existing ejabberd accounts and archive policy below. This app uses existing accounts; it does not create users or call ejabberd's administrative API.
+1. Choose automatic account management or existing manual accounts, and check the archive policy below. [Automatic setup](../provisioning-server/EJABBERD-MANAGEMENT.md) creates/manages accounts on the provisioning server using the full SIP username, for example `10000*207@ejabberd.voicehost.io`. API credentials stay on the server.
 2. Pull `feature/ejabberd-messaging` on the provisioning host and rebuild **both** provisioning containers from `provisioning-server/`:
 
    ```bash
    docker compose up -d --build provisioning provisioning-admin
    ```
 
-   Retain the current `.env`, database volume, refresh retry key and admin portal configuration. No new environment variables or gateway rebuild are required. Keep the administration listener restricted as before.
-3. In the provisioning portal, open **Devices → Edit** for the existing iPhone, or create a new activation. Enable messaging and enter:
+   Retain the current `.env`, database volume, refresh retry key and admin portal configuration. Automatic mode also needs the documented ejabberd environment variables and `messaging-worker` service. The gateway does not need rebuilding. Keep the administration listener restricted as before.
+3. In the provisioning portal, open **Devices → Edit** for the existing iPhone, or create a new activation. Enable messaging and select **Create and manage ejabberd account from the full SIP username** for automatic mode; then save. For existing manual accounts, enter:
 
    | Field | Example |
    | --- | --- |
@@ -31,14 +31,14 @@ Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-soft
    ```
 
    Use your existing signing setup. No new messaging entitlements or native XMPP library are required. Flutter already includes secure storage and application-support path plugins. A full rebuild is needed for the new Dart dependencies.
-5. Let the phone check in, or refresh its provisioning configuration through Settings. Open **Messages** and expect automatic connection. Manual diagnostic login is only available in debug builds when managed messaging is disabled.
+5. Let the phone check in, or refresh its provisioning configuration through Settings. Automatic accounts show **account being prepared** until the worker confirms readiness; another check-in then connects. Open **Messages** and expect automatic connection. Manual diagnostic login is only available in debug builds when managed messaging is disabled.
 
 ## ejabberd archive prerequisites
 
 ### If credentials do not appear on the phone
 
 Check **Devices → Edit** for the phone's existing device ID, enable messaging,
-enter its dedicated JID/password and save. Creating another activation does not
+select automatic account creation or enter its dedicated manual JID/password and save. Creating another activation does not
 change an already enrolled phone. In the app, open **Settings → Provisioning**
 and use **Refresh configuration**. The messaging line reports whether the cached
 settings are absent, disabled, incomplete, blocked by feature policy or configured;
@@ -67,7 +67,7 @@ References: [ejabberd mod_mam options](https://docs.ejabberd.im/admin/configurat
 
 ## On-device acceptance tests
 
-1. Configure 207 and 208 using their existing dedicated account passwords. Both should connect without typing credentials on the phone. Confirm calls, CallKit and voicemail still work.
+1. Configure two identities using automatic SIP-name account creation or their existing dedicated account passwords. Both should connect without typing credentials on the phone. Confirm calls, CallKit and voicemail still work. For automatic mode, also run the shared-device lifecycle tests in the deployment guide.
 2. Exchange text, then force-quit and reopen 207. Its conversations should remain. Delivery status survives local reopening; recovered outgoing messages from an empty cache show `sent`, not a claimed delivery/read receipt.
 3. Background or disconnect 207. Send multiple messages from 208, then reopen 207. Missed archived messages should appear once, in chronological order. Repeat using Wi-Fi/mobile data switching.
 4. With more than 100 archived messages, use **Load older messages** on the conversation list or chat. Paging applies to the account archive, so an older page can contain other conversations. The button stays disabled while offline or recovering.

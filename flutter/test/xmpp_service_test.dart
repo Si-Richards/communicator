@@ -40,6 +40,32 @@ void main() {
     await _until(() => service.online);
   }
 
+  test('automatic account waits for readiness then uses the full SIP identity', () async {
+    final alice = client();
+    alice.configureManaged(const MessagingConfiguration(
+      enabled: true,
+      ready: false,
+      jid: '10000*207@ejabberd.voicehost.io',
+      password: 'private-test-password',
+      websocket: 'wss://ejabberd.voicehost.io/websocket',
+    ));
+    await alice.reconnect();
+    expect(server.connections, isEmpty);
+    expect(alice.error, contains('being prepared'));
+    alice.configureManaged(const MessagingConfiguration(
+      enabled: true,
+      jid: '10000*207@ejabberd.voicehost.io',
+      password: 'private-test-password',
+      websocket: 'wss://ejabberd.voicehost.io/websocket',
+    ));
+    await _until(() => alice.online);
+    final bob = client();
+    await login(bob, '10000*208');
+    alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
+    await _until(() => bob.messages.isNotEmpty);
+    expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
+  });
+
   test(
     'TLS endpoint is fixed and no connection occurs during construction',
     () {

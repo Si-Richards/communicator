@@ -105,6 +105,18 @@ class Store:
                     detail_json TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS messaging_accounts (
+                    jid TEXT PRIMARY KEY,
+                    password TEXT NOT NULL,
+                    owned INTEGER NOT NULL DEFAULT 0,
+                    applied_enabled INTEGER,
+                    attempted_enabled INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at TEXT,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -138,6 +150,7 @@ class Store:
                 return None, "installation_already_registered"
             source = json.loads(activation["config_json"])
             config = config_factory(source)
+            config = self._prepare_messaging(conn, config)
             conn.execute(
                 """INSERT INTO devices (
                     id, installation_id, platform, device_type, device_name,
@@ -274,6 +287,8 @@ class Store:
         state = "active"
         version = int(config.get("version", 1))
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            config = self._prepare_messaging(conn, config)
             conn.execute(
                 """
                 INSERT INTO devices (
@@ -337,7 +352,7 @@ class Store:
             if row is None:
                 return None
             version = int(row["configuration_version"]) + 1
-            updated = dict(config)
+            updated = self._prepare_messaging(conn, config)
             updated["version"] = version
             updated["device"] = dict(updated.get("device", {}))
             updated["device"]["state"] = row["state"]
@@ -351,6 +366,56 @@ class Store:
             )
             conn.commit()
         return self.get_device(device_id)
+
+    def _prepare_messaging(self, conn, config: dict) -> dict:
+        """Reserve a stable shared secret in the device mutation transaction."""
+        config = dict(config)
+        messaging = dict(config.get("messaging") or {})
+        if not messaging.get("enabled"):
+            return config
+        jid = messaging.get("jid")
+        account = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
+        if not messaging.get("managed"):
+            if account:
+                raise ValueError("This messaging identity is managed automatically; use automatic messaging.")
+            return config
+        # Do not silently take control of an identity already assigned manually.
+        for row in conn.execute("SELECT config_json FROM devices"):
+            other = json.loads(row["config_json"]).get("messaging") or {}
+            if other.get("enabled") and other.get("jid") == jid and not other.get("managed"):
+                raise ValueError("This messaging identity is already assigned manually.")
+        if account is None:
+            conn.execute(
+                "INSERT INTO messaging_accounts (jid, password, created_at) VALUES (?, ?, ?)",
+                (jid, secrets.token_urlsafe(48), iso(utcnow())),
+            )
+            account = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
+        messaging["password"] = account["password"]
+        messaging["ready"] = account["status"] == "enabled" and account["applied_enabled"] == 1
+        config["messaging"] = messaging
+        return config
+
+    @staticmethod
+    def messaging_active_references(conn, jid: str) -> int:
+        count = 0
+        for row in conn.execute("SELECT state, config_json FROM devices"):
+            config = json.loads(row["config_json"])
+            messaging = config.get("messaging") or {}
+            if (row["state"] == "active" and messaging.get("managed")
+                    and messaging.get("enabled") and messaging.get("jid") == jid
+                    and config.get("features", {}).get("messaging") is not False):
+                count += 1
+        return count
+
+    def messaging_account_status(self, jid: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
+            if row is None:
+                return None
+            active = self.messaging_active_references(conn, jid)
+            pending = row["applied_enabled"] != bool(active)
+            return {"status": "pending" if pending and row["status"] != "error" else row["status"],
+                    "error": row["error"], "active_devices": active}
 
     def update_checkin(
         self,
@@ -397,6 +462,10 @@ class Store:
     def set_device_state(self, device_id: str, state: str) -> bool:
         now = utcnow()
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute("SELECT state FROM devices WHERE id=?", (device_id,)).fetchone()
+            if previous and previous["state"] in {"revoked", "retired"} and state in {"active", "locked"}:
+                return False
             cur = conn.execute(
                 """
                 UPDATE devices

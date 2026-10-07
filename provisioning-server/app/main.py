@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 
 from .config import settings
 from .models import (
+    automatic_messaging_configuration,
     messaging_configuration,
     ActivationRequest,
     AdminActivationRequest,
@@ -125,6 +126,22 @@ LDAP_NUMBER_ATTRIBUTES = [
 def build_configuration(source: dict, state: str = "active") -> dict:
     strategy = source.get("connection_strategy", "managed_mobile")
     telephony_mode = source.get("telephony_mode", "randy_managed")
+    if source.get("messaging_enabled") and source.get("messaging_managed"):
+        if not settings.ejabberd_management_enabled:
+            raise error("messaging_management_unavailable", "Automatic ejabberd management is not enabled on the provisioning server.", 503)
+        try:
+            messaging = automatic_messaging_configuration(source.get("sip_username"), settings.ejabberd_host, settings.ejabberd_websocket)
+        except ValueError as exc:
+            raise error("messaging_configuration_incomplete", str(exc), 422)
+    else:
+        messaging = messaging_configuration(
+            source.get("messaging_enabled", False), source.get("messaging_jid"),
+            source.get("messaging_password"), source.get("messaging_websocket"))
+        if source.get("messaging_managed"):
+            messaging["managed"] = True
+            if source.get("messaging_jid"):
+                # Retain only the non-secret identity for disabled-account status.
+                messaging["jid"] = source["messaging_jid"]
     telephony = {
         "mode": telephony_mode,
         "extension": source["extension"],
@@ -194,9 +211,7 @@ def build_configuration(source: dict, state: str = "active") -> dict:
         },
         "telephony": telephony,
         "directory": directory,
-        "messaging": messaging_configuration(
-            source.get("messaging_enabled", False), source.get("messaging_jid"),
-            source.get("messaging_password"), source.get("messaging_websocket")),
+        "messaging": messaging,
         "features": source.get("features", {}),
         "policy": {**source.get("policy", {}), "allow_manual_fallback": False, "allow_settings_edit": False},
     }
@@ -228,6 +243,10 @@ def update_managed_configuration(
     messaging = dict(current.get("messaging", {}))
     messaging_enabled = (request.messaging_enabled if request.messaging_enabled is not None
                          else bool(messaging.get("enabled", False)))
+    messaging_managed = (request.messaging_managed if request.messaging_managed is not None
+                         else bool(messaging.get("managed", False)))
+    if messaging_managed and (request.messaging_jid or request.messaging_password or request.messaging_websocket):
+        raise error("messaging_configuration_incomplete", "Automatic messaging uses server-managed credentials and endpoint.", 422)
     messaging_jid = (request.messaging_jid if request.messaging_jid is not None
                      else messaging.get("jid") or "").strip().lower()
     messaging_websocket = (request.messaging_websocket if request.messaging_websocket is not None
@@ -240,8 +259,9 @@ def update_managed_configuration(
     if not messaging_password and same_identity:
         messaging_password = messaging.get("password")
     try:
-        messaging_configuration(messaging_enabled, messaging_jid,
-                                messaging_password, messaging_websocket)
+        if not messaging_managed:
+            messaging_configuration(messaging_enabled, messaging_jid,
+                                    messaging_password, messaging_websocket)
     except ValueError as exc:
         raise error("messaging_configuration_incomplete", str(exc), 422)
 
@@ -323,6 +343,7 @@ def update_managed_configuration(
             else None
         ),
         "messaging_enabled": messaging_enabled,
+        "messaging_managed": messaging_managed,
         "messaging_jid": messaging_jid,
         "messaging_password": messaging_password,
         "messaging_websocket": messaging_websocket,
@@ -334,7 +355,10 @@ def update_managed_configuration(
         "policy": dict(current.get("policy", {})),
     }
     config = build_configuration(source, state=device["state"])
-    updated = store.update_device_configuration(device_id, config)
+    try:
+        updated = store.update_device_configuration(device_id, config)
+    except ValueError as exc:
+        raise error("messaging_identity_conflict", str(exc), 409)
     if updated is None:
         raise error("device_not_found", "Device was not found.", 404)
     store.audit(
@@ -361,6 +385,7 @@ def create_activation(
     payload["randy_url"] = payload.get("randy_url") or settings.randy_url
     payload["janus_url"] = payload.get("janus_url") or settings.janus_url
     payload["version"] = 1
+    build_configuration(payload)
     ttl = request.expires_in or settings.activation_ttl_seconds
     activation_id, code, expires_at = store.create_activation(payload, ttl)
     store.audit("activation_created", detail={"activation_id": activation_id})
@@ -393,6 +418,9 @@ def change_device_state(
     request: AdminDeviceStateRequest,
     _: Annotated[None, Depends(admin_auth)],
 ) -> dict:
+    previous = store.get_device(device_id)
+    if previous and previous["state"] in {"revoked", "retired"} and request.state in {"active", "locked"}:
+        raise error("device_inactive", "Revoked or retired devices must be re-provisioned.", 409)
     if not store.set_device_state(device_id, request.state):
         raise error("device_not_found", "Device was not found.", 404)
     store.audit(
@@ -439,13 +467,16 @@ def admin_get_device(
 
 @app.post("/api/v1/device/activate", status_code=status.HTTP_201_CREATED)
 def activate(request: ActivationRequest, response: Response) -> dict:
-    result, failure = store.activate_device(
-        request.code,
-        request.device.model_dump(),
-        build_configuration,
-        request.push.model_dump(exclude_none=True) if request.push else None,
-        settings.access_token_ttl_seconds,
-    )
+    try:
+        result, failure = store.activate_device(
+            request.code,
+            request.device.model_dump(),
+            build_configuration,
+            request.push.model_dump(exclude_none=True) if request.push else None,
+            settings.access_token_ttl_seconds,
+        )
+    except ValueError as exc:
+        raise error("messaging_identity_conflict", str(exc), 409)
     if failure:
         if failure == "installation_already_registered":
             raise error(
@@ -588,4 +619,4 @@ def admin_health() -> dict:
 
 # The portal exists only in the administration ASGI application.
 from .portal import make_router
-admin_app.include_router(make_router(store, settings, update_managed_configuration))
+admin_app.include_router(make_router(store, settings, update_managed_configuration, build_configuration))

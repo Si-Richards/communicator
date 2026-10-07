@@ -182,7 +182,10 @@ class _RecipientDialogState extends State<_RecipientDialog> {
       autofocus: true,
       autocorrect: false,
       enableSuggestions: false,
-      decoration: const InputDecoration(labelText: 'Username', hintText: '208'),
+      decoration: const InputDecoration(
+        labelText: 'Messaging username or JID',
+        hintText: '10000*208',
+      ),
       onSubmitted: (value) => Navigator.pop(context, value),
     ),
     actions: [

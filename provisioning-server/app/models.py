@@ -65,7 +65,7 @@ def messaging_configuration(enabled, jid, password, websocket):
     if not enabled:
         return {"enabled": False}
     jid = (jid or "").strip().lower()
-    if not re.fullmatch(r"[a-z0-9._+-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", jid):
+    if not re.fullmatch(r"[a-z0-9._+*\-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", jid):
         raise ValueError("Messaging requires a bare account JID.")
     try:
         uri = urlsplit(websocket or MESSAGING_WEBSOCKET)
@@ -81,6 +81,17 @@ def messaging_configuration(enabled, jid, password, websocket):
         raise ValueError("Messaging requires its own account password.")
     return {"enabled": True, "jid": jid, "password": password,
             "websocket": websocket or MESSAGING_WEBSOCKET}
+
+
+def automatic_messaging_configuration(sip_username, host, websocket):
+    username = (sip_username or "").strip().lower()
+    if not username or len(username) > 240:
+        raise ValueError("Automatic messaging requires the full SIP username.")
+    # Reuse endpoint/JID validation without introducing an alternate identity.
+    result = messaging_configuration(True, f"{username}@{host}", "validation-only", websocket)
+    result.pop("password")
+    result["managed"] = True
+    return result
 
 
 class AdminActivationRequest(BaseModel):
@@ -100,6 +111,7 @@ class AdminActivationRequest(BaseModel):
     sip_realm: str | None = None
     sip_proxy: str | None = None
     messaging_enabled: bool = False
+    messaging_managed: bool = False
     messaging_jid: str | None = Field(default=None, max_length=320)
     messaging_password: str | None = Field(default=None, max_length=512)
     messaging_websocket: str | None = Field(default=None, max_length=2048)
@@ -128,8 +140,13 @@ class AdminActivationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_ldap(self):
-        messaging_configuration(self.messaging_enabled, self.messaging_jid,
-                                self.messaging_password, self.messaging_websocket)
+        if self.messaging_enabled and self.messaging_managed:
+            automatic_messaging_configuration(self.sip_username, "ejabberd.voicehost.io", MESSAGING_WEBSOCKET)
+            if self.messaging_jid or self.messaging_password or self.messaging_websocket:
+                raise ValueError("Automatic messaging uses server-managed credentials and endpoint.")
+        else:
+            messaging_configuration(self.messaging_enabled, self.messaging_jid,
+                                    self.messaging_password, self.messaging_websocket)
         if self.ldap_enabled and not (
             (self.ldap_ou or "").strip()
             and (self.ldap_uid or "").strip()
@@ -156,6 +173,7 @@ class AdminDeviceConfigurationRequest(BaseModel):
     sip_realm: str | None = None
     sip_proxy: str | None = None
     messaging_enabled: bool | None = None
+    messaging_managed: bool | None = None
     messaging_jid: str | None = Field(default=None, max_length=320)
     messaging_password: str | None = Field(default=None, max_length=512)
     messaging_websocket: str | None = Field(default=None, max_length=2048)

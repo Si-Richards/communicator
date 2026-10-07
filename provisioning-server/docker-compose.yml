@@ -27,6 +27,18 @@ services:
       - default
       - mobile-gateway-shared
 
+  messaging-worker:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["python", "-m", "app.messaging_worker"]
+    volumes:
+      - provisioning-data:/data
+    networks:
+      - default
+      - mobile-gateway-shared
+
 volumes:
   provisioning-data:
 

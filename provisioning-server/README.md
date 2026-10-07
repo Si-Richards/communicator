@@ -339,9 +339,15 @@ restricted by NGINX. Do not expose either administrative surface publicly.
 
 ## Managed messaging
 
-The activation form and device editor support `messaging_enabled`, `messaging_jid`,
-`messaging_password` and `messaging_websocket`. Messaging is disabled by default
-and uses an existing ejabberd account with its dedicated password. A blank password
+The activation form and device editor support `messaging_enabled`, `messaging_managed`,
+`messaging_jid`, `messaging_password` and `messaging_websocket`. Messaging is disabled by default.
+Automatic mode creates/manages an account named after the full SIP username, generates
+a separate password, and shares it across phones with that SIP identity. Last-device
+disablement bans the account while preserving its password/history; unlocking restores it.
+See [automatic ejabberd deployment and acceptance](EJABBERD-MANAGEMENT.md) for the
+private API setup, environment variables and `messaging-worker` service.
+
+Manual mode uses an existing ejabberd account with its dedicated password. A blank password
 on edit retains the current secret only when the JID and endpoint are unchanged.
 The portal never returns the messaging password. The device receives a `messaging`
 section inside its authenticated configuration and stores it in secure storage.

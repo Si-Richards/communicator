@@ -5,6 +5,12 @@ let currentList = [];
 let lastActivationCode = "";
 
 const el = id => document.getElementById(id);
+function syncMessagingMode(prefix = "") {
+  const managed = el(prefix + "messaging-managed").checked;
+  ["jid", "password", "websocket"].forEach(field => {
+    el(prefix + "messaging-" + field).disabled = managed;
+  });
+}
 function note(message, good = false) {
   const target = el("notice");
   if (!target) return;
@@ -112,10 +118,16 @@ async function openDeviceEditor(deviceId) {
   el("edit-sip-realm").value = d.sip_realm || "";
   el("edit-sip-proxy").value = d.sip_proxy || "";
   el("edit-messaging-enabled").checked = d.messaging_enabled === true;
+  el("edit-messaging-managed").checked = d.messaging_managed === true;
+  syncMessagingMode("edit-");
   el("edit-messaging-jid").value = d.messaging_jid || "";
   el("edit-messaging-websocket").value = d.messaging_websocket || "wss://ejabberd.voicehost.io/websocket";
   el("edit-messaging-password").value = "";
-  el("edit-messaging-state").textContent = d.messaging_password_configured
+  el("edit-messaging-state").textContent = d.messaging_managed
+    ? "Automatic account: " + (d.messaging_account?.status || (d.messaging_enabled ? "pending" : "disabled")) +
+      ". Active phones: " + (d.messaging_account?.active_devices || 0) +
+      (d.messaging_account?.error ? ". " + d.messaging_account.error : "")
+    : d.messaging_password_configured
     ? "A messaging password is configured. Blank keeps it for the same account and server."
     : "No messaging password is configured.";
   el("edit-ldap-enabled").checked = d.ldap_enabled === true;
@@ -148,9 +160,10 @@ async function saveDeviceEditor() {
     sip_realm: el("edit-sip-realm").value.trim() || null,
     sip_proxy: el("edit-sip-proxy").value.trim() || null,
     messaging_enabled: el("edit-messaging-enabled").checked,
-    messaging_jid: el("edit-messaging-jid").value.trim() || null,
-    messaging_password: el("edit-messaging-password").value || null,
-    messaging_websocket: el("edit-messaging-websocket").value.trim() || null,
+    messaging_managed: el("edit-messaging-managed").checked,
+    messaging_jid: el("edit-messaging-managed").checked ? null : el("edit-messaging-jid").value.trim() || null,
+    messaging_password: el("edit-messaging-managed").checked ? null : el("edit-messaging-password").value || null,
+    messaging_websocket: el("edit-messaging-managed").checked ? null : el("edit-messaging-websocket").value.trim() || null,
     ldap_enabled: el("edit-ldap-enabled").checked,
     ldap_ou: el("edit-ldap-ou").value.trim() || null,
     ldap_uid: el("edit-ldap-uid").value.trim() || null,
@@ -240,6 +253,8 @@ async function boot() {
   el("device-next").addEventListener("click", () => { offset += 25; loadDevices().catch(e => note(e.message)); });
   el("edit-close").addEventListener("click", () => el("device-editor").close());
   el("edit-cancel").addEventListener("click", () => el("device-editor").close());
+  el("messaging-managed").addEventListener("change", () => syncMessagingMode());
+  el("edit-messaging-managed").addEventListener("change", () => syncMessagingMode("edit-"));
   el("device-edit-form").addEventListener("submit", async event => {
     event.preventDefault();
     try { await saveDeviceEditor(); } catch (error) { note(error.message); }
@@ -257,9 +272,10 @@ async function boot() {
       sip_realm:el("sip-realm").value.trim() || "hpbx.sipconvergence.co.uk",
       sip_proxy:el("sip-proxy").value.trim() || null,
       messaging_enabled: el("messaging-enabled").checked,
-    messaging_jid: el("messaging-jid").value.trim() || null,
-    messaging_password: el("messaging-password").value || null,
-    messaging_websocket: el("messaging-websocket").value.trim() || null,
+    messaging_managed: el("messaging-managed").checked,
+    messaging_jid: el("messaging-managed").checked ? null : el("messaging-jid").value.trim() || null,
+    messaging_password: el("messaging-managed").checked ? null : el("messaging-password").value || null,
+    messaging_websocket: el("messaging-managed").checked ? null : el("messaging-websocket").value.trim() || null,
     ldap_enabled:el("ldap-enabled").checked,
       ldap_ou:el("ldap-ou").value.trim() || null,
       ldap_uid:el("ldap-uid").value.trim() || null,

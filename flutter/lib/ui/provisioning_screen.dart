@@ -129,7 +129,9 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                                       ? 'Messaging: disabled by administrator'
                                       : !config.messaging!.configured
                                           ? 'Messaging: provisioned settings incomplete'
-                                          : 'Messaging: configured (${config.messaging!.jid})',
+                                          : !config.messaging!.ready
+                                              ? 'Messaging: account being prepared'
+                                              : 'Messaging: configured (${config.messaging!.jid})',
                         ),
                       ],
                       if (model.error != null) ...[

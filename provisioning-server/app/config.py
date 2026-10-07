@@ -30,6 +30,12 @@ class Settings:
     activation_ttl_seconds: int = int(
         os.getenv("ACTIVATION_TTL_SECONDS", "900"),
     )
+    ejabberd_management_enabled: bool = os.getenv("EJABBERD_MANAGEMENT_ENABLED", "false").lower() == "true"
+    ejabberd_host: str = os.getenv("EJABBERD_HOST", "ejabberd.voicehost.io")
+    ejabberd_websocket: str = os.getenv("EJABBERD_WEBSOCKET", "wss://ejabberd.voicehost.io/websocket")
+    ejabberd_api_url: str = os.getenv("EJABBERD_API_URL", "")
+    ejabberd_api_username: str = os.getenv("EJABBERD_API_USERNAME", "")
+    ejabberd_api_password: str = os.getenv("EJABBERD_API_PASSWORD", "")
 
 
 settings = Settings()

@@ -432,16 +432,18 @@ class MessagingConfiguration {
     required this.jid,
     required this.password,
     required this.websocket,
+    this.ready = true,
   });
   final bool enabled;
   final String jid;
   final String password;
   final String websocket;
+  final bool ready;
 
   bool get configured {
     final uri = Uri.tryParse(websocket);
     return enabled &&
-        RegExp(r'^[a-z0-9._+-]+@[a-z0-9][a-z0-9.-]*$').hasMatch(jid) &&
+        RegExp(r'^[a-z0-9._+*\-]+@[a-z0-9][a-z0-9.-]*$').hasMatch(jid) &&
         password.isNotEmpty &&
         !password.contains('\u0000') &&
         uri != null &&
@@ -455,6 +457,7 @@ class MessagingConfiguration {
   factory MessagingConfiguration.fromJson(Map<String, dynamic> json) =>
       MessagingConfiguration(
         enabled: json['enabled'] == true,
+        ready: json['ready'] != false,
         jid: (json['jid']?.toString() ?? '').trim().toLowerCase(),
         password: json['password']?.toString() ?? '',
         websocket:
@@ -464,6 +467,7 @@ class MessagingConfiguration {
 
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
+    if (enabled) 'ready': ready,
     if (enabled) 'jid': jid,
     if (enabled) 'password': password,
     if (enabled) 'websocket': websocket,

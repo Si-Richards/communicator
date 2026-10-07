@@ -74,6 +74,12 @@ class XmppService extends ChangeNotifier {
       if (previous?.enabled == true) disconnect(clearMessages: true);
       return;
     }
+    if (!configuration.ready) {
+      disconnect(clearMessages: true);
+      _error = 'Your messaging account is being prepared. Refresh provisioning shortly.';
+      _setState(XmppState.disconnected);
+      return;
+    }
     if (!configuration.configured) {
       disconnect(clearMessages: true);
       _error =
@@ -100,7 +106,7 @@ class XmppService extends ChangeNotifier {
 
   Future<void> reconnect() async {
     final configuration = _managed;
-    if (!_accessAllowed || configuration == null || !configuration.configured) {
+    if (!_accessAllowed || configuration == null || !configuration.configured || !configuration.ready) {
       return;
     }
     await _connectAccount(
@@ -156,7 +162,7 @@ class XmppService extends ChangeNotifier {
       throw StateError('Messaging account is managed by provisioning.');
     }
     final localpart = username.trim().toLowerCase();
-    if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(localpart) ||
+    if (!RegExp(r'^[a-zA-Z0-9._+*\-]+$').hasMatch(localpart) ||
         password.isEmpty ||
         password.contains('\u0000')) {
       throw ArgumentError('Enter a username (without @domain) and password.');
@@ -510,7 +516,7 @@ class XmppService extends ChangeNotifier {
   String recipientJid(String value) {
     final clean = value.trim().toLowerCase();
     final jid = clean.contains('@') ? clean : '$clean@$_domain';
-    if (!RegExp(r'^[a-z0-9._+-]+$').hasMatch(jid.split('@').first) ||
+    if (!RegExp(r'^[a-z0-9._+*\-]+$').hasMatch(jid.split('@').first) ||
         jid.split('@').length != 2 ||
         jid.split('@').last != _domain) {
       throw ArgumentError('Enter a local username or a JID at $_domain.');
