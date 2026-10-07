@@ -1,5 +1,11 @@
 # Automatic ejabberd account lifecycle
 
+For account isolation, account-only rosters and extension-only addressing, follow
+[the tenant-module rollout guide](../ejabberd-modules/mod_voicehost_tenants/README.md)
+**before rebuilding these services**. The updated worker requires the installed
+`mod_voicehost_tenants` module and the additional `voicehost_set_identity` API
+permission. That guide uses this deployment's HTTPS API on port 443.
+
 Automatic messaging uses the **full SIP username**, lowercased, as the XMPP
 username: `10000*207` becomes `10000*207@ejabberd.voicehost.io`. A short extension
 is not substituted when the SIP username is missing. Multiple phones with the
@@ -68,11 +74,13 @@ api_permissions:
       - get_ban_details
       - ban_account
       - unban_account
+      - voicehost_set_identity
 
 modules:
   mod_admin_extra: {}
   mod_private: {}
   mod_http_api: {}
+  mod_voicehost_tenants: {}
 ```
 
 Create the dedicated `provisioning-api` account once using the existing secure
@@ -96,7 +104,7 @@ the private HTTPS API hostname and dedicated API password:
 EJABBERD_MANAGEMENT_ENABLED=true
 EJABBERD_HOST=ejabberd.voicehost.io
 EJABBERD_WEBSOCKET=wss://ejabberd.voicehost.io/websocket
-EJABBERD_API_URL=https://ejabberd.voicehost.io:5444/api/v2
+EJABBERD_API_URL=https://ejabberd.voicehost.io/api/v2
 EJABBERD_API_USERNAME=provisioning-api@ejabberd.voicehost.io
 EJABBERD_API_PASSWORD=<dedicated API password>
 ```

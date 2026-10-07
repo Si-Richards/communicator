@@ -89,3 +89,9 @@ class EjabberdClient:
         elif not enabled:
             self.call("ban_account", **args, reason=reason)
         return owned
+
+    def publish_identity(self, account, enabled, display_name, directory_extension):
+        user, host = account["jid"].split("@", 1)
+        self.call("voicehost_set_identity", user=user, host=host,
+                  account=account["account_number"], extension=account["extension"],
+                  name=display_name, address=directory_extension, enabled=1 if enabled else 0)

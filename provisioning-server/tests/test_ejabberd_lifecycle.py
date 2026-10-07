@@ -24,6 +24,7 @@ class FakeEjabberd:
     def __init__(self):
         self.users = {}
         self.bans = {}
+        self.identities = {}
         self.calls = []
         self.fail = None
         self.lose = None
@@ -55,6 +56,9 @@ class FakeEjabberd:
             result = 0
         elif command == "unban_account":
             self.bans.pop(jid, None)
+            result = 0
+        elif command == "voicehost_set_identity":
+            self.identities[jid] = {key: body[key] for key in ("account", "extension", "address", "name", "enabled")}
             result = 0
         else:
             raise AssertionError("Unexpected API command")
@@ -117,6 +121,89 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.fake.users[messaging["jid"]], messaging["password"])
         self.sync()
         self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+
+    def test_identity_registry_has_one_contact_per_shared_extension_and_no_secrets(self):
+        first = self.create("10000*207")
+        self.create("10000*207")
+        self.create("10000*208")
+        self.create("20000*207")
+        self.sync()
+        self.assertEqual(len(self.fake.identities), 3)
+        self.assertEqual(self.fake.identities[first["config"]["messaging"]["jid"]],
+                         {"account": "10000", "extension": "207", "address": "207", "name": "207", "enabled": 1})
+        config = self.store.get_device(first["id"])["config"]["messaging"]
+        self.assertEqual((config["account_number"], config["extension"]), ("10000", "207"))
+
+    def test_directory_api_failure_never_publishes_readiness(self):
+        device = self.create()
+        self.fake.fail = "voicehost_set_identity"
+        self.sync()
+        self.assertIn(device["config"]["messaging"]["jid"], self.fake.users)
+        self.assertFalse(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.fake.fail = None
+        self.retry()
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+
+    def test_sip_login_suffix_preserves_jid_but_advertises_provisioned_extension(self):
+        device = self.create("10000*213t")
+        main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+            extension="213", display_name="Simon"))
+        self.sync()
+        entry = self.fake.identities["10000*213t@ejabberd.voicehost.io"]
+        self.assertEqual((entry["account"], entry["extension"], entry["address"], entry["name"]),
+                         ("10000", "213t", "213", "Simon"))
+
+    def test_directory_removal_precedes_ban_even_when_ban_fails(self):
+        device = self.create()
+        self.sync()
+        self.store.set_device_state(device["id"], "locked")
+        self.fake.fail = "ban_account"
+        self.sync()
+        self.assertEqual(self.fake.identities[device["config"]["messaging"]["jid"]]["enabled"], 0)
+
+    def test_metadata_change_and_periodic_repair_update_directory(self):
+        device = self.create()
+        self.sync()
+        main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+            extension="207", display_name="Simon"))
+        self.sync()
+        jid = device["config"]["messaging"]["jid"]
+        self.assertEqual(self.fake.identities[jid]["name"], "Simon")
+        self.fake.identities.clear()
+        with self.store._connect() as conn:
+            conn.execute("UPDATE messaging_accounts SET directory_synced_at='2000-01-01T00:00:00Z'")
+        self.sync()
+        self.assertIn(jid, self.fake.identities)
+
+    def test_existing_identity_migration_keeps_password_and_requires_policy_sync(self):
+        device = self.create("00100*213t")
+        self.sync()
+        previous = self.store.get_device(device["id"])
+        password = previous["config"]["messaging"]["password"]
+        with self.store._connect() as conn:
+            config = previous["config"]
+            config["messaging"].pop("account_number")
+            config["messaging"].pop("extension")
+            conn.execute("UPDATE devices SET config_json=? WHERE id=?", (json.dumps(config), device["id"]))
+            for column in ("account_number", "extension", "applied_directory_signature", "directory_synced_at"):
+                conn.execute(f"ALTER TABLE messaging_accounts DROP COLUMN {column}")
+        reopened = Store(self.store.path)
+        migrated = reopened.get_device(device["id"])
+        self.assertEqual(migrated["config"]["messaging"]["account_number"], "00100")
+        self.assertEqual(migrated["config"]["messaging"]["password"], password)
+        self.assertFalse(migrated["config"]["messaging"]["ready"])
+        version = migrated["configuration_version"]
+        reopened_again = Store(self.store.path)
+        self.assertEqual(reopened_again.get_device(device["id"])["configuration_version"], version)
+        reconcile_accounts(reopened_again, self.api)
+        self.assertTrue(reopened_again.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.assertEqual(self.fake.users[device["config"]["messaging"]["jid"]], password)
+
+    def test_managed_identity_requires_an_unambiguous_account_prefix(self):
+        for username in ("207", "*207", "10000*", "10000*207*other"):
+            with self.subTest(username=username), self.assertRaises(ValidationError):
+                AdminActivationRequest(extension="207", sip_username=username,
+                                       messaging_enabled=True, messaging_managed=True)
 
     def test_shared_account_locks_only_when_last_active_phone_is_disabled(self):
         first, second = self.create(), self.create()

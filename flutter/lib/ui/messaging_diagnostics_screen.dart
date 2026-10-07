@@ -63,7 +63,7 @@ class _MessagingDiagnosticsScreenState
     } on ArgumentError {
       setState(
         () => _formError =
-            'Enter a local recipient and a message of up to 10,000 characters.',
+            'Enter an extension in your account and a message of up to 10,000 characters.',
       );
     } on StateError {
       setState(() => _formError = 'Connect messaging before sending.');

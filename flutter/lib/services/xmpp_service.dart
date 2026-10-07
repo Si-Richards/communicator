@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:xml/xml.dart';
 
 import '../models/chat_message.dart';
+import '../models/messaging_contact.dart';
 import '../models/provisioning.dart';
 import 'chat_history_repository.dart';
 
@@ -42,6 +43,7 @@ class XmppService extends ChangeNotifier {
   static const _rsm = 'http://jabber.org/protocol/rsm';
   static const _sid = 'urn:xmpp:sid:0';
   static const _disco = 'http://jabber.org/protocol/disco#info';
+  static const _roster = 'jabber:iq:roster';
   final ChatHistoryRepository _history;
   Future<void> _storageQueue = Future.value();
   final Map<String, Completer<XmlElement>> _pendingIq = {};
@@ -59,6 +61,29 @@ class XmppService extends ChangeNotifier {
   String? _historyError;
   MessagingConfiguration? _managed;
   int _accountGeneration = 0;
+  final List<MessagingContact> _directory = [];
+  bool _directoryBusy = false;
+  String? _directoryError;
+  List<MessagingContact> get directory => List.unmodifiable(_directory);
+  bool get directoryBusy => _directoryBusy;
+  String? get directoryError => _directoryError;
+  String? get accountNumber {
+    final parts = (_account ?? _managed?.jid ?? '').split('@').first.split('*');
+    return parts.length == 2 && parts.every((p) => p.isNotEmpty)
+        ? parts.first
+        : null;
+  }
+
+  String extensionFor(String jid) {
+    final contact = _directory.where((c) => c.jid == _bare(jid)).firstOrNull;
+    if (contact != null) return contact.extension;
+    final local = _bare(jid).split('@').first;
+    return local.contains('*') ? local.split('*').last : local;
+  }
+
+  String contactLabel(String jid) =>
+      _directory.where((c) => c.jid == _bare(jid)).firstOrNull?.label ??
+      extensionFor(jid);
 
   bool get managedEnabled => _managedEnabled;
   bool get historyBusy => _historyBusy;
@@ -76,7 +101,8 @@ class XmppService extends ChangeNotifier {
     }
     if (!configuration.ready) {
       disconnect(clearMessages: true);
-      _error = 'Your messaging account is being prepared. Refresh provisioning shortly.';
+      _error =
+          'Your messaging account is being prepared. Refresh provisioning shortly.';
       _setState(XmppState.disconnected);
       return;
     }
@@ -106,7 +132,10 @@ class XmppService extends ChangeNotifier {
 
   Future<void> reconnect() async {
     final configuration = _managed;
-    if (!_accessAllowed || configuration == null || !configuration.configured || !configuration.ready) {
+    if (!_accessAllowed ||
+        configuration == null ||
+        !configuration.configured ||
+        !configuration.ready) {
       return;
     }
     await _connectAccount(
@@ -180,6 +209,8 @@ class XmppService extends ChangeNotifier {
     _closeTransport();
     final accountGeneration = ++_accountGeneration;
     _messages.clear();
+    _directory.clear();
+    _directoryError = null;
     _storageReady = false;
     _historyError = null;
     _cursor = null;
@@ -197,7 +228,16 @@ class XmppService extends ChangeNotifier {
       await _storageQueue;
       final snapshot = await _history.load(storageAccount);
       if (_disposed || accountGeneration != _accountGeneration) return;
-      _messages.addAll(snapshot.messages);
+      _messages.addAll(
+        snapshot.messages.where((m) {
+          try {
+            recipientJid(m.peer);
+            return true;
+          } catch (_) {
+            return false;
+          }
+        }),
+      );
       _cursor = snapshot.cursor;
       _oldest = snapshot.oldest;
       _hasOlder = snapshot.hasOlder;
@@ -511,17 +551,103 @@ class XmppService extends ChangeNotifier {
     _send(_element('presence', _client));
     _setState(XmppState.online);
     unawaited(_recoverHistory());
+    if (accountNumber != null) unawaited(refreshDirectory());
   }
 
   String recipientJid(String value) {
     final clean = value.trim().toLowerCase();
-    final jid = clean.contains('@') ? clean : '$clean@$_domain';
+    final number = accountNumber;
+    if (number != null && !clean.contains('@') && !clean.contains('*')) {
+      final matches = _directory.where((c) => c.extension == clean).toList();
+      if (matches.length == 1) return matches.single.jid;
+      if (matches.length > 1) {
+        throw ArgumentError('Choose a user from the directory.');
+      }
+    }
+    final local = number != null && !clean.contains('@') && !clean.contains('*')
+        ? '$number*$clean'
+        : clean;
+    final jid = local.contains('@') ? local : '$local@$_domain';
     if (!RegExp(r'^[a-z0-9._+*\-]+$').hasMatch(jid.split('@').first) ||
         jid.split('@').length != 2 ||
         jid.split('@').last != _domain) {
       throw ArgumentError('Enter a local username or a JID at $_domain.');
     }
+    if (number != null) {
+      final parts = jid.split('@').first.split('*');
+      if (parts.length != 2 || parts.first != number || parts.last.isEmpty) {
+        throw ArgumentError('Choose an extension in your account.');
+      }
+    } else if (_managedEnabled) {
+      throw ArgumentError('Your messaging account needs an account number.');
+    }
     return jid;
+  }
+
+  Future<void> refreshDirectory() async {
+    if (!online || _directoryBusy || accountNumber == null) return;
+    final generation = _generation;
+    _directoryBusy = true;
+    _directoryError = null;
+    notifyListeners();
+    try {
+      final id = _id();
+      final response = await _query(
+        id,
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'get', 'to': _account!},
+          children: [_element('query', _roster)],
+        ),
+      );
+      if (generation != _generation) return;
+      final query = response.getElement('query', namespace: _roster);
+      if (response.getAttribute('type') != 'result' || query == null) {
+        throw StateError('Directory unavailable');
+      }
+      final contacts = <String, MessagingContact>{};
+      for (final item in query.findElements('item', namespace: _roster)) {
+        final raw = item.getAttribute('jid');
+        if (raw == null || item.getAttribute('subscription') == 'remove') {
+          continue;
+        }
+        try {
+          final peer = recipientJid(raw);
+          if (peer == _account || raw.contains('/')) continue;
+          final aliases = item
+              .findElements('group', namespace: _roster)
+              .map((g) => g.innerText)
+              .where((g) => g.startsWith('VoiceHost extension:'));
+          final address = aliases.isEmpty
+              ? extensionFor(peer)
+              : aliases.first.substring('VoiceHost extension:'.length);
+          if (!RegExp(r'^[a-z0-9._+\-]{1,80}$').hasMatch(address)) continue;
+          contacts[peer] = MessagingContact(
+            jid: peer,
+            extension: address,
+            name: item.getAttribute('name') ?? '',
+          );
+        } on ArgumentError {
+          continue;
+        }
+      }
+      _directory
+        ..clear()
+        ..addAll(contacts.values);
+      _directory.sort((a, b) => a.extension.compareTo(b.extension));
+    } catch (_) {
+      if (generation == _generation) {
+        _directory.clear();
+        _directoryError =
+            'The account directory could not be loaded. Tap Refresh to retry.';
+      }
+    } finally {
+      if (generation == _generation && !_disposed) {
+        _directoryBusy = false;
+        notifyListeners();
+      }
+    }
   }
 
   void sendMessage({required String recipient, required String body}) {
@@ -982,6 +1108,8 @@ class XmppService extends ChangeNotifier {
     _error = null;
     if (clearMessages) {
       _messages.clear();
+      _directory.clear();
+      _directoryError = null;
       _events.clear();
       _account = null;
       _storageReady = false;
@@ -1017,6 +1145,7 @@ class XmppService extends ChangeNotifier {
 
   void _closeTransport() {
     _generation++;
+    _directoryBusy = false;
     _historyBusy = false;
     for (final pending in _pendingIq.values) {
       pending.completeError(StateError('Connection closed.'));

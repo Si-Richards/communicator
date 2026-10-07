@@ -10,6 +10,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .messaging_identity import identity_for_jid
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -119,6 +121,39 @@ class Store:
                 );
                 """
             )
+            # Additive migration: retain shared passwords, accounts and history.
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(messaging_accounts)")}
+            for column in ("account_number", "extension", "applied_directory_signature", "directory_synced_at"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE messaging_accounts ADD COLUMN {column} TEXT")
+            for account in conn.execute("SELECT * FROM messaging_accounts").fetchall():
+                try:
+                    number, extension = identity_for_jid(account["jid"])
+                except ValueError:
+                    # Legacy identities without an account prefix need an admin
+                    # correction. Never infer a shared/default tenant for them.
+                    conn.execute("UPDATE messaging_accounts SET status='error', error=? WHERE jid=?",
+                                 ("Managed messaging requires an accountnumber*extension SIP username.", account["jid"]))
+                    continue
+                conn.execute("UPDATE messaging_accounts SET account_number=?, extension=? WHERE jid=?",
+                             (number, extension, account["jid"]))
+            for row in conn.execute("SELECT id,config_json,configuration_version FROM devices").fetchall():
+                config = json.loads(row["config_json"])
+                messaging = config.get("messaging") or {}
+                if not messaging.get("managed") or not messaging.get("enabled"):
+                    continue
+                account = conn.execute("SELECT * FROM messaging_accounts WHERE jid=?", (messaging.get("jid"),)).fetchone()
+                if not account:
+                    continue
+                updated = {**messaging, "account_number": account["account_number"], "extension": account["extension"]}
+                if not account["applied_directory_signature"]:
+                    updated["ready"] = False
+                if updated != messaging:
+                    config["messaging"] = updated
+                    config["version"] = row["configuration_version"] + 1
+                    conn.execute("UPDATE devices SET config_json=?,configuration_version=?,updated_at=? WHERE id=?",
+                                 (json.dumps(config), config["version"], iso(utcnow()), row["id"]))
 
     def activate_device(self, code: str, descriptor: dict, config_factory, push: dict | None,
                         access_ttl: int, refresh_ttl: int = 60 * 60 * 24 * 30):
@@ -385,13 +420,17 @@ class Store:
             if other.get("enabled") and other.get("jid") == jid and not other.get("managed"):
                 raise ValueError("This messaging identity is already assigned manually.")
         if account is None:
+            number, extension = identity_for_jid(jid)
             conn.execute(
-                "INSERT INTO messaging_accounts (jid, password, created_at) VALUES (?, ?, ?)",
-                (jid, secrets.token_urlsafe(48), iso(utcnow())),
+                "INSERT INTO messaging_accounts (jid, password, created_at, account_number, extension) VALUES (?, ?, ?, ?, ?)",
+                (jid, secrets.token_urlsafe(48), iso(utcnow()), number, extension),
             )
             account = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
         messaging["password"] = account["password"]
-        messaging["ready"] = account["status"] == "enabled" and account["applied_enabled"] == 1
+        messaging["account_number"] = account["account_number"]
+        messaging["extension"] = account["extension"]
+        messaging["ready"] = (account["status"] == "enabled" and account["applied_enabled"] == 1
+                              and bool(account["applied_directory_signature"]))
         config["messaging"] = messaging
         return config
 

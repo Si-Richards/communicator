@@ -40,31 +40,111 @@ void main() {
     await _until(() => service.online);
   }
 
-  test('automatic account waits for readiness then uses the full SIP identity', () async {
-    final alice = client();
-    alice.configureManaged(const MessagingConfiguration(
-      enabled: true,
-      ready: false,
-      jid: '10000*207@ejabberd.voicehost.io',
-      password: 'private-test-password',
-      websocket: 'wss://ejabberd.voicehost.io/websocket',
-    ));
-    await alice.reconnect();
-    expect(server.connections, isEmpty);
-    expect(alice.error, contains('being prepared'));
-    alice.configureManaged(const MessagingConfiguration(
-      enabled: true,
-      jid: '10000*207@ejabberd.voicehost.io',
-      password: 'private-test-password',
-      websocket: 'wss://ejabberd.voicehost.io/websocket',
-    ));
-    await _until(() => alice.online);
-    final bob = client();
-    await login(bob, '10000*208');
-    alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
-    await _until(() => bob.messages.isNotEmpty);
-    expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
-  });
+  test(
+    'automatic account waits for readiness then uses the full SIP identity',
+    () async {
+      final alice = client();
+      alice.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          ready: false,
+          jid: '10000*207@ejabberd.voicehost.io',
+          password: 'private-test-password',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+        ),
+      );
+      await alice.reconnect();
+      expect(server.connections, isEmpty);
+      expect(alice.error, contains('being prepared'));
+      alice.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          jid: '10000*207@ejabberd.voicehost.io',
+          password: 'private-test-password',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+        ),
+      );
+      await _until(() => alice.online);
+      final bob = client();
+      await login(bob, '10000*208');
+      alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
+      await _until(() => bob.messages.isNotEmpty);
+      expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
+    },
+  );
+
+  test(
+    'extensions resolve within the account and cross-account traffic is rejected',
+    () async {
+      final alice = client();
+      final bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      expect(alice.recipientJid('208'), '10000*208@ejabberd.voicehost.io');
+      expect(alice.extensionFor('10000*208@ejabberd.voicehost.io'), '208');
+      for (final recipient in [
+        '20000*208',
+        '20000*208@ejabberd.voicehost.io',
+        '208@ejabberd.voicehost.io',
+        '10000*208@elsewhere.example',
+      ]) {
+        expect(
+          () => alice.sendMessage(recipient: recipient, body: 'forbidden'),
+          throwsArgumentError,
+        );
+      }
+      alice.sendMessage(recipient: '208', body: 'Extension only');
+      await _until(() => bob.messages.isNotEmpty);
+      expect(bob.messages.single.body, 'Extension only');
+      _sendFixture(
+        server.users['10000*207']!,
+        '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" '
+        'to="10000*207@ejabberd.voicehost.io" type="chat"><body>cross account</body></message>',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(alice.messages.any((m) => m.body == 'cross account'), isFalse);
+    },
+  );
+
+  test(
+    'account directory filters foreign contacts, deduplicates and clears on lock',
+    () async {
+      server.roster = [
+        ('10000*208@ejabberd.voicehost.io', 'Reception'),
+        ('10000*208@ejabberd.voicehost.io', 'Reception'),
+        ('20000*208@ejabberd.voicehost.io', 'Other account'),
+        ('10000*207@ejabberd.voicehost.io', 'Self'),
+      ];
+      final service = client();
+      await login(service, '10000*207');
+      await _until(() => !service.directoryBusy);
+      expect(service.directory.single.extension, '208');
+      expect(service.directory.single.name, 'Reception');
+      expect(
+        service.contactLabel('10000*208@ejabberd.voicehost.io'),
+        'Reception · 208',
+      );
+      service.setAccessAllowed(false);
+      expect(service.directory, isEmpty);
+    },
+  );
+
+  test(
+    'provisioned extensions resolve a SIP identity suffix through the roster',
+    () async {
+      server.roster = [('10000*213t@ejabberd.voicehost.io', 'Simon')];
+      server.rosterAliases['10000*213t@ejabberd.voicehost.io'] = '213';
+      final service = client();
+      await login(service, '10000*207');
+      await _until(() => !service.directoryBusy);
+      expect(service.directory.single.extension, '213');
+      expect(service.recipientJid('213'), '10000*213t@ejabberd.voicehost.io');
+      expect(
+        service.contactLabel('10000*213t@ejabberd.voicehost.io'),
+        'Simon · 213',
+      );
+    },
+  );
 
   test(
     'TLS endpoint is fixed and no connection occurs during construction',
@@ -255,9 +335,11 @@ void main() {
   );
   const account = '207@ejabberd.voicehost.io';
   const storageAccount = '$account|wss://ejabberd.voicehost.io/websocket';
+  const tenantStorageAccount =
+      '10000*207@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
   const managed = MessagingConfiguration(
     enabled: true,
-    jid: account,
+    jid: '10000*207@ejabberd.voicehost.io',
     password: 'private-test-password',
     websocket: 'wss://ejabberd.voicehost.io/websocket',
   );
@@ -401,14 +483,14 @@ void main() {
       await _until(() => service.online && !service.historyBusy);
       service.setAccessAllowed(false);
       expect(service.messages, isEmpty);
-      expect((await history.load(storageAccount)).messages, hasLength(1));
+      expect((await history.load(tenantStorageAccount)).messages, hasLength(1));
       service.setAccessAllowed(true);
       service.configureManaged(managed);
       await _until(() => service.online && !service.historyBusy);
       expect(service.messages.single.body, 'private text');
       service.setAccessAllowed(false);
       await service.forgetHistory();
-      expect((await history.load(storageAccount)).messages, isEmpty);
+      expect((await history.load(tenantStorageAccount)).messages, isEmpty);
     },
   );
 
@@ -441,7 +523,7 @@ void main() {
       service.configureManaged(
         const MessagingConfiguration(
           enabled: true,
-          jid: '209@ejabberd.voicehost.io',
+          jid: '10000*209@ejabberd.voicehost.io',
           password: 'other-secret',
           websocket: 'wss://ejabberd.voicehost.io/websocket',
         ),
@@ -449,7 +531,7 @@ void main() {
       await _until(
         () =>
             service.online &&
-            service.jid!.startsWith('209@') &&
+            service.jid!.startsWith('10000*209@') &&
             !service.historyBusy,
       );
       expect(service.messages, isEmpty);
@@ -458,7 +540,7 @@ void main() {
         throwsStateError,
       );
       expect(
-        (await history.load(storageAccount)).messages.single.body,
+        (await history.load(tenantStorageAccount)).messages.single.body,
         'account 207 only',
       );
     },
@@ -495,6 +577,8 @@ class _XmppServer {
   final users = <String, WebSocket>{};
   final archive = <_Archived>[];
   final archiveQueries = <({String? before, String? after})>[];
+  List<(String, String)> roster = [];
+  final rosterAliases = <String, String>{};
   bool mamSupported = true;
   bool forgeArchive = false;
   bool holdArchive = false;
@@ -574,6 +658,33 @@ class _XmppServer {
               '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
               '<bind xmlns="urn:ietf:params:xml:ns:xmpp-bind">'
               '<jid>${wrongIdentity ? 'wrong' : user}@ejabberd.voicehost.io/$resource</jid></bind></iq>',
+            );
+          } else if (stanza.getElement(
+                'query',
+                namespace: 'jabber:iq:roster',
+              ) !=
+              null) {
+            final items = roster.map((entry) {
+              final item = XmlElement(
+                XmlName('item'),
+                [
+                  XmlAttribute(XmlName('jid'), entry.$1),
+                  XmlAttribute(XmlName('name'), entry.$2),
+                  XmlAttribute(XmlName('subscription'), 'both'),
+                ],
+                [
+                  if (rosterAliases[entry.$1] != null)
+                    XmlElement(XmlName('group'), [], [
+                      XmlText('VoiceHost extension:${rosterAliases[entry.$1]}'),
+                    ]),
+                ],
+              );
+              return item.toXmlString();
+            }).join();
+            _sendFixture(
+              socket,
+              '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
+              '<query xmlns="jabber:iq:roster">$items</query></iq>',
             );
           } else if (stanza.getElement(
                 'session',
@@ -686,7 +797,9 @@ class _Archived {
   final bool outgoing;
   String xml(String query, String user, {String? from}) {
     final account = '$user@ejabberd.voicehost.io';
-    final peer = '208@ejabberd.voicehost.io';
+    final peer = user.contains('*')
+        ? '${user.split('*').first}*208@ejabberd.voicehost.io'
+        : '208@ejabberd.voicehost.io';
     return '<message xmlns="jabber:client" from="${from ?? account}">'
         '<result xmlns="urn:xmpp:mam:2" queryid="$query" id="$id">'
         '<forwarded xmlns="urn:xmpp:forward:0">'

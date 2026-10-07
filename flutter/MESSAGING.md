@@ -1,5 +1,14 @@
 # Managed ejabberd messaging and conversation recovery
 
+Account directory and extension addressing are implemented on this branch.
+Install/configure the [ejabberd tenant module](../ejabberd-modules/mod_voicehost_tenants/README.md)
+before rebuilding provisioning and installing this app update. Directory lists
+only other active messaging identities in the account; search names/extensions,
+tap a contact, or type its provisioned extension in New conversation. A SIP login
+suffix such as `213t` stays internal when the provisioned extension is `213`.
+Cross-account peers are rejected locally and by ejabberd. External invitations
+and group conversations remain a future stage.
+
 Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-softphone`. This stage adds automatic managed login, encrypted local conversation storage and XEP-0313 archive recovery. The Messages tab is available in release/profile builds when managed messaging is enabled. Telephony and the mobile gateway are unchanged.
 
 ## Deployment order

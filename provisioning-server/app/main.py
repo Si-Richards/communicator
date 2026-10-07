@@ -131,6 +131,8 @@ def build_configuration(source: dict, state: str = "active") -> dict:
             raise error("messaging_management_unavailable", "Automatic ejabberd management is not enabled on the provisioning server.", 503)
         try:
             messaging = automatic_messaging_configuration(source.get("sip_username"), settings.ejabberd_host, settings.ejabberd_websocket)
+            from .messaging_identity import directory_address
+            directory_address(source.get("extension"))
         except ValueError as exc:
             raise error("messaging_configuration_incomplete", str(exc), 422)
     else:
