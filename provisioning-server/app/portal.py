@@ -201,6 +201,7 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
         services = dict(config.get("services") or {})
         telephony = dict(config.get("telephony") or {})
         sip = dict(telephony.get("sip") or {})
+        messaging = dict(config.get("messaging") or {})
         directory = dict(config.get("directory") or {})
         ldap = dict(directory.get("ldap") or {})
         return protect(JSONResponse({
@@ -218,6 +219,10 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
             "sip_realm": sip.get("realm") or "",
             "sip_proxy": sip.get("proxy") or "",
             "sip_password_configured": bool(sip.get("password")),
+            "messaging_enabled": bool(messaging.get("enabled", False)),
+            "messaging_jid": messaging.get("jid") or "",
+            "messaging_websocket": messaging.get("websocket") or "wss://ejabberd.voicehost.io/websocket",
+            "messaging_password_configured": bool(messaging.get("password")),
             "ldap_enabled": bool(ldap.get("enabled", False)),
             "ldap_ou": ldap.get("ou") or "",
             "ldap_uid": ldap.get("uid") or "",

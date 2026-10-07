@@ -85,6 +85,8 @@ class PortalTests(unittest.TestCase):
                         "proxy": None,
                     },
                 },
+                "messaging": {"enabled": True, "jid": "207@ejabberd.voicehost.io",
+                    "password": "never-return-messaging-secret", "websocket": "wss://ejabberd.voicehost.io/websocket"},
                 "features": {},
                 "policy": {},
             },
@@ -101,6 +103,9 @@ class PortalTests(unittest.TestCase):
         self.assertTrue(body["sip_password_configured"])
         self.assertNotIn("sip_password", body)
         self.assertNotIn("never-return-this", response.text)
+        self.assertNotIn("never-return-messaging-secret", response.text)
+        self.assertTrue(body["messaging_password_configured"])
+        self.assertEqual(body["messaging_jid"], "207@ejabberd.voicehost.io")
 
     def test_misconfiguration_fails_closed(self):
         self.settings.portal_secret = ""

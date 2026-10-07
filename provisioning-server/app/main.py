@@ -3,9 +3,11 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 from .config import settings
 from .models import (
+    messaging_configuration,
     ActivationRequest,
     AdminActivationRequest,
     AdminDeviceConfigurationRequest,
@@ -23,11 +25,28 @@ app = FastAPI(
     title="VoiceHost Provisioning Service",
     version="0.3.0",
 )
+@app.middleware("http")
+async def prevent_credential_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 store = Store(
     settings.database_path,
     retry_key=settings.refresh_retry_key,
     retry_grace_seconds=settings.refresh_retry_grace_seconds,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Pydantic's default response includes the submitted input (and secrets).
+    return JSONResponse(status_code=422, content={"error": {
+        "code": "invalid_request", "message": "Check the submitted configuration.",
+        "fields": [list(item["loc"]) for item in exc.errors()],
+    }}, headers={"Cache-Control": "no-store"})
 
 
 def error(code: str, message: str, status_code: int) -> HTTPException:
@@ -175,6 +194,9 @@ def build_configuration(source: dict, state: str = "active") -> dict:
         },
         "telephony": telephony,
         "directory": directory,
+        "messaging": messaging_configuration(
+            source.get("messaging_enabled", False), source.get("messaging_jid"),
+            source.get("messaging_password"), source.get("messaging_websocket")),
         "features": source.get("features", {}),
         "policy": {**source.get("policy", {}), "allow_manual_fallback": False, "allow_settings_edit": False},
     }
@@ -202,6 +224,26 @@ def update_managed_configuration(
     current_sip = dict(current_telephony.get("sip", {}))
     current_directory = dict(current.get("directory", {}))
     current_ldap = dict(current_directory.get("ldap", {}))
+
+    messaging = dict(current.get("messaging", {}))
+    messaging_enabled = (request.messaging_enabled if request.messaging_enabled is not None
+                         else bool(messaging.get("enabled", False)))
+    messaging_jid = (request.messaging_jid if request.messaging_jid is not None
+                     else messaging.get("jid") or "").strip().lower()
+    messaging_websocket = (request.messaging_websocket if request.messaging_websocket is not None
+                           else messaging.get("websocket"))
+    # A new identity or endpoint must never inherit another account's secret.
+    same_identity = (messaging_jid == messaging.get("jid")
+                     and (messaging_websocket or "wss://ejabberd.voicehost.io/websocket")
+                     == (messaging.get("websocket") or "wss://ejabberd.voicehost.io/websocket"))
+    messaging_password = request.messaging_password
+    if not messaging_password and same_identity:
+        messaging_password = messaging.get("password")
+    try:
+        messaging_configuration(messaging_enabled, messaging_jid,
+                                messaging_password, messaging_websocket)
+    except ValueError as exc:
+        raise error("messaging_configuration_incomplete", str(exc), 422)
 
     password = request.sip_password
     if password is None or password == "":
@@ -280,6 +322,10 @@ def update_managed_configuration(
             if request.sip_proxy and request.sip_proxy.strip()
             else None
         ),
+        "messaging_enabled": messaging_enabled,
+        "messaging_jid": messaging_jid,
+        "messaging_password": messaging_password,
+        "messaging_websocket": messaging_websocket,
         "ldap_enabled": ldap_enabled,
         "ldap_ou": ldap_ou,
         "ldap_uid": ldap_uid,
@@ -523,7 +569,9 @@ admin_app = FastAPI(
     title="VoiceHost Provisioning Administration",
     version="0.3.0",
 )
+admin_app.middleware("http")(prevent_credential_caching)
 admin_app.add_exception_handler(HTTPException, http_exception_handler)
+admin_app.add_exception_handler(RequestValidationError, validation_exception_handler)
 admin_routes = [
     route for route in app.router.routes
     if getattr(route, "path", "").startswith("/api/v1/admin/")

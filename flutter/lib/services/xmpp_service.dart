@@ -7,6 +7,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:xml/xml.dart';
 
 import '../models/chat_message.dart';
+import '../models/provisioning.dart';
+import 'chat_history_repository.dart';
 
 enum XmppState {
   disconnected,
@@ -19,14 +21,15 @@ enum XmppState {
   failed,
 }
 
-/// Focused RFC 7395 client for the first foreground messaging milestone.
-/// Credentials, messages and diagnostic events are deliberately memory-only.
-/// No administrative API, telephony dependency, or startup connection.
+/// RFC 7395 client with account-scoped encrypted history and XEP-0313 recovery.
 class XmppService extends ChangeNotifier {
-  XmppService({WebSocketChannel Function(Uri)? channelFactory})
-    : _channelFactory =
-          channelFactory ??
-          ((uri) => WebSocketChannel.connect(uri, protocols: ['xmpp']));
+  XmppService({
+    WebSocketChannel Function(Uri)? channelFactory,
+    ChatHistoryRepository? historyRepository,
+  }) : _history = historyRepository ?? EncryptedChatHistoryRepository(),
+       _channelFactory =
+           channelFactory ??
+           ((uri) => WebSocketChannel.connect(uri, protocols: ['xmpp']));
 
   static const domain = 'ejabberd.voicehost.io';
   static final endpoint = Uri.parse('wss://$domain/websocket');
@@ -35,6 +38,77 @@ class XmppService extends ChangeNotifier {
   static const _client = 'jabber:client';
   static const _bind = 'urn:ietf:params:xml:ns:xmpp-bind';
   static const _receipts = 'urn:xmpp:receipts';
+  static const _mam = 'urn:xmpp:mam:2';
+  static const _rsm = 'http://jabber.org/protocol/rsm';
+  static const _sid = 'urn:xmpp:sid:0';
+  static const _disco = 'http://jabber.org/protocol/disco#info';
+  final ChatHistoryRepository _history;
+  Future<void> _storageQueue = Future.value();
+  final Map<String, Completer<XmlElement>> _pendingIq = {};
+  final Map<String, List<ChatMessage>> _archiveResults = {};
+  String _domain = domain;
+  Uri _endpoint = endpoint;
+  String? _lastStorageAccount;
+  String? _cursor;
+  String? _oldest;
+  bool _hasOlder = false;
+  bool _historyBusy = false;
+  bool _archiveSupported = false;
+  bool _storageReady = false;
+  bool _managedEnabled = false;
+  String? _historyError;
+  MessagingConfiguration? _managed;
+  int _accountGeneration = 0;
+
+  bool get managedEnabled => _managedEnabled;
+  bool get historyBusy => _historyBusy;
+  bool get hasOlder => _hasOlder;
+  String? get historyError => _historyError;
+
+  void configureManaged(MessagingConfiguration? configuration) {
+    _managedEnabled = configuration?.enabled ?? false;
+    final previous = _managed;
+    _managed = configuration;
+    if (!_accessAllowed) return;
+    if (configuration == null || !configuration.enabled) {
+      if (previous?.enabled == true) disconnect(clearMessages: true);
+      return;
+    }
+    if (!configuration.configured) {
+      disconnect(clearMessages: true);
+      _error =
+          'Messaging configuration is incomplete. Contact your administrator.';
+      _setState(XmppState.failed);
+      return;
+    }
+    if (previous?.jid == configuration.jid &&
+        previous?.password == configuration.password &&
+        previous?.websocket == configuration.websocket &&
+        (_wanted ||
+            state == XmppState.failed ||
+            state == XmppState.connecting)) {
+      return;
+    }
+    unawaited(
+      _connectAccount(
+        configuration.jid,
+        configuration.password,
+        Uri.parse(configuration.websocket),
+      ),
+    );
+  }
+
+  Future<void> reconnect() async {
+    final configuration = _managed;
+    if (!_accessAllowed || configuration == null || !configuration.configured) {
+      return;
+    }
+    await _connectAccount(
+      configuration.jid,
+      configuration.password,
+      Uri.parse(configuration.websocket),
+    );
+  }
 
   final WebSocketChannel Function(Uri) _channelFactory;
   final List<ChatMessage> _messages = [];
@@ -78,16 +152,61 @@ class XmppService extends ChangeNotifier {
     required String password,
   }) async {
     if (!_accessAllowed || _disposed) throw StateError('Messaging is locked.');
+    if (_managedEnabled) {
+      throw StateError('Messaging account is managed by provisioning.');
+    }
     final localpart = username.trim().toLowerCase();
     if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(localpart) ||
         password.isEmpty ||
         password.contains('\u0000')) {
       throw ArgumentError('Enter a username (without @domain) and password.');
     }
-    if (_account != localpart) _messages.clear();
-    _account = localpart;
-    _username = localpart;
+    await _connectAccount('$localpart@$domain', password, endpoint);
+  }
+
+  Future<void> _connectAccount(
+    String account,
+    String password,
+    Uri endpoint,
+  ) async {
+    if (!_accessAllowed || _disposed) return;
+    _wanted = false;
+    _closeTransport();
+    final accountGeneration = ++_accountGeneration;
+    _messages.clear();
+    _storageReady = false;
+    _historyError = null;
+    _cursor = null;
+    _oldest = null;
+    _hasOlder = false;
+    _account = account;
+    _domain = account.split('@').last;
+    _endpoint = endpoint;
+    _lastStorageAccount = _storageAccount;
+    final storageAccount = _storageAccount!;
+    _username = account.split('@').first;
     _password = password;
+    _setState(XmppState.connecting);
+    try {
+      await _storageQueue;
+      final snapshot = await _history.load(storageAccount);
+      if (_disposed || accountGeneration != _accountGeneration) return;
+      _messages.addAll(snapshot.messages);
+      _cursor = snapshot.cursor;
+      _oldest = snapshot.oldest;
+      _hasOlder = snapshot.hasOlder;
+      _storageReady = true;
+    } catch (_) {
+      if (_disposed || accountGeneration != _accountGeneration) return;
+      // Do not overwrite an unreadable cache with an empty history.
+      _historyError =
+          'Saved history could not be opened. Archive recovery will still be attempted.';
+    }
+    if (!_accessAllowed ||
+        _disposed ||
+        accountGeneration != _accountGeneration) {
+      return;
+    }
     _wanted = true;
     _attempts = 0;
     if (_paused) {
@@ -95,6 +214,68 @@ class XmppService extends ChangeNotifier {
       return;
     }
     await _open();
+  }
+
+  String? get _storageAccount =>
+      _account == null ? null : '$_account|$_endpoint';
+
+  Future<void> flushHistory() => _storageQueue;
+
+  Future<void> _persist({bool requireSuccess = false}) {
+    final account = _storageAccount;
+    if (!_storageReady || account == null) {
+      return requireSuccess
+          ? Future.error(StateError('History unavailable.'))
+          : Future.value();
+    }
+    var start = _messages.length > 2000 ? _messages.length - 2000 : 0;
+    var bytes = 0;
+    for (var index = _messages.length - 1; index >= start; index--) {
+      bytes += utf8.encode(_messages[index].body).length + 1024;
+      if (bytes > 4 * 1024 * 1024) {
+        start = index + 1;
+        break;
+      }
+    }
+    final recent = _messages.sublist(start);
+    final clipped = recent.length < _messages.length;
+    final snapshot = ChatHistorySnapshot.fromJson(
+      ChatHistorySnapshot(
+        messages: recent,
+        cursor: _cursor,
+        oldest: clipped
+            ? recent.where((m) => m.archiveId != null).firstOrNull?.archiveId
+            : _oldest,
+        hasOlder: _hasOlder || clipped,
+      ).toJson(),
+    );
+    final operation = _storageQueue.then(
+      (_) => _history.save(account, snapshot),
+    );
+    final accountGeneration = _accountGeneration;
+    _storageQueue = operation.catchError((Object _) {
+      if (!_disposed && accountGeneration == _accountGeneration) {
+        _historyError =
+            'History could not be saved on this device. Please try again.';
+        notifyListeners();
+      }
+    });
+    return requireSuccess ? operation : _storageQueue;
+  }
+
+  Future<void> forgetHistory() async {
+    final account = _storageAccount ?? _lastStorageAccount;
+    _lastStorageAccount = null;
+    disconnect(clearMessages: true);
+    if (account == null) return;
+    final operation = _storageQueue.then((_) => _history.delete(account));
+    _storageQueue = operation.catchError((Object _) {
+      if (!_disposed) {
+        _historyError = 'Saved history could not be removed from this device.';
+        notifyListeners();
+      }
+    });
+    await _storageQueue;
   }
 
   Future<void> _open() async {
@@ -109,7 +290,7 @@ class XmppService extends ChangeNotifier {
     _setState(_attempts == 0 ? XmppState.connecting : XmppState.reconnecting);
     WebSocketChannel? channel;
     try {
-      channel = _channelFactory(endpoint);
+      channel = _channelFactory(_endpoint);
       _channel = channel;
       // Close even a connection that becomes ready after cancellation/timeout.
       unawaited(
@@ -151,7 +332,7 @@ class XmppService extends ChangeNotifier {
     _element(
       'open',
       _framing,
-      attributes: {'to': domain, 'version': '1.0', 'xml:lang': 'en'},
+      attributes: {'to': _domain, 'version': '1.0', 'xml:lang': 'en'},
     ),
   );
 
@@ -255,6 +436,14 @@ class XmppService extends ChangeNotifier {
   void _iq(XmlElement iq) {
     final id = iq.getAttribute('id');
     final type = iq.getAttribute('type');
+    final from = iq.getAttribute('from');
+    if (id != null && _pendingIq.containsKey(id)) {
+      if (from != null && _bare(from) != _account && from != _domain) return;
+      if (type == 'result' || type == 'error') {
+        _pendingIq.remove(id)!.complete(iq);
+      }
+      return;
+    }
     if (id == _bindId && _bindId != null && state == XmppState.binding) {
       if (type != 'result') {
         _fail('XMPP resource binding was rejected.');
@@ -264,7 +453,7 @@ class XmppService extends ChangeNotifier {
           .getElement('bind', namespace: _bind)
           ?.getElement('jid', namespace: _bind)
           ?.innerText;
-      if (bound == null || _bare(bound) != '$_username@$domain') {
+      if (bound == null || _bare(bound) != _account) {
         _fail('Server returned an unexpected XMPP identity.');
         return;
       }
@@ -315,13 +504,16 @@ class XmppService extends ChangeNotifier {
     _attempts = 0;
     _send(_element('presence', _client));
     _setState(XmppState.online);
+    unawaited(_recoverHistory());
   }
 
   String recipientJid(String value) {
     final clean = value.trim().toLowerCase();
-    final jid = clean.contains('@') ? clean : '$clean@$domain';
-    if (!RegExp(r'^[a-zA-Z0-9._-]+@ejabberd\.voicehost\.io$').hasMatch(jid)) {
-      throw ArgumentError('Enter a local username or a JID at $domain.');
+    final jid = clean.contains('@') ? clean : '$clean@$_domain';
+    if (!RegExp(r'^[a-z0-9._+-]+$').hasMatch(jid.split('@').first) ||
+        jid.split('@').length != 2 ||
+        jid.split('@').last != _domain) {
+      throw ArgumentError('Enter a local username or a JID at $_domain.');
     }
     return jid;
   }
@@ -341,6 +533,7 @@ class XmppService extends ChangeNotifier {
         children: [
           _element('body', _client, text: body),
           _element('request', _receipts),
+          _element('origin-id', _sid, attributes: {'id': id}),
         ],
       ),
     );
@@ -355,14 +548,25 @@ class XmppService extends ChangeNotifier {
       ),
     );
     _trimMessages();
+    unawaited(_persist());
     _event('Text message sent');
     notifyListeners();
   }
 
   void _message(XmlElement message) {
+    final result = message.getElement('result', namespace: _mam);
+    if (result != null) {
+      _archiveMessage(message, result);
+      return;
+    }
     final from = message.getAttribute('from');
     if (from == null) return;
     final peer = _bare(from);
+    try {
+      recipientJid(peer);
+    } catch (_) {
+      return;
+    }
     final id = message.getAttribute('id');
     if (message.getAttribute('type') == 'error') {
       _updateStatus(id, peer, ChatMessageStatus.failed);
@@ -397,7 +601,9 @@ class XmppService extends ChangeNotifier {
       );
     }
     if (id != null &&
-        _messages.any((m) => !m.outgoing && m.id == id && m.peer == peer)) {
+        _messages.any(
+          (m) => !m.outgoing && m.id == id && m.peer == peer && m.body == body,
+        )) {
       return;
     }
     final delay = message.getElement('delay', namespace: 'urn:xmpp:delay');
@@ -411,9 +617,11 @@ class XmppService extends ChangeNotifier {
             DateTime.tryParse(delay?.getAttribute('stamp') ?? '')?.toLocal() ??
             DateTime.now(),
         status: ChatMessageStatus.received,
+        archiveId: _trustedArchiveId(message),
       ),
     );
     _trimMessages();
+    unawaited(_persist());
     _event('Text message received');
     notifyListeners();
   }
@@ -423,6 +631,7 @@ class XmppService extends ChangeNotifier {
     for (final message in _messages) {
       if (message.outgoing && message.id == id && message.peer == peer) {
         message.status = status;
+        unawaited(_persist());
         notifyListeners();
         break;
       }
@@ -430,9 +639,305 @@ class XmppService extends ChangeNotifier {
   }
 
   void _trimMessages() {
-    if (_messages.length > 500) {
-      _messages.removeRange(0, _messages.length - 500);
+    _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    // Keep a bounded recent cache; older history can be loaded from MAM.
+    if (_messages.length > 2000) {
+      _messages.removeRange(0, _messages.length - 2000);
+      _hasOlder = true;
+      _oldest = _messages
+          .where((m) => m.archiveId != null)
+          .firstOrNull
+          ?.archiveId;
     }
+  }
+
+  String? _trustedArchiveId(XmlElement message) {
+    if (!_archiveSupported) return null;
+    for (final stanza in message.findElements('stanza-id', namespace: _sid)) {
+      if (stanza.getAttribute('by') == _account) {
+        return stanza.getAttribute('id');
+      }
+    }
+    return null;
+  }
+
+  Future<XmlElement> _query(String id, XmlElement stanza) async {
+    final completer = Completer<XmlElement>();
+    _pendingIq[id] = completer;
+    _send(stanza);
+    try {
+      return await completer.future.timeout(const Duration(seconds: 15));
+    } finally {
+      _pendingIq.remove(id);
+    }
+  }
+
+  Future<void> _recoverHistory() async {
+    final generation = _generation;
+    _historyBusy = true;
+    _archiveSupported = false;
+    notifyListeners();
+    try {
+      final id = _id();
+      final response = await _query(
+        id,
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'get', 'to': _account!},
+          children: [_element('query', _disco)],
+        ),
+      );
+      if (generation != _generation) return;
+      _archiveSupported =
+          response.getAttribute('type') == 'result' &&
+          (response
+                  .getElement('query', namespace: _disco)
+                  ?.findElements('feature', namespace: _disco)
+                  .any((f) => f.getAttribute('var') == _mam) ??
+              false);
+      if (!_archiveSupported) {
+        _historyError =
+            'Server archive is unavailable. Only saved messages are shown.';
+        return;
+      }
+      if (_cursor == null) {
+        await _archivePage(before: '');
+      } else {
+        try {
+          await _catchUp();
+        } on _ArchiveCursorExpired {
+          // Retention/reconfigured archive: recover its recent page without
+          // discarding the local cache. Old gaps may no longer exist on server.
+          _cursor = null;
+          await _archivePage(before: '');
+          _historyError =
+              'The archive cursor expired. Recent available history was recovered.';
+        }
+      }
+    } catch (_) {
+      if (generation == _generation) {
+        _historyError ??= 'Archive recovery did not finish. Tap Retry history.';
+      }
+    } finally {
+      if (generation == _generation && !_disposed) {
+        _historyBusy = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> retryHistory() async {
+    if (!online || _historyBusy) return;
+    if (_storageReady) _historyError = null;
+    await _recoverHistory();
+  }
+
+  Future<void> _catchUp() async {
+    for (var page = 0; page < 50; page++) {
+      if (await _archivePage(after: _cursor)) return;
+    }
+    throw StateError('Archive catch-up limit reached.');
+  }
+
+  Future<void> loadOlder() async {
+    if (!online ||
+        _historyBusy ||
+        !_archiveSupported ||
+        !_hasOlder ||
+        _oldest == null) {
+      return;
+    }
+    final generation = _generation;
+    _historyBusy = true;
+    notifyListeners();
+    try {
+      await _archivePage(before: _oldest);
+    } catch (_) {
+      if (generation == _generation) {
+        _historyError = 'Older history could not be loaded. Try again.';
+      }
+    } finally {
+      if (generation == _generation && !_disposed) {
+        _historyBusy = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<bool> _archivePage({String? before, String? after}) async {
+    final generation = _generation;
+    final id = _id();
+    final queryId = _id();
+    final results = <ChatMessage>[];
+    _archiveResults[queryId] = results;
+    try {
+      final response = await _query(
+        id,
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'set', 'to': _account!},
+          children: [
+            _element(
+              'query',
+              _mam,
+              attributes: {'queryid': queryId},
+              children: [
+                _element(
+                  'x',
+                  'jabber:x:data',
+                  attributes: {'type': 'submit'},
+                  children: [
+                    _element(
+                      'field',
+                      'jabber:x:data',
+                      attributes: {'var': 'FORM_TYPE', 'type': 'hidden'},
+                      children: [
+                        _element('value', 'jabber:x:data', text: _mam),
+                      ],
+                    ),
+                  ],
+                ),
+                _element(
+                  'set',
+                  _rsm,
+                  children: [
+                    _element('max', _rsm, text: '100'),
+                    if (before != null) _element('before', _rsm, text: before),
+                    if (after != null) _element('after', _rsm, text: after),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+      if (generation != _generation) throw StateError('Archive cancelled.');
+      if (response.getAttribute('type') == 'error') {
+        if (response
+                .getElement('error', namespace: _client)
+                ?.getElement(
+                  'item-not-found',
+                  namespace: 'urn:ietf:params:xml:ns:xmpp-stanzas',
+                ) !=
+            null) {
+          throw _ArchiveCursorExpired();
+        }
+        throw StateError('Archive request rejected.');
+      }
+      final fin = response.getElement('fin', namespace: _mam);
+      if (fin == null) throw StateError('Missing archive completion.');
+      final complete = ['true', '1'].contains(fin.getAttribute('complete'));
+      final set = fin.getElement('set', namespace: _rsm);
+      final first = set?.getElement('first', namespace: _rsm)?.innerText;
+      final last = set?.getElement('last', namespace: _rsm)?.innerText;
+      if ((!complete || results.isNotEmpty) &&
+          (first == null || first.isEmpty || last == null || last.isEmpty)) {
+        throw StateError('Missing archive cursors.');
+      }
+      if (after != null && !complete && last == after) {
+        throw StateError('Archive did not advance.');
+      }
+      for (final message in results) {
+        final existing = _messages
+            .where(
+              (m) =>
+                  (m.archiveId != null && m.archiveId == message.archiveId) ||
+                  (m.id == message.id &&
+                      m.peer == message.peer &&
+                      m.outgoing == message.outgoing &&
+                      m.body == message.body),
+            )
+            .firstOrNull;
+        if (existing == null) {
+          _messages.add(message);
+        } else {
+          existing.archiveId = message.archiveId;
+        }
+      }
+      final oldCursor = _cursor;
+      final oldOldest = _oldest;
+      final oldHasOlder = _hasOlder;
+      if (before != null) {
+        if (first != null && first.isNotEmpty) _oldest = first;
+        _hasOlder = !complete;
+        if (before.isEmpty && last != null && last.isNotEmpty) _cursor = last;
+      } else if (last != null && last.isNotEmpty) {
+        _cursor = last;
+      }
+      _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      // Older pages are visible for this session. The persistent cache holds
+      // the newest 2,000 messages and its own oldest available archive cursor.
+      try {
+        await _persist(requireSuccess: true);
+      } catch (_) {
+        if (generation == _generation) {
+          _cursor = oldCursor;
+          _oldest = oldOldest;
+          _hasOlder = oldHasOlder;
+        }
+        rethrow;
+      }
+      if (generation != _generation) throw StateError('Archive cancelled.');
+      notifyListeners();
+      return complete;
+    } finally {
+      _archiveResults.remove(queryId);
+    }
+  }
+
+  void _archiveMessage(XmlElement wrapper, XmlElement result) {
+    final from = wrapper.getAttribute('from');
+    if (from != null && _bare(from) != _account) return;
+    final results = _archiveResults[result.getAttribute('queryid')];
+    final archiveId = result.getAttribute('id');
+    if (results == null ||
+        results.length >= 100 ||
+        archiveId == null ||
+        archiveId.isEmpty) {
+      return;
+    }
+    final forwarded = result.getElement(
+      'forwarded',
+      namespace: 'urn:xmpp:forward:0',
+    );
+    final message = forwarded?.getElement('message', namespace: _client);
+    final stamp = forwarded
+        ?.getElement('delay', namespace: 'urn:xmpp:delay')
+        ?.getAttribute('stamp');
+    final timestamp = DateTime.tryParse(stamp ?? '');
+    if (message == null ||
+        timestamp == null ||
+        !['chat', 'normal', null].contains(message.getAttribute('type'))) {
+      return;
+    }
+    final sender = _bare(message.getAttribute('from') ?? '');
+    final recipient = _bare(message.getAttribute('to') ?? '');
+    final outgoing = sender == _account;
+    if (!outgoing && recipient != _account) return;
+    final peer = outgoing ? recipient : sender;
+    try {
+      recipientJid(peer);
+    } catch (_) {
+      return;
+    }
+    final body = message.getElement('body', namespace: _client)?.innerText;
+    if (body == null || body.isEmpty || body.length > 10000) return;
+    final origin = outgoing
+        ? message.getElement('origin-id', namespace: _sid)?.getAttribute('id')
+        : null;
+    results.add(
+      ChatMessage(
+        id: origin ?? message.getAttribute('id') ?? 'archive-$archiveId',
+        peer: peer,
+        body: body,
+        outgoing: outgoing,
+        timestamp: timestamp.toLocal(),
+        status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
+        archiveId: archiveId,
+      ),
+    );
   }
 
   void _networkLost() {
@@ -463,6 +968,7 @@ class XmppService extends ChangeNotifier {
 
   void disconnect({bool clearMessages = false}) {
     _wanted = false;
+    _accountGeneration++;
     _closeTransport();
     _username = null;
     _password = null;
@@ -472,6 +978,10 @@ class XmppService extends ChangeNotifier {
       _messages.clear();
       _events.clear();
       _account = null;
+      _storageReady = false;
+      _cursor = null;
+      _oldest = null;
+      _hasOlder = false;
     }
     _setState(XmppState.disconnected);
   }
@@ -480,6 +990,7 @@ class XmppService extends ChangeNotifier {
     if (_accessAllowed == allowed) return;
     _accessAllowed = allowed;
     if (!allowed) {
+      _managed = null;
       disconnect(clearMessages: true);
     } else if (!_disposed) {
       notifyListeners();
@@ -500,6 +1011,12 @@ class XmppService extends ChangeNotifier {
 
   void _closeTransport() {
     _generation++;
+    _historyBusy = false;
+    for (final pending in _pendingIq.values) {
+      pending.completeError(StateError('Connection closed.'));
+    }
+    _pendingIq.clear();
+    _archiveResults.clear();
     _deadline?.cancel();
     _retry?.cancel();
     final subscription = _subscription;
@@ -552,6 +1069,7 @@ class XmppService extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _accountGeneration++;
     _wanted = false;
     _password = null;
     _messages.clear();
@@ -559,3 +1077,5 @@ class XmppService extends ChangeNotifier {
     super.dispose();
   }
 }
+
+class _ArchiveCursorExpired implements Exception {}

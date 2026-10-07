@@ -13,6 +13,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: MessagingDiagnosticsScreen(messaging: service)),
     );
+    await tester.scrollUntilVisible(find.text('Test username'), 200);
     expect(find.text('Test username'), findsOneWidget);
     expect(tester.takeException(), isNull);
     service.setAccessAllowed(false);
@@ -24,6 +25,7 @@ void main() {
     expect(find.text('Test username'), findsNothing);
     service.setAccessAllowed(true);
     await tester.pump();
+    await tester.scrollUntilVisible(find.text('Test username'), 200);
     expect(find.text('Test username'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());

@@ -1,3 +1,5 @@
+import re
+from urllib.parse import urlsplit
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -56,6 +58,31 @@ class LogoutRequest(BaseModel):
     reason: Literal["user_requested", "reprovision", "other"] = "user_requested"
 
 
+MESSAGING_WEBSOCKET = "wss://ejabberd.voicehost.io/websocket"
+
+
+def messaging_configuration(enabled, jid, password, websocket):
+    if not enabled:
+        return {"enabled": False}
+    jid = (jid or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9._+-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", jid):
+        raise ValueError("Messaging requires a bare account JID.")
+    try:
+        uri = urlsplit(websocket or MESSAGING_WEBSOCKET)
+        if uri.port is not None and not 1 <= uri.port <= 65535:
+            raise ValueError("Invalid port")
+    except ValueError:
+        raise ValueError("Messaging requires a valid secure WebSocket URL.") from None
+    if (uri.scheme != "wss" or not uri.hostname or any(c.isspace() for c in websocket or "")
+            or uri.username is not None
+            or uri.password is not None or uri.query or uri.fragment):
+        raise ValueError("Messaging requires a secure WebSocket URL without credentials.")
+    if not password or "\x00" in password:
+        raise ValueError("Messaging requires its own account password.")
+    return {"enabled": True, "jid": jid, "password": password,
+            "websocket": websocket or MESSAGING_WEBSOCKET}
+
+
 class AdminActivationRequest(BaseModel):
     extension: str
     display_name: str | None = None
@@ -72,6 +99,10 @@ class AdminActivationRequest(BaseModel):
     sip_password: str | None = None
     sip_realm: str | None = None
     sip_proxy: str | None = None
+    messaging_enabled: bool = False
+    messaging_jid: str | None = Field(default=None, max_length=320)
+    messaging_password: str | None = Field(default=None, max_length=512)
+    messaging_websocket: str | None = Field(default=None, max_length=2048)
     ldap_enabled: bool = False
     ldap_ou: str | None = Field(default=None, max_length=120)
     ldap_uid: str | None = Field(default=None, max_length=200)
@@ -97,6 +128,8 @@ class AdminActivationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_ldap(self):
+        messaging_configuration(self.messaging_enabled, self.messaging_jid,
+                                self.messaging_password, self.messaging_websocket)
         if self.ldap_enabled and not (
             (self.ldap_ou or "").strip()
             and (self.ldap_uid or "").strip()
@@ -122,6 +155,10 @@ class AdminDeviceConfigurationRequest(BaseModel):
     sip_password: str | None = None
     sip_realm: str | None = None
     sip_proxy: str | None = None
+    messaging_enabled: bool | None = None
+    messaging_jid: str | None = Field(default=None, max_length=320)
+    messaging_password: str | None = Field(default=None, max_length=512)
+    messaging_websocket: str | None = Field(default=None, max_length=2048)
     ldap_enabled: bool | None = None
     ldap_ou: str | None = Field(default=None, max_length=120)
     ldap_uid: str | None = Field(default=None, max_length=200)

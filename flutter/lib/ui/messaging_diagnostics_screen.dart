@@ -90,6 +90,7 @@ class _MessagingDiagnosticsScreenState
             );
           }
           final canConnect =
+              !service.managedEnabled &&
               service.accessAllowed &&
               [
                 XmppState.disconnected,
@@ -99,13 +100,14 @@ class _MessagingDiagnosticsScreenState
             padding: const EdgeInsets.all(16),
             children: [
               const Text(
-                'Development test',
+                'Messaging test',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Use an ejabberd test account. Credentials and messages are held only '
-                'for this app session. Background notifications and archive history are not enabled yet.',
+                'Managed accounts connect through provisioning. Manual test login is available '
+                'when managed messaging is disabled. Conversations are encrypted on this device; '
+                'server archive recovery runs after login. Background notifications are not enabled yet.',
               ),
               const SizedBox(height: 16),
               Card(
@@ -162,7 +164,9 @@ class _MessagingDiagnosticsScreenState
               ),
               const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed: !service.accessAllowed
+                onPressed: service.managedEnabled
+                    ? service.reconnect
+                    : !service.accessAllowed
                     ? null
                     : canConnect
                     ? _connect
@@ -171,7 +175,13 @@ class _MessagingDiagnosticsScreenState
                         _password.clear();
                       },
                 icon: Icon(canConnect ? Icons.login : Icons.logout),
-                label: Text(canConnect ? 'Connect' : 'Disconnect'),
+                label: Text(
+                  service.managedEnabled
+                      ? 'Reconnect managed account'
+                      : canConnect
+                      ? 'Connect'
+                      : 'Disconnect',
+                ),
               ),
               const SizedBox(height: 24),
               TextField(
@@ -208,7 +218,7 @@ class _MessagingDiagnosticsScreenState
                 ),
               const SizedBox(height: 24),
               Text(
-                'Session messages (${service.messages.length})',
+                'Messages (${service.messages.length})',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const Text('Open Messages to view and reply to conversations.'),

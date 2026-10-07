@@ -39,14 +39,14 @@ class MessagesScreen extends StatelessWidget {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: messaging,
     builder: (context, _) {
-      if (!kDebugMode) {
+      if (!kDebugMode && !messaging.managedEnabled) {
         return Scaffold(
           appBar: AppBar(title: const Text('Messages')),
           body: const Center(
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'Messaging will be available in a future release.',
+                'Messaging is not enabled for this device.',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -92,9 +92,31 @@ class MessagesScreen extends StatelessWidget {
               title: Text('Messaging ${messaging.state.name}'),
               subtitle: Text(
                 messaging.error ??
-                    'Foreground test · messages last for this app session',
+                    messaging.historyError ??
+                    (messaging.historyBusy
+                        ? 'Recovering conversation history…'
+                        : 'Encrypted history saved on this device'),
               ),
             ),
+            if (messaging.managedEnabled && !messaging.online)
+              TextButton(
+                onPressed: messaging.reconnect,
+                child: const Text('Reconnect'),
+              ),
+            if (messaging.historyError != null && messaging.online)
+              TextButton(
+                onPressed: messaging.historyBusy
+                    ? null
+                    : messaging.retryHistory,
+                child: const Text('Retry history'),
+              ),
+            if (messaging.hasOlder)
+              TextButton(
+                onPressed: messaging.online && !messaging.historyBusy
+                    ? messaging.loadOlder
+                    : null,
+                child: const Text('Load older messages'),
+              ),
             const Divider(height: 1),
             Expanded(
               child: conversations.isEmpty
@@ -102,8 +124,7 @@ class MessagesScreen extends StatelessWidget {
                       child: Padding(
                         padding: EdgeInsets.all(24),
                         child: Text(
-                          'No conversations yet.\nConnect a test account in Messaging diagnostics, '
-                          'then start a conversation.',
+                          'No conversations yet. Start a conversation when messaging is online.',
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -123,8 +144,9 @@ class MessagesScreen extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                           trailing: Text(
-                            TimeOfDay.fromDateTime(message.timestamp)
-                                .format(context),
+                            TimeOfDay.fromDateTime(
+                              message.timestamp,
+                            ).format(context),
                           ),
                           onTap: () => _openChat(context, message.peer),
                         );
@@ -237,6 +259,14 @@ class _ChatScreenState extends State<_ChatScreen> {
                 Padding(
                   padding: const EdgeInsets.all(8),
                   child: Text('Messaging ${widget.messaging.state.name}'),
+                ),
+              if (widget.messaging.hasOlder)
+                TextButton(
+                  onPressed:
+                      widget.messaging.online && !widget.messaging.historyBusy
+                      ? widget.messaging.loadOlder
+                      : null,
+                  child: const Text('Load older messages'),
                 ),
               Expanded(
                 child: ListView.builder(

@@ -6,7 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:xml/xml.dart';
 import 'package:voicehost_softphone/models/chat_message.dart';
+import 'package:voicehost_softphone/models/provisioning.dart';
 import 'package:voicehost_softphone/services/xmpp_service.dart';
+import 'package:voicehost_softphone/services/chat_history_repository.dart';
 
 void main() {
   late _XmppServer server;
@@ -23,8 +25,9 @@ void main() {
     await server.close();
   });
 
-  XmppService client() {
+  XmppService client({ChatHistoryRepository? history}) {
     final service = XmppService(
+      historyRepository: history ?? MemoryChatHistoryRepository(),
       channelFactory: (_) =>
           IOWebSocketChannel.connect(server.uri, protocols: ['xmpp']),
     );
@@ -224,6 +227,226 @@ void main() {
       expect(service.events.join('\n'), isNot(contains('never-log-this')));
     },
   );
+  const account = '207@ejabberd.voicehost.io';
+  const storageAccount = '$account|wss://ejabberd.voicehost.io/websocket';
+  const managed = MessagingConfiguration(
+    enabled: true,
+    jid: account,
+    password: 'private-test-password',
+    websocket: 'wss://ejabberd.voicehost.io/websocket',
+  );
+
+  test(
+    'managed login recovers newest archive page and loads older history',
+    () async {
+      server.archive.addAll([
+        for (var i = 1; i <= 5; i++) _Archived('$i', 'message-$i'),
+      ]);
+      final service = client();
+      service.configureManaged(managed);
+      await _until(() => service.online && !service.historyBusy);
+      expect(service.messages.map((m) => m.body), ['message-4', 'message-5']);
+      expect(service.hasOlder, isTrue);
+      await service.loadOlder();
+      await service.loadOlder();
+      expect(service.messages.map((m) => m.body), [
+        for (var i = 1; i <= 5; i++) 'message-$i',
+      ]);
+      expect(service.hasOlder, isFalse);
+      expect(server.archiveQueries.map((q) => q.before), ['', '4', '2']);
+    },
+  );
+
+  test(
+    'restart and reconnect page missed messages without duplicate outgoing text',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      server.archive.add(_Archived('1', 'first'));
+      final service = client(history: history);
+      await login(service, '207');
+      await _until(() => !service.historyBusy);
+      service.sendMessage(recipient: '208', body: 'sent locally');
+      final sent = service.messages.last;
+      server.archive.add(
+        _Archived('2', sent.body, clientId: sent.id, outgoing: true),
+      );
+      service.pause();
+      server.archive.addAll([
+        for (var i = 3; i <= 6; i++) _Archived('$i', 'missed-$i'),
+      ]);
+      final restarted = client(history: history);
+      await login(restarted, '207');
+      await _until(() => !restarted.historyBusy);
+      expect(
+        restarted.messages.where((m) => m.body == 'sent locally'),
+        hasLength(1),
+      );
+      expect(
+        restarted.messages.where((m) => m.body.startsWith('missed-')),
+        hasLength(4),
+      );
+      expect(
+        server.archiveQueries.where((q) => q.after != null).map((q) => q.after),
+        ['1', '3', '5'],
+      );
+      expect((await history.load(storageAccount)).cursor, '6');
+    },
+  );
+
+  test(
+    'archive wrappers from another user and uncorrelated queries are ignored',
+    () async {
+      server.forgeArchive = true;
+      server.archive.add(_Archived('1', 'trusted'));
+      final service = client();
+      await login(service, '207');
+      await _until(() => !service.historyBusy);
+      expect(service.messages.single.body, 'trusted');
+      expect(
+        server.received.where(
+          (s) =>
+              s.getElement('received', namespace: 'urn:xmpp:receipts') != null,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'disconnect during archive page does not commit messages or cursor',
+    () async {
+      server.holdArchive = true;
+      server.archive.add(_Archived('1', 'recover after reconnect'));
+      final history = MemoryChatHistoryRepository();
+      final service = client(history: history);
+      await login(service, '207');
+      await _until(() => server.archiveQueries.isNotEmpty);
+      service.pause();
+      await service.flushHistory();
+      expect(service.messages, isEmpty);
+      expect((await history.load(storageAccount)).cursor, isNull);
+      server.holdArchive = false;
+      service.resume();
+      await _until(() => service.online && !service.historyBusy);
+      expect(service.messages.single.body, 'recover after reconnect');
+    },
+  );
+
+  test(
+    'expired archive cursor recovers recent history and retains local text',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      await history.save(
+        storageAccount,
+        ChatHistorySnapshot(
+          cursor: 'expired',
+          messages: [
+            ChatMessage(
+              id: 'old',
+              peer: '208@ejabberd.voicehost.io',
+              body: 'local history',
+              outgoing: false,
+              timestamp: DateTime.utc(2025),
+              status: ChatMessageStatus.received,
+            ),
+          ],
+        ),
+      );
+      server.archive.add(_Archived('1', 'recent history'));
+      final service = client(history: history);
+      await login(service, '207');
+      await _until(() => !service.historyBusy);
+      expect(service.messages.map((m) => m.body), [
+        'local history',
+        'recent history',
+      ]);
+      expect(service.historyError, contains('cursor expired'));
+      expect((await history.load(storageAccount)).cursor, '1');
+    },
+  );
+
+  test(
+    'lock hides history, unlock restores it, logout purges the cache',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      server.archive.add(_Archived('1', 'private text'));
+      final service = client(history: history);
+      service.configureManaged(managed);
+      await _until(() => service.online && !service.historyBusy);
+      service.setAccessAllowed(false);
+      expect(service.messages, isEmpty);
+      expect((await history.load(storageAccount)).messages, hasLength(1));
+      service.setAccessAllowed(true);
+      service.configureManaged(managed);
+      await _until(() => service.online && !service.historyBusy);
+      expect(service.messages.single.body, 'private text');
+      service.setAccessAllowed(false);
+      await service.forgetHistory();
+      expect((await history.load(storageAccount)).messages, isEmpty);
+    },
+  );
+
+  test(
+    'failed durable write never advances archive cursor; retry deduplicates',
+    () async {
+      final history = _FailingHistoryRepository();
+      server.archive.add(_Archived('1', 'recoverable text'));
+      final service = client(history: history);
+      await login(service, '207');
+      await _until(() => !service.historyBusy);
+      expect((await history.load(storageAccount)).cursor, isNull);
+      expect(service.historyError, contains('could not be saved'));
+      history.failWrites = false;
+      await service.retryHistory();
+      expect(service.messages.single.body, 'recoverable text');
+      expect((await history.load(storageAccount)).cursor, '1');
+    },
+  );
+
+  test(
+    'changing managed account isolates history and manual login cannot override it',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      final service = client(history: history);
+      service.configureManaged(managed);
+      await _until(() => service.online && !service.historyBusy);
+      service.sendMessage(recipient: '208', body: 'account 207 only');
+      await service.flushHistory();
+      service.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          jid: '209@ejabberd.voicehost.io',
+          password: 'other-secret',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+        ),
+      );
+      await _until(
+        () =>
+            service.online &&
+            service.jid!.startsWith('209@') &&
+            !service.historyBusy,
+      );
+      expect(service.messages, isEmpty);
+      await expectLater(
+        service.connect(username: '207', password: 'secret'),
+        throwsStateError,
+      );
+      expect(
+        (await history.load(storageAccount)).messages.single.body,
+        'account 207 only',
+      );
+    },
+  );
+
+  test('unsupported archive keeps live messaging usable', () async {
+    server.mamSupported = false;
+    final service = client();
+    await login(service, '207');
+    await _until(() => !service.historyBusy);
+    expect(service.historyError, contains('archive is unavailable'));
+    service.sendMessage(recipient: '208', body: 'still usable');
+    expect(service.messages.single.body, 'still usable');
+  });
 }
 
 Future<void> _until(bool Function() predicate) async {
@@ -244,6 +467,11 @@ class _XmppServer {
   final received = <XmlElement>[];
   final authenticatedUsers = <String>[];
   final users = <String, WebSocket>{};
+  final archive = <_Archived>[];
+  final archiveQueries = <({String? before, String? after})>[];
+  bool mamSupported = true;
+  bool forgeArchive = false;
+  bool holdArchive = false;
   bool rejectAuth = false;
   bool requireSession = false;
   bool wrongIdentity = false;
@@ -270,15 +498,18 @@ class _XmppServer {
     var authenticated = false;
     var user = '';
     socket.listen((dynamic data) {
+      if (socket.readyState != WebSocket.open) return;
       final stanza = XmlDocument.parse(data as String).rootElement;
       received.add(stanza);
       switch (stanza.name.local) {
         case 'open':
-          socket.add(
+          _sendFixture(
+            socket,
             '<open xmlns="urn:ietf:params:xml:ns:xmpp-framing" '
             'from="ejabberd.voicehost.io" version="1.0"/>',
           );
-          socket.add(
+          _sendFixture(
+            socket,
             '<stream:features xmlns:stream="http://etherx.jabber.org/streams">'
             '${authenticated ? '<bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>'
                       '${requireSession ? '<session xmlns="urn:ietf:params:xml:ns:xmpp-session"/>' : ''}' : '<mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl"><mechanism>PLAIN</mechanism></mechanisms>'}'
@@ -287,13 +518,17 @@ class _XmppServer {
         case 'auth':
           user = utf8.decode(base64Decode(stanza.innerText)).split('\u0000')[1];
           if (rejectAuth) {
-            socket.add(
+            _sendFixture(
+              socket,
               '<failure xmlns="urn:ietf:params:xml:ns:xmpp-sasl"><not-authorized/></failure>',
             );
           } else {
             authenticated = true;
             authenticatedUsers.add(user);
-            socket.add('<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>');
+            _sendFixture(
+              socket,
+              '<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>',
+            );
           }
         case 'iq':
           final bind = stanza.getElement(
@@ -308,7 +543,8 @@ class _XmppServer {
                 )!
                 .innerText;
             users[user] = socket;
-            socket.add(
+            _sendFixture(
+              socket,
               '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
               '<bind xmlns="urn:ietf:params:xml:ns:xmpp-bind">'
               '<jid>${wrongIdentity ? 'wrong' : user}@ejabberd.voicehost.io/$resource</jid></bind></iq>',
@@ -319,16 +555,93 @@ class _XmppServer {
               ) !=
               null) {
             sessionRequests++;
-            socket.add(
+            _sendFixture(
+              socket,
               '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}"/>',
             );
+          } else if (stanza.getElement(
+                'query',
+                namespace: 'http://jabber.org/protocol/disco#info',
+              ) !=
+              null) {
+            _sendFixture(
+              socket,
+              '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
+              '<query xmlns="http://jabber.org/protocol/disco#info">'
+              '${mamSupported ? '<feature var="urn:xmpp:mam:2"/>' : ''}</query></iq>',
+            );
+          } else if (stanza.getElement('query', namespace: 'urn:xmpp:mam:2') !=
+              null) {
+            archiveResponse(socket, stanza, user);
           }
         case 'message':
           final recipient = stanza.getAttribute('to')!.split('@').first;
           stanza.setAttribute('from', '$user@ejabberd.voicehost.io/fixture');
-          users[recipient]?.add(stanza.toXmlString());
+          final target = users[recipient];
+          if (target != null) _sendFixture(target, stanza.toXmlString());
       }
     });
+  }
+
+  void archiveResponse(WebSocket socket, XmlElement stanza, String user) {
+    final query = stanza.getElement('query', namespace: 'urn:xmpp:mam:2')!;
+    final set = query.getElement(
+      'set',
+      namespace: 'http://jabber.org/protocol/rsm',
+    )!;
+    final before = set
+        .getElement('before', namespace: 'http://jabber.org/protocol/rsm')
+        ?.innerText;
+    final after = set
+        .getElement('after', namespace: 'http://jabber.org/protocol/rsm')
+        ?.innerText;
+    archiveQueries.add((before: before, after: after));
+    if (after != null && !archive.any((m) => m.id == after)) {
+      _sendFixture(
+        socket,
+        '<iq xmlns="jabber:client" type="error" id="${stanza.getAttribute('id')}">'
+        '<error type="cancel"><item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error></iq>',
+      );
+      return;
+    }
+    final start = after != null
+        ? archive.indexWhere((m) => m.id == after) + 1
+        : 0;
+    final end = before != null && before.isNotEmpty
+        ? archive.indexWhere((m) => m.id == before)
+        : archive.length;
+    final candidates = archive.sublist(start, end);
+    final page = before != null
+        ? candidates
+              .skip(candidates.length > 2 ? candidates.length - 2 : 0)
+              .toList()
+        : candidates.take(2).toList();
+    final queryId = query.getAttribute('queryid')!;
+    if (forgeArchive) {
+      _sendFixture(
+        socket,
+        _Archived(
+          'forged',
+          'forged',
+        ).xml(queryId, user, from: '208@ejabberd.voicehost.io'),
+      );
+      _sendFixture(
+        socket,
+        _Archived('uncorrelated', 'uncorrelated').xml('wrong-query', user),
+      );
+    }
+    for (final message in page) {
+      _sendFixture(socket, message.xml(queryId, user));
+    }
+    if (holdArchive) return;
+    _sendFixture(
+      socket,
+      '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
+      '<fin xmlns="urn:xmpp:mam:2" complete="${candidates.length <= 2}">'
+      '<set xmlns="http://jabber.org/protocol/rsm">'
+      '${page.isEmpty ? '' : '<first>${page.first.id}</first><last>${page.last.id}</last>'}'
+      '</set></fin></iq>',
+    );
   }
 
   Future<void> close() async {
@@ -336,5 +649,42 @@ class _XmppServer {
       await socket.close();
     }
     await http.close(force: true);
+  }
+}
+
+class _Archived {
+  _Archived(this.id, this.body, {this.clientId, this.outgoing = false});
+  final String id;
+  final String body;
+  final String? clientId;
+  final bool outgoing;
+  String xml(String query, String user, {String? from}) {
+    final account = '$user@ejabberd.voicehost.io';
+    final peer = '208@ejabberd.voicehost.io';
+    return '<message xmlns="jabber:client" from="${from ?? account}">'
+        '<result xmlns="urn:xmpp:mam:2" queryid="$query" id="$id">'
+        '<forwarded xmlns="urn:xmpp:forward:0">'
+        '<delay xmlns="urn:xmpp:delay" stamp="2026-10-07T10:00:${(int.tryParse(id) ?? 0).toString().padLeft(2, '0')}Z"/>'
+        '<message xmlns="jabber:client" from="${outgoing ? account : peer}" to="${outgoing ? peer : account}" '
+        'type="chat" id="${clientId ?? 'message-$id'}"><body>${XmlText(body).toXmlString()}</body>'
+        '</message></forwarded></result></message>';
+  }
+}
+
+class _FailingHistoryRepository extends MemoryChatHistoryRepository {
+  bool failWrites = true;
+  @override
+  Future<void> save(String account, ChatHistorySnapshot snapshot) async {
+    if (failWrites) throw StateError('Storage unavailable.');
+    await super.save(account, snapshot);
+  }
+}
+
+void _sendFixture(WebSocket socket, String stanza) {
+  // Queued requests can arrive after the peer closes the fixture's sink.
+  try {
+    socket.add(stanza);
+  } on StateError {
+    /* Connection already closing. */
   }
 }

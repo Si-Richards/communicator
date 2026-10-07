@@ -1,65 +1,79 @@
-# ejabberd messaging: foreground test milestone
+# Managed ejabberd messaging and conversation recovery
 
-This change adds an independent XMPP service and a debug-only messaging test flow to the existing Flutter app. It never connects during startup or blocks provisioning, Janus, SIP registration, or calls.
+Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-softphone`. This stage adds automatic managed login, encrypted local conversation storage and XEP-0313 archive recovery. The Messages tab is available in release/profile builds when managed messaging is enabled. Telephony and the mobile gateway are unchanged.
 
-## Run on your iPhone
+## Deployment order
 
-Switch to `feature/ejabberd-messaging`, then from `flutter/`:
+1. Check the existing ejabberd accounts and archive policy below. This app uses existing accounts; it does not create users or call ejabberd's administrative API.
+2. Pull `feature/ejabberd-messaging` on the provisioning host and rebuild **both** provisioning containers from `provisioning-server/`:
 
-```bash
-flutter pub get
-flutter analyze
-flutter test
-flutter run
+   ```bash
+   docker compose up -d --build provisioning provisioning-admin
+   ```
+
+   Retain the current `.env`, database volume, refresh retry key and admin portal configuration. No new environment variables or gateway rebuild are required. Keep the administration listener restricted as before.
+3. In the provisioning portal, open **Devices → Edit** for the existing iPhone, or create a new activation. Enable messaging and enter:
+
+   | Field | Example |
+   | --- | --- |
+   | Messaging account JID | `207@ejabberd.voicehost.io` |
+   | Messaging password | The actual, dedicated password for account 207 |
+   | Messaging WebSocket URL | `wss://ejabberd.voicehost.io/websocket` |
+
+   Use the existing account password, separate from SIP. Leaving the password blank on an edit keeps it only for the same JID and WebSocket URL. Changing either requires a new password. Disabling messaging removes its credentials from the device configuration. Existing activations/configurations without these fields remain disabled. Explicit full JIDs allow the administrator to assign tenant-safe identities; do not map every tenant's extension 207 to the same global account.
+4. Pull the branch on your Mac, then rebuild the iPhone app from `flutter/`:
+
+   ```bash
+   flutter pub get
+   flutter analyze
+   flutter test
+   flutter run
+   ```
+
+   Use your existing signing setup. No new messaging entitlements or native XMPP library are required. Flutter already includes secure storage and application-support path plugins. A full rebuild is needed for the new Dart dependencies.
+5. Let the phone check in, or refresh its provisioning configuration through Settings. Open **Messages** and expect automatic connection. Manual diagnostic login is only available in debug builds when managed messaging is disabled.
+
+## ejabberd archive prerequisites
+
+Keep the working TLS/WebSocket route, `xmpp` subprotocol and SASL PLAIN-over-WSS configuration. Verify that `mod_disco` and `mod_mam` are enabled for the account's virtual host. The client discovers `urn:xmpp:mam:2` on its own bare JID.
+
+Merge these MAM policy options into the existing `modules` section; do not replace the full ejabberd configuration:
+
+```yaml
+modules:
+  mod_mam:
+    default: always
+    request_activates_archiving: false
 ```
 
-A full stop/rebuild is needed after adding the XML dependency. No additional iOS capabilities or CocoaPods native messaging library are needed.
+Keep the existing archive database backend. A configured SQL backend is preferred for durable history; switching to `db_type: sql` also requires the matching SQL connection/schema setup and migration, so this deployment does not change it automatically. Back up the archive and set retention deliberately. Existing per-user MAM preferences can override `default`; verify those accounts actually archive incoming and outgoing text. Messages from before archiving was enabled cannot be reconstructed.
 
-1. Confirm the existing softphone is provisioned and calls still work.
-2. Open **Phone → Settings → Messaging diagnostics** (debug builds only). The bug icon on the Messages tab opens the same page.
-3. Enter an existing ejabberd test username such as `207` and its actual password. Passwords are not included in the code or prefilled. Tap **Connect**.
-4. Expect `connecting → authenticating → binding → online`. The page shows the bound JID with a unique platform/device-session resource.
-5. Connect a second app/client as `208@ejabberd.voicehost.io` and send a test message to `208`. Both clients must be online for this milestone. Check `ejabberdctl connected_users` on the server.
-6. Open **Messages** to see the conversation, reply, or use the compose button to start another local conversation. Messages show `sent`, `delivered` (when the recipient supports receipts), or `failed` (server rejection). `sent` means handed to the WebSocket; it is not proof of server acceptance. No read receipts are claimed.
-7. Background and reopen the app, then check it reconnects. Switch Wi-Fi/mobile data and verify recovery. Explicit disconnect cancels retries.
-8. Lock/revoke the device through provisioning: messaging must disconnect, clear the in-memory messages, and reject further connections until access is restored. It does not automatically reconnect after unlock.
+References: [ejabberd mod_mam options](https://docs.ejabberd.im/admin/configuration/modules/#mod-mam), [XEP-0313](https://xmpp.org/extensions/xep-0313.html), [XEP-0359](https://xmpp.org/extensions/xep-0359.html).
 
-The earlier sample test passwords are examples only. Use the passwords you actually assigned to the test accounts; do not reuse SIP credentials.
+## On-device acceptance tests
 
-## Protocol and security
+1. Configure 207 and 208 using their existing dedicated account passwords. Both should connect without typing credentials on the phone. Confirm calls, CallKit and voicemail still work.
+2. Exchange text, then force-quit and reopen 207. Its conversations should remain. Delivery status survives local reopening; recovered outgoing messages from an empty cache show `sent`, not a claimed delivery/read receipt.
+3. Background or disconnect 207. Send multiple messages from 208, then reopen 207. Missed archived messages should appear once, in chronological order. Repeat using Wi-Fi/mobile data switching.
+4. With more than 100 archived messages, use **Load older messages** on the conversation list or chat. Paging applies to the account archive, so an older page can contain other conversations. The button stays disabled while offline or recovering.
+5. Reinstall the test app and activate it for the same account. The most recent archive page should return, with older pages available. Reinstallation needs a valid new activation; it cannot recover messages deleted by server retention.
+6. Lock the device in the portal. Messaging disconnects and visible history disappears. Unlock/check in and managed login restores the local cache and recovers missed messages. Logout, invalid provisioning credentials, revocation and retirement remove the current account's local cache when the app observes them. Server-side archives remain under ejabberd's retention policy.
+7. Change the managed JID with a new account password. The previous account's conversations must not appear under the new identity. Rotate only the password and confirm the same account's history remains.
 
-- Endpoint: `wss://ejabberd.voicehost.io/websocket`, port 443; WebSocket subprotocol `xmpp`.
-- RFC 7395 opening/restarting, SASL PLAIN **over normal certificate-validated TLS only**, RFC 6120 resource binding, optional legacy session establishment, presence, XMPP ping responses and XEP-0184 delivery receipts.
-- `auth_password_format: scram` is ejabberd's password storage format and can remain enabled with SASL PLAIN. The server must advertise PLAIN over WSS; the diagnostics page explicitly reports when it does not.
-- The application never calls the ejabberd administrative API.
-- Credentials remain in memory for reconnect, and are cleared on disconnect, login failure, lock/revocation, and service disposal. The password entry is cleared when connecting and disposed when leaving the page.
-- Fixed diagnostic summaries contain no raw XML, authentication payloads, usernames/JIDs or message bodies. The bound JID is intentionally visible on the diagnostics page.
-- Up to five transport reconnect attempts use 1/2/4/8/16-second backoff. Authentication/protocol failures stop retries; connect timeout is 15 seconds, then the login handshake has a 20-second deadline.
-- iOS background suspension closes this test session; returning to the foreground authenticates again. CallKit's temporary `inactive` state does not suspend messaging. This is not XEP-0198 stream resumption.
-- Each session is limited to 500 in-memory messages and 60 diagnostic events. Switching test accounts clears the previous account's messages.
+## Storage and recovery behavior
 
-Whixp 3.3.1 was inspected before implementation. Its pub.dev archive imports `lib/src/native/transport_ffi.dart` but does not include that file, and its iOS podspec references a native transport archive/XCFramework absent from the package. This milestone therefore uses the existing `web_socket_channel` dependency and the `xml` parser; no Whixp native dependency is introduced. The focused service can be replaced behind the same UI later.
+- Provisioned XMPP credentials are saved in the existing secure provisioning blob (iOS Keychain). They are never placed in preferences, diagnostic events or the conversation file. The portal returns a password-configured flag, not the password. Validation responses omit submitted input and API credential responses use `Cache-Control: no-store`.
+- Conversations use AES-256-GCM with a fresh nonce and authenticated account/endpoint binding. The encryption key is in secure storage; encrypted files are in application support, named using an account/endpoint digest. Writes are serialized and atomically replace the old file. The persistent cache keeps at most 2,000 recent messages and approximately 4 MiB of message data. Loaded older pages remain available in the current session.
+- On first login or an empty cache, the client requests the most recent 100 archive records using RSM `before`. On reconnect it pages forward from the last durably saved archive cursor, up to 50 pages per recovery run. Larger backlogs show an unfinished-recovery notice; **Retry history** continues from the saved cursor. Older history pages backwards using RSM.
+- A page is committed only after its matching IQ `fin`; partial pages from an interrupted connection are discarded. The cursor advances only with a successful durable cache write. Storage failures display an error and leave the cursor recoverable. An unreadable/tampered cache is not silently overwritten; archive text can still be displayed for that session, but persistence remains unavailable until the local cache is repaired or the app is reinstalled.
+- Live and archive text reconcile using trusted archive IDs or matching peer, direction, client/origin ID and body. Only correlated archive results from the account archive are accepted. Archived messages never generate delivery receipts. Outgoing delivery status is preserved when the local copy already has a receipt.
+- An expired archive cursor falls back to the latest available page and retains local text, with a notice. Older gaps can remain if server retention removed them. A server without MAM still supports local/live messaging and displays an archive-unavailable notice.
+- Background suspension closes the XMPP connection. Foreground resume authenticates again and recovers history; CallKit's temporary `inactive` state does not pause messaging. Authentication failures stop retries; use **Reconnect** after correcting credentials/connectivity.
 
-## Scope of this milestone
+## Scope and verification
 
-Implemented: test login, conversation list, foreground send/receive, XML escaping, delivery receipts, sanitized events, reconnection, lifecycle cleanup and provisioning access enforcement.
+Supported: managed login, one-to-one same-domain text, local conversations, archive recovery, older pages, XEP-0184 delivery receipts, XEP-0359 outgoing origin IDs, lifecycle reconnect and provisioning access enforcement. `sent` means handed to the WebSocket, not proof of server acceptance. Text is encrypted locally and transported over TLS; this is not end-to-end encryption.
 
-Not implemented yet: MAM archive retrieval, persistent conversation storage, message retry/outbox and archive reconciliation, XEP-0198, typing/read markers, roster/name lookup, attachments, group chat, managed messaging provisioning, or APNs/FCM messaging push. Offline/archive messages are not retrieved by this milestone. Messages disappear when the process is restarted. Enabling `mod_push` alone does not add push delivery.
+Not yet included: APNs/FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, live message carbons between multiple clients, attachments, groups, typing/read markers or roster/name lookup. Background messages appear on return to the app; enabling `mod_push` alone does not provide notifications.
 
-The manual test entry points and conversation UI are disabled in release/profile builds until managed provisioning is implemented. The existing Calls/CallKit/PushKit implementation is unchanged. Ordinary message notifications will use standard APNs, not the VoIP PushKit channel.
-
-## Server troubleshooting
-
-Follow `journalctl -u ejabberd -f` and the NGINX ejabberd logs while connecting. The upgraded WebSocket access-log entry may not appear until the connection closes.
-
-A valid external handshake probe is:
-
-```bash
-curl --http1.1 -i --max-time 5 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Sec-WebSocket-Protocol: xmpp' https://ejabberd.voicehost.io/websocket
-```
-
-Expect `101 Switching Protocols` with `Sec-WebSocket-Protocol: xmpp`. A timeout **after** 101 is expected because the upgraded connection remains open. This probe confirms the TLS/proxy/upgrade path, not XMPP authentication. The sample key decodes to the required 16-byte nonce.
-
-## Automated verification
-
-`test/xmpp_service_test.dart` uses a loopback WebSocket server with real XML framing and two clients. It exercises login/binding, two-way routing and receipts, XML escaping, failed authentication, required legacy sessions, wrong bound identity, delayed-message deduplication, ping, lifecycle reconnection, account isolation, lock enforcement and malformed-response redaction. It does not replace an on-device test against live ejabberd.
+The protocol tests use a real loopback WebSocket fixture for login, routing, receipts, MAM discovery/paging, duplicate recovery, interrupted pages, expired cursors, failed storage, account changes and lock/logout. Storage tests verify encrypted reopening, account/endpoint isolation and tamper rejection. Provisioning tests verify credential retention/rotation, account-change validation, disablement, portal redaction and validation secrecy. These checks supplement the on-device tests above; this environment cannot build/sign an iOS binary or verify your private account's live archive.

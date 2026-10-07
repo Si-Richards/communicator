@@ -336,3 +336,16 @@ session revocation or reseller tenancy. Keep it restricted to the internal
 management/VPN network. The separate staging administration API under
 `/api/v1/admin/` still accepts the existing `X-Admin-Key` and is similarly
 restricted by NGINX. Do not expose either administrative surface publicly.
+
+## Managed messaging
+
+The activation form and device editor support `messaging_enabled`, `messaging_jid`,
+`messaging_password` and `messaging_websocket`. Messaging is disabled by default
+and uses an existing ejabberd account with its dedicated password. A blank password
+on edit retains the current secret only when the JID and endpoint are unchanged.
+The portal never returns the messaging password. The device receives a `messaging`
+section inside its authenticated configuration and stores it in secure storage.
+
+Rebuild both `provisioning` and `provisioning-admin` for this schema/UI change.
+See [the messaging deployment and acceptance guide](../flutter/MESSAGING.md)
+for the ejabberd archive policy, iOS rebuild and account configuration steps.

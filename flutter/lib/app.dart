@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'controllers/phone_controller.dart';
@@ -77,9 +79,7 @@ class VoiceHostApp extends StatelessWidget {
           backgroundColor: orange,
           foregroundColor: Colors.white,
         ),
-        progressIndicatorTheme: const ProgressIndicatorThemeData(
-          color: orange,
-        ),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(color: orange),
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF8F9FB),
       ),
@@ -116,6 +116,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == AppLifecycleState.paused ||
+        lifecycle == AppLifecycleState.detached) {
+      _messaging.pause();
+    }
     widget.provisioning.addListener(_syncMessagingAccess);
     _syncMessagingAccess();
     widget.mobileCalls.addListener(_handleNotificationNavigation);
@@ -133,8 +138,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  void _syncMessagingAccess() =>
-      _messaging.setAccessAllowed(widget.provisioning.canUseApp);
+  void _syncMessagingAccess() {
+    final provisioning = widget.provisioning;
+    if (!provisioning.isEnrolled ||
+        provisioning.credentialsInvalid ||
+        provisioning.isRevoked ||
+        provisioning.isRetired) {
+      unawaited(_messaging.forgetHistory());
+    }
+    _messaging.setAccessAllowed(provisioning.canUseApp);
+    final configuration = provisioning.configuration;
+    _messaging.configureManaged(
+      configuration?.features['messaging'] == false
+          ? null
+          : configuration?.messaging,
+    );
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -255,11 +274,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 }
 
-
 class _ProvisioningLoadingScreen extends StatelessWidget {
-  const _ProvisioningLoadingScreen({
-    required this.brandingName,
-  });
+  const _ProvisioningLoadingScreen({required this.brandingName});
 
   final String brandingName;
 
@@ -280,9 +296,9 @@ class _ProvisioningLoadingScreen extends StatelessWidget {
                 Text(
                   brandingName,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: navy,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    color: navy,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 24),
                 const CircularProgressIndicator(),
@@ -296,7 +312,6 @@ class _ProvisioningLoadingScreen extends StatelessWidget {
     );
   }
 }
-
 
 class _ProvisioningLockedScreen extends StatelessWidget {
   const _ProvisioningLockedScreen({
@@ -338,9 +353,9 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                   'App locked',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: navy,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    color: navy,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -348,10 +363,9 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                       ? 'This device needs to be re-activated by your administrator.'
                       : 'This app is locked. Please contact your administrator.',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: navy,
-                        height: 1.45,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyLarge?.copyWith(color: navy, height: 1.45),
                 ),
                 if (provisioning.credentialsInvalid) ...[
                   const SizedBox(height: 24),

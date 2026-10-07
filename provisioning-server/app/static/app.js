@@ -111,6 +111,13 @@ async function openDeviceEditor(deviceId) {
   el("edit-sip-password").value = "";
   el("edit-sip-realm").value = d.sip_realm || "";
   el("edit-sip-proxy").value = d.sip_proxy || "";
+  el("edit-messaging-enabled").checked = d.messaging_enabled === true;
+  el("edit-messaging-jid").value = d.messaging_jid || "";
+  el("edit-messaging-websocket").value = d.messaging_websocket || "wss://ejabberd.voicehost.io/websocket";
+  el("edit-messaging-password").value = "";
+  el("edit-messaging-state").textContent = d.messaging_password_configured
+    ? "A messaging password is configured. Blank keeps it for the same account and server."
+    : "No messaging password is configured.";
   el("edit-ldap-enabled").checked = d.ldap_enabled === true;
   el("edit-ldap-ou").value = d.ldap_ou || "";
   el("edit-ldap-uid").value = d.ldap_uid || "";
@@ -140,6 +147,10 @@ async function saveDeviceEditor() {
     sip_password: el("edit-sip-password").value || null,
     sip_realm: el("edit-sip-realm").value.trim() || null,
     sip_proxy: el("edit-sip-proxy").value.trim() || null,
+    messaging_enabled: el("edit-messaging-enabled").checked,
+    messaging_jid: el("edit-messaging-jid").value.trim() || null,
+    messaging_password: el("edit-messaging-password").value || null,
+    messaging_websocket: el("edit-messaging-websocket").value.trim() || null,
     ldap_enabled: el("edit-ldap-enabled").checked,
     ldap_ou: el("edit-ldap-ou").value.trim() || null,
     ldap_uid: el("edit-ldap-uid").value.trim() || null,
@@ -245,7 +256,11 @@ async function boot() {
       sip_password:el("sip-password").value || null,
       sip_realm:el("sip-realm").value.trim() || "hpbx.sipconvergence.co.uk",
       sip_proxy:el("sip-proxy").value.trim() || null,
-      ldap_enabled:el("ldap-enabled").checked,
+      messaging_enabled: el("messaging-enabled").checked,
+    messaging_jid: el("messaging-jid").value.trim() || null,
+    messaging_password: el("messaging-password").value || null,
+    messaging_websocket: el("messaging-websocket").value.trim() || null,
+    ldap_enabled:el("ldap-enabled").checked,
       ldap_ou:el("ldap-ou").value.trim() || null,
       ldap_uid:el("ldap-uid").value.trim() || null,
       ldap_password:el("ldap-password").value || null
@@ -261,6 +276,7 @@ async function boot() {
       el("activation-expiry").textContent = "Expires " + new Date(result.expires_at).toLocaleString();
       el("activation-result").hidden = false;
       el("sip-password").value = "";
+      el("messaging-password").value = "";
       el("ldap-password").value = "";
       note("Activation created. Copy the code now; it cannot be retrieved later.", true);
     } catch (error) { note(error.message); }
