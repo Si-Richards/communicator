@@ -52,8 +52,12 @@ path is an example; if your upgrade retained a different directory, use that pat
 bash /opt/voicehost-messaging/ejabberd-modules/mod_voicehost_tenants/install.sh /opt/ejabberd-26.09/bin/ejabberdctl
 ```
 
-The installer asks the running node for its actual contribution-module path and
-OS owner, copies only production files, and compiles with that server's headers.
+Run the installer as root on the Linux ejabberd host. It locates the running
+BEAM process belonging to the supplied installation, reads its actual module
+path and effective OS owner without displaying its environment, copies only
+production files, and compiles with that server's headers. It honours
+`CONTRIB_MODULES_PATH` and the node's runtime home. It does not require an
+`ejabberdctl eval` command (26.09 does not provide one).
 It does not modify the YAML or enable the module. Never install `test/gen_mod.erl`
 or the test-ebin folder into ejabberd. For a later source update, copy the updated
 production files into the same sources directory and use `module_upgrade`
@@ -155,6 +159,14 @@ HTTP-upload URLs are outside this stanza policy; tenant-controlled attachments
 need separate file authorisation when attachment support is added.
 
 ## Automated checks
+
+Installer regression checks run without a live server and cover runtime home,
+custom module paths, effective ownership, selection of the correct installation,
+ambiguous/missing node failures and the supported CLI command sequence:
+
+```bash
+python3 -m unittest discover -s test -p 'test_install_metadata.py' -v
+```
 
 Provisioning tests exercise migration/password preservation, policy API failures,
 directory metadata/repair, shared identities and disable-before-ban behaviour.

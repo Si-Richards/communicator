@@ -3,12 +3,15 @@
 set -euo pipefail
 ctl=${1:?Usage: bash install.sh /path/to/the/running/ejabberdctl}
 [[ -x "$ctl" ]] || { echo "ejabberdctl is not executable: $ctl" >&2; exit 1; }
-"$ctl" status
+status=$("$ctl" status)
+printf '%s\n' "$status"
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-decode='import ast,sys; v=ast.literal_eval(sys.stdin.read().strip()); assert isinstance(v,str); print(v.strip())'
-contrib=$("$ctl" eval 'ext_mod:modules_dir().' | python3 -c "$decode")
-uid=$("$ctl" eval 'os:cmd("id -u").' | python3 -c "$decode")
-gid=$("$ctl" eval 'os:cmd("id -g").' | python3 -c "$decode")
+# ejabberdctl 26.09 has no eval command. Inspect only this installation's
+# running Linux node; keep credentials and the rest of its environment private.
+metadata=$(python3 "$root/install_metadata.py" "$ctl" "$status")
+mapfile -t values <<< "$metadata"
+[[ ${#values[@]} = 3 ]] || { echo 'Invalid node metadata' >&2; exit 1; }
+contrib=${values[0]}; uid=${values[1]}; gid=${values[2]}
 [[ "$contrib" = /* && "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]] || { echo "Could not resolve the node's module path or owner" >&2; exit 1; }
 package="$contrib/sources/mod_voicehost_tenants"
 new_contrib=0; [[ -d "$contrib" ]] || new_contrib=1
