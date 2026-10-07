@@ -16,11 +16,15 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     required this.phone,
     required this.mobileCalls,
     ProvisioningRepository? repository,
-  }) : _repository = repository ?? ProvisioningRepository();
+    ProvisioningService Function(String)? serviceFactory,
+  }) : _repository = repository ?? ProvisioningRepository(),
+       _serviceFactory = serviceFactory ??
+           ((url) => ProvisioningService(baseUrl: url));
 
   final PhoneController phone;
   final MobileCallCoordinator mobileCalls;
   final ProvisioningRepository _repository;
+  final ProvisioningService Function(String) _serviceFactory;
 
   ProvisionedDeviceState? _state;
   bool _initialized = false;
@@ -154,7 +158,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _setBusy(true, status: 'Activating device…');
     try {
       final installationId = await _repository.getOrCreateInstallationId();
-      final service = ProvisioningService(baseUrl: cleanUrl);
+      final service = _serviceFactory(cleanUrl);
       try {
         final pushToken = mobileCalls.voipPushToken;
         final result = await service.activate(
@@ -227,7 +231,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     if (url.isEmpty) return;
 
     _setBusy(true, status: 'Checking provisioning…');
-    final service = ProvisioningService(baseUrl: url);
+    final service = _serviceFactory(url);
     try {
       var state = _state!;
       DeviceCheckInResult result;
@@ -260,7 +264,6 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
       var updated = _state!.copyWith(
         deviceState: result.state,
-        configurationVersion: result.configurationVersion,
       );
 
       // Device state is authoritative and must be applied immediately.
@@ -282,7 +285,12 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       notifyListeners();
 
       if (result.configurationChanged ||
-          result.actions.contains('refresh_configuration')) {
+          result.actions.contains('refresh_configuration') ||
+          updated.configuration?.version != result.configurationVersion ||
+          updated.configuration?.messaging == null) {
+        // A check-in advertises the server version; it does not install it.
+        // Retry failed downloads and repair caches written by older clients
+        // that discarded messaging fields, even when versions already match.
         try {
           final config = await service.getConfiguration(
             accessToken: updated.accessToken,
@@ -292,8 +300,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
             configuration: config,
             deviceState: config.deviceState ?? result.state,
           );
-          _state = updated;
           await _repository.save(updated);
+          _state = updated;
           phone.applyProvisionedConfiguration(config);
           mobileCalls.applyProvisionedConfiguration(config);
           _syncPolling();
@@ -340,7 +348,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     if (url.isEmpty) return;
 
     _setBusy(true, status: 'Refreshing configuration…');
-    final service = ProvisioningService(baseUrl: url);
+    final service = _serviceFactory(url);
     try {
       await _ensureFreshToken(service);
       final config = await service.getConfiguration(
@@ -351,8 +359,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         configuration: config,
         deviceState: config.deviceState ?? _state!.deviceState,
       );
-      _state = updated;
       await _repository.save(updated);
+      _state = updated;
       _syncPolling();
       await mobileCalls.setProvisioningAccess(canUseApp);
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
@@ -387,7 +395,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     final url = phone.provisioningUrl.trim();
 
     if (notifyServer && state != null && url.isNotEmpty) {
-      final service = ProvisioningService(baseUrl: url);
+      final service = _serviceFactory(url);
       try {
         await _ensureFreshToken(service);
         await service.logout(accessToken: _state!.accessToken);
@@ -452,7 +460,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   Map<String, dynamic> _checkInPayload(ProvisionedDeviceState state) {
     final pushToken = mobileCalls.voipPushToken;
     return {
-      'configuration_version': state.configurationVersion,
+      // Only acknowledge the configuration actually cached on this device.
+      'configuration_version': state.configuration?.version ?? 0,
       'app_version': AppConfig.appVersion,
       'app_build': AppConfig.appBuild,
       'os_version': Platform.operatingSystemVersion,

@@ -35,6 +35,21 @@ Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-soft
 
 ## ejabberd archive prerequisites
 
+### If credentials do not appear on the phone
+
+Check **Devices → Edit** for the phone's existing device ID, enable messaging,
+enter its dedicated JID/password and save. Creating another activation does not
+change an already enrolled phone. In the app, open **Settings → Provisioning**
+and use **Refresh configuration**. The messaging line reports whether the cached
+settings are absent, disabled, incomplete, blocked by feature policy or configured;
+it never displays the password. A configured account with an authentication error
+should be checked against ejabberd's existing account password.
+
+The client acknowledges only the configuration it has downloaded and saved.
+Failed downloads or secure-storage writes remain pending for the next check-in,
+including after reopening the app. It also refreshes cached configurations saved
+by older clients that discarded the messaging fields while keeping the same version.
+
 Keep the working TLS/WebSocket route, `xmpp` subprotocol and SASL PLAIN-over-WSS configuration. Verify that `mod_disco` and `mod_mam` are enabled for the account's virtual host. The client discovers `urn:xmpp:mam:2` on its own bare JID.
 
 Merge these MAM policy options into the existing `modules` section; do not replace the full ejabberd configuration:
