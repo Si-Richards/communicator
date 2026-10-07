@@ -27,6 +27,7 @@ class FakeEjabberd:
         self.calls = []
         self.fail = None
         self.lose = None
+        self.ban_details_as_object = False
 
     def handle(self, request):
         command = request.url.path.split("/")[-1]
@@ -45,7 +46,10 @@ class FakeEjabberd:
             self.users[jid] = body["password"]
             result = "Success"
         elif command == "get_ban_details":
-            result = [{"name": "reason", "value": self.bans[jid]}] if jid in self.bans else []
+            if self.ban_details_as_object:
+                result = {"reason": self.bans[jid]} if jid in self.bans else {}
+            else:
+                result = [{"name": "reason", "value": self.bans[jid]}] if jid in self.bans else []
         elif command == "ban_account":
             self.bans[jid] = body["reason"]
             result = 0
@@ -178,6 +182,32 @@ class LifecycleTests(unittest.TestCase):
         self.retry()
         self.assertEqual(self.store.messaging_account_status(jid)["status"], "enabled")
         self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+
+    def test_object_ban_details_recovers_creation_and_preserves_ban_ownership(self):
+        self.fake.ban_details_as_object = True
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        password = device["config"]["messaging"]["password"]
+        self.fake.lose = "register"
+        self.sync()
+        self.retry()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "enabled")
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()
+        self.assertIn(jid, self.fake.bans)
+        self.store.set_device_state(device["id"], "active")
+        self.sync()
+        self.assertNotIn(jid, self.fake.bans)
+        self.assertEqual(self.fake.users[jid], password)
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()
+        self.fake.bans[jid] = "Independent administrator ban"
+        self.store.set_device_state(device["id"], "active")
+        self.sync()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "error")
+        self.assertEqual(self.fake.bans[jid], "Independent administrator ban")
 
     def test_lost_register_then_immediate_lock_still_disables_remote_account(self):
         device = self.create()
@@ -347,6 +377,28 @@ class LifecycleTests(unittest.TestCase):
         # A successful HTTP status is insufficient to claim command success.
         with self.assertRaises(EjabberdError):
             api.call("register", user="bob", host="server", password="secret")
+
+    def test_error_and_malformed_ban_objects_are_not_accepted_as_unbanned(self):
+        for body in [{"status": "error"}, {"reason": None}, {"reason": False}, {"ban_details": {}}]:
+            with self.subTest(body=body):
+                api = EjabberdClient("https://server/api/v2", "api", "secret",
+                    httpx.MockTransport(lambda request: httpx.Response(200, json=body)))
+                self.addCleanup(api.close)
+                with self.assertRaises(EjabberdError):
+                    api.call("get_ban_details", user="bob", host="server")
+
+    def test_worker_error_logs_show_http_status_without_remote_payloads_or_secrets(self):
+        device = self.create()
+        self.fake.fail = "get_ban_details"
+        with self.assertLogs("app.messaging_worker", level="WARNING") as logs:
+            self.sync()
+        jid = device["config"]["messaging"]["jid"]
+        error = self.store.messaging_account_status(jid)["error"]
+        self.assertIn("get_ban_details failed (HTTP 403)", error)
+        self.assertIn(error, logs.output[0])
+        self.assertNotIn("remote-sensitive-content", error + logs.output[0])
+        self.assertNotIn(device["config"]["messaging"]["password"], error + logs.output[0])
+        self.assertNotIn("api-secret", error + logs.output[0])
 
 
 if __name__ == "__main__":

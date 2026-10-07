@@ -36,7 +36,7 @@ def reconcile_accounts(store, client):
                     SET status='error', error=?, attempts=?, next_retry_at=?, attempted_enabled=? WHERE jid=?""",
                     (str(exc), attempts, iso(utcnow() + timedelta(seconds=min(300, 5 * 2 ** (attempts - 1)))), enabled, jid))
                 # Deliberately omit exception traces and request/response payloads.
-                log.warning("Messaging synchronization failed for %s", jid)
+                log.warning("Messaging synchronization failed for %s: %s", jid, exc)
             else:
                 conn.execute("""UPDATE messaging_accounts
                     SET owned=?, applied_enabled=?, attempted_enabled=?, status=?, error=NULL,

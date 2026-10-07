@@ -28,12 +28,28 @@ class EjabberdClient:
             response = self.client.post(f"{self.url}/{command}", json=arguments)
             response.raise_for_status()
             result = response.json()
-        except (httpx.HTTPError, ValueError):
-            raise EjabberdError(f"ejabberd {command} failed; check API access and server logs.") from None
+        except httpx.HTTPStatusError as exc:
+            raise EjabberdError(
+                f"ejabberd {command} failed (HTTP {exc.response.status_code}); check API access and server logs."
+            ) from None
+        except httpx.HTTPError as exc:
+            raise EjabberdError(
+                f"ejabberd {command} failed ({type(exc).__name__}); check network access and TLS."
+            ) from None
+        except ValueError:
+            raise EjabberdError(f"ejabberd {command} returned invalid JSON.") from None
         if command in {"check_account", "check_password"}:
             if type(result) is int and result in {0, 1}:
                 return result == 0
         elif command == "get_ban_details":
+            # ejabberd's HTTP formatter serializes name/value tuples as an
+            # object, including {} for an unbanned account. Its API reference
+            # also documents the array form. Accept both without accepting
+            # an error object as proof that the account is not banned.
+            if (isinstance(result, dict)
+                    and result.keys() <= {"reason", "bandate", "lastdate", "lastreason"}
+                    and all(isinstance(value, str) for value in result.values())):
+                return result
             if isinstance(result, list) and all(
                     isinstance(item, dict) and isinstance(item.get("name"), str)
                     and isinstance(item.get("value"), str) for item in result):

@@ -28,6 +28,14 @@ that preserves the password and records a ban in private storage. Require
 `mod_admin_extra`, `mod_private` and `mod_http_api`; keep the existing archive
 and WebSocket modules/configuration.
 
+The HTTP `get_ban_details` result may be a JSON object (`{}` for an unbanned
+account) or the documented array of name/value entries. The worker accepts both
+formats. Some older ejabberd builds fail to encode the empty object and return
+HTTP 400 even when `ejabberdctl` succeeds; that response is an error, not proof
+that an account is unbanned. Upgrade the server before enabling this lifecycle.
+Worker logs include the failing command, HTTP status or network error class,
+but omit remote response bodies, request payloads and credentials.
+
 Merge this example into the existing ejabberd configuration, replacing
 `PRIVATE_INTERFACE_IP`. Do not duplicate top-level YAML sections or replace
 the working WebSocket listener. Use a listener certificate valid for the
