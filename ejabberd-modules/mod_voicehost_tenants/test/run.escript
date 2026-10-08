@@ -16,6 +16,7 @@ main([IncludeDir]) ->
     Dir = filename:join("/tmp", "voicehost-mnesia-" ++ integer_to_list(erlang:unique_integer([positive]))),
     application:set_env(mnesia, dir, Dir),
     {ok,_} = application:ensure_all_started(stringprep),
+    ok = jid:start(),
     Result = eunit:test(mod_voicehost_tenants_tests, [verbose]),
     file:del_dir_r(Dir),
     halt(case Result of ok -> 0; _ -> 1 end);

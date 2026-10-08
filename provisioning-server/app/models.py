@@ -84,9 +84,10 @@ def messaging_configuration(enabled, jid, password, websocket):
 
 
 def automatic_messaging_configuration(sip_username, host, websocket):
-    from .messaging_identity import split_identity
+    from .messaging_identity import canonical_identity
     username = (sip_username or "").strip().lower()
-    account_number, extension = split_identity(username)
+    account_number, extension = canonical_identity(username)
+    username = f"{account_number}*{extension}"
     # Reuse endpoint/JID validation without introducing an alternate identity.
     result = messaging_configuration(True, f"{username}@{host}", "validation-only", websocket)
     result.pop("password")

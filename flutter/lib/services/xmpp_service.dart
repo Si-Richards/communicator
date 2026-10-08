@@ -101,8 +101,7 @@ class XmppService extends ChangeNotifier {
     }
     if (!configuration.ready) {
       disconnect(clearMessages: true);
-      _error =
-          'Your messaging account is being prepared. Refresh provisioning shortly.';
+      _error = 'Your messaging account is being prepared. Refresh provisioning shortly.';
       _setState(XmppState.disconnected);
       return;
     }
@@ -147,6 +146,7 @@ class XmppService extends ChangeNotifier {
 
   final WebSocketChannel Function(Uri) _channelFactory;
   final List<ChatMessage> _messages = [];
+  final Set<String> _migratedHistoryAccounts = {};
   final List<String> _events = [];
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
@@ -209,6 +209,7 @@ class XmppService extends ChangeNotifier {
     _closeTransport();
     final accountGeneration = ++_accountGeneration;
     _messages.clear();
+    _migratedHistoryAccounts.clear();
     _directory.clear();
     _directoryError = null;
     _storageReady = false;
@@ -228,25 +229,63 @@ class XmppService extends ChangeNotifier {
       await _storageQueue;
       final snapshot = await _history.load(storageAccount);
       if (_disposed || accountGeneration != _accountGeneration) return;
-      _messages.addAll(
-        snapshot.messages.where((m) {
+      void mergeHistory(ChatHistorySnapshot history) {
+        for (final message in history.messages) {
           try {
-            recipientJid(m.peer);
-            return true;
-          } catch (_) {
-            return false;
+            final peer = recipientJid(message.peer);
+            if (_messages.any(
+              (m) =>
+                  m.id == message.id &&
+                  m.peer == peer &&
+                  m.outgoing == message.outgoing &&
+                  m.body == message.body,
+            ))
+              continue;
+            _messages.add(
+              ChatMessage.fromJson({...message.toJson(), 'peer': peer}),
+            );
+          } on ArgumentError {
+            // A historical conversation can never escape the current tenant.
           }
-        }),
-      );
+        }
+      }
+
+      mergeHistory(snapshot);
+      _migratedHistoryAccounts.addAll(snapshot.migratedAccounts);
       _cursor = snapshot.cursor;
       _oldest = snapshot.oldest;
       _hasOlder = snapshot.hasOlder;
+      var migrated = false;
+      for (final previous in _managed?.previousJids ?? const <String>[]) {
+        if (previous == account ||
+            _canonicalPeer(previous) != account ||
+            !_isCanonicalAccount)
+          continue;
+        final previousStorage = '$previous|$endpoint';
+        if (_migratedHistoryAccounts.contains(previousStorage)) continue;
+        try {
+          final history = await _history.load(previousStorage);
+          if (_disposed || accountGeneration != _accountGeneration) return;
+          mergeHistory(history);
+          _migratedHistoryAccounts.add(previousStorage);
+          migrated = true;
+        } catch (_) {
+          _historyError = 'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
+        }
+      }
+      _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      if (migrated) {
+        // Cursors belonged to separate archives; recover the canonical archive.
+        _cursor = null;
+        _oldest = null;
+        _hasOlder = true;
+      }
       _storageReady = true;
+      if (migrated) await _persist(requireSuccess: true);
     } catch (_) {
       if (_disposed || accountGeneration != _accountGeneration) return;
       // Do not overwrite an unreadable cache with an empty history.
-      _historyError =
-          'Saved history could not be opened. Archive recovery will still be attempted.';
+      _historyError = 'Saved history could not be opened. Archive recovery will still be attempted.';
     }
     if (!_accessAllowed ||
         _disposed ||
@@ -293,6 +332,7 @@ class XmppService extends ChangeNotifier {
             ? recent.where((m) => m.archiveId != null).firstOrNull?.archiveId
             : _oldest,
         hasOlder: _hasOlder || clipped,
+        migratedAccounts: _migratedHistoryAccounts.toList(),
       ).toJson(),
     );
     final operation = _storageQueue.then(
@@ -311,10 +351,24 @@ class XmppService extends ChangeNotifier {
 
   Future<void> forgetHistory() async {
     final account = _storageAccount ?? _lastStorageAccount;
+    final aliases = Set<String>.from(_migratedHistoryAccounts);
+    for (final previous in _managed?.previousJids ?? const <String>[]) {
+      if (_isCanonicalAccount &&
+          _canonicalPeer(previous) == _account &&
+          previous != _account) {
+        aliases.add('$previous|$_endpoint');
+      }
+    }
+    _migratedHistoryAccounts.clear();
     _lastStorageAccount = null;
     disconnect(clearMessages: true);
     if (account == null) return;
-    final operation = _storageQueue.then((_) => _history.delete(account));
+    final operation = _storageQueue.then((_) async {
+      await _history.delete(account);
+      for (final alias in aliases) {
+        await _history.delete(alias);
+      }
+    });
     _storageQueue = operation.catchError((Object _) {
       if (!_disposed) {
         _historyError = 'Saved history could not be removed from this device.';
@@ -389,9 +443,8 @@ class XmppService extends ChangeNotifier {
         return;
       }
       // RFC 7395 allows several complete XML elements in one text frame.
-      final elements = XmlDocumentFragment.parse(
-        data,
-      ).children.whereType<XmlElement>();
+      final elements = XmlDocumentFragment.parse(data).children
+          .whereType<XmlElement>();
       for (final element in elements) {
         if (_channel == null) break;
         final name = element.name.local;
@@ -581,7 +634,27 @@ class XmppService extends ChangeNotifier {
     } else if (_managedEnabled) {
       throw ArgumentError('Your messaging account needs an account number.');
     }
-    return jid;
+    final canonical = _canonicalPeer(jid);
+    if (_isCanonicalAccount &&
+        !RegExp(r'^[0-9]+\*[0-9]{3,5}@').hasMatch(canonical)) {
+      throw ArgumentError('Enter an extension of 3–5 digits in your account.');
+    }
+    return canonical;
+  }
+
+  bool get _isCanonicalAccount =>
+      _managedEnabled &&
+      RegExp(r'^[0-9]+\*[0-9]{3,5}@').hasMatch(_account ?? '');
+
+  String _canonicalPeer(String value) {
+    final bare = _bare(value).toLowerCase();
+    if (!_isCanonicalAccount) return bare;
+    final parts = bare.split('@');
+    if (parts.length != 2 || parts.last != _domain) return bare;
+    final match = RegExp(r'^([0-9]+)\*([0-9]{3,5})[a-z]*$')
+        .firstMatch(parts.first);
+    if (match == null || match.group(1) != accountNumber) return bare;
+    return '${match.group(1)}*${match.group(2)}@$_domain';
   }
 
   Future<void> refreshDirectory() async {
@@ -619,7 +692,7 @@ class XmppService extends ChangeNotifier {
               .findElements('group', namespace: _roster)
               .map((g) => g.innerText)
               .where((g) => g.startsWith('VoiceHost extension:'));
-          final address = aliases.isEmpty
+          final address = _isCanonicalAccount || aliases.isEmpty
               ? extensionFor(peer)
               : aliases.first.substring('VoiceHost extension:'.length);
           if (!RegExp(r'^[a-z0-9._+\-]{1,80}$').hasMatch(address)) continue;
@@ -693,7 +766,7 @@ class XmppService extends ChangeNotifier {
     }
     final from = message.getAttribute('from');
     if (from == null) return;
-    final peer = _bare(from);
+    final peer = _canonicalPeer(from);
     try {
       recipientJid(peer);
     } catch (_) {
@@ -843,8 +916,7 @@ class XmppService extends ChangeNotifier {
           // discarding the local cache. Old gaps may no longer exist on server.
           _cursor = null;
           await _archivePage(before: '');
-          _historyError =
-              'The archive cursor expired. Recent available history was recovered.';
+          _historyError = 'The archive cursor expired. Recent available history was recovered.';
         }
       }
     } catch (_) {
@@ -1044,8 +1116,8 @@ class XmppService extends ChangeNotifier {
         !['chat', 'normal', null].contains(message.getAttribute('type'))) {
       return;
     }
-    final sender = _bare(message.getAttribute('from') ?? '');
-    final recipient = _bare(message.getAttribute('to') ?? '');
+    final sender = _canonicalPeer(message.getAttribute('from') ?? '');
+    final recipient = _canonicalPeer(message.getAttribute('to') ?? '');
     final outgoing = sender == _account;
     if (!outgoing && recipient != _account) return;
     final peer = outgoing ? recipient : sender;

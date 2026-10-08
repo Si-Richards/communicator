@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .messaging_identity import identity_for_jid
+from .messaging_identity import identity_for_jid, canonical_jid, provisioned_extension
 
 
 def utcnow() -> datetime:
@@ -119,6 +119,11 @@ class Store:
                     next_retry_at TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS messaging_aliases (
+                    old_jid TEXT PRIMARY KEY,
+                    canonical_jid TEXT NOT NULL,
+                    history_done INTEGER NOT NULL DEFAULT 0
+                );
                 """
             )
             # Additive migration: retain shared passwords, accounts and history.
@@ -138,6 +143,7 @@ class Store:
                     continue
                 conn.execute("UPDATE messaging_accounts SET account_number=?, extension=? WHERE jid=?",
                              (number, extension, account["jid"]))
+            self._migrate_endpoint_accounts(conn)
             for row in conn.execute("SELECT id,config_json,configuration_version FROM devices").fetchall():
                 config = json.loads(row["config_json"])
                 messaging = config.get("messaging") or {}
@@ -154,6 +160,57 @@ class Store:
                     config["version"] = row["configuration_version"] + 1
                     conn.execute("UPDATE devices SET config_json=?,configuration_version=?,updated_at=? WHERE id=?",
                                  (json.dumps(config), config["version"], iso(utcnow()), row["id"]))
+
+    def _migrate_endpoint_accounts(self, conn):
+        """Idempotent local reservation; the worker proves remote ownership later."""
+        devices = conn.execute("SELECT * FROM devices ORDER BY created_at,id").fetchall()
+        manual = {m.get("jid") for row in devices
+                  if (m := (json.loads(row["config_json"]).get("messaging") or {})).get("enabled")
+                  and not m.get("managed")}
+        # Keep every source account/password. Never adopt an existing manual JID.
+        for old in conn.execute("SELECT * FROM messaging_accounts ORDER BY created_at,jid").fetchall():
+            try:
+                target = canonical_jid(old["jid"])
+            except ValueError:
+                continue
+            if target == old["jid"]:
+                continue
+            if target in manual:
+                raise ValueError("Canonical messaging identity is already assigned manually; administrator action is required.")
+            previous = conn.execute("SELECT canonical_jid FROM messaging_aliases WHERE old_jid=?", (old["jid"],)).fetchone()
+            if previous and previous[0] != target:
+                raise ValueError("Messaging endpoint migration conflicts with existing ownership.")
+            number, extension = identity_for_jid(target)
+            conn.execute("""INSERT OR IGNORE INTO messaging_accounts
+                (jid,password,created_at,account_number,extension) VALUES (?,?,?,?,?)""",
+                (target, old["password"], old["created_at"], number, extension))
+            inserted = conn.execute("INSERT OR IGNORE INTO messaging_aliases (old_jid,canonical_jid) VALUES (?,?)",
+                                    (old["jid"], target)).rowcount
+            if inserted:
+                conn.execute("""UPDATE messaging_accounts SET status='pending', error=NULL,
+                    applied_directory_signature=NULL, next_retry_at=NULL, attempts=0 WHERE jid=?""", (target,))
+        for row in devices:
+            config = json.loads(row["config_json"])
+            messaging = config.get("messaging") or {}
+            old_jid = messaging.get("jid")
+            if not messaging.get("managed") or not old_jid:
+                continue
+            alias = conn.execute("SELECT canonical_jid FROM messaging_aliases WHERE old_jid=?", (old_jid,)).fetchone()
+            target = alias[0] if alias else old_jid
+            account = conn.execute("SELECT * FROM messaging_accounts WHERE jid=?", (target,)).fetchone()
+            if not account:
+                continue
+            previous_jids = [r[0] for r in conn.execute("SELECT old_jid FROM messaging_aliases WHERE canonical_jid=? ORDER BY old_jid", (target,))]
+            updated = {**messaging, "jid": target, "previous_jids": previous_jids}
+            if messaging.get("enabled"):
+                updated.update(password=account["password"], account_number=account["account_number"], extension=account["extension"])
+                if target != old_jid or account["status"] != "enabled":
+                    updated["ready"] = False
+            if updated != messaging:
+                config["messaging"] = updated
+                config["version"] = row["configuration_version"] + 1
+                conn.execute("UPDATE devices SET config_json=?,configuration_version=?,updated_at=? WHERE id=?",
+                             (json.dumps(config), config["version"], iso(utcnow()), row["id"]))
 
     def activate_device(self, code: str, descriptor: dict, config_factory, push: dict | None,
                         access_ttl: int, refresh_ttl: int = 60 * 60 * 24 * 30):
@@ -414,6 +471,11 @@ class Store:
             if account:
                 raise ValueError("This messaging identity is managed automatically; use automatic messaging.")
             return config
+        if canonical_jid(jid) != jid:
+            raise ValueError("Managed messaging must use the canonical numeric extension JID.")
+        telephony = config.get("telephony") or {}
+        if (telephony.get("sip") or {}).get("username"):
+            provisioned_extension(telephony.get("extension"), telephony["sip"]["username"])
         # Do not silently take control of an identity already assigned manually.
         for row in conn.execute("SELECT config_json FROM devices"):
             other = json.loads(row["config_json"]).get("messaging") or {}
@@ -429,6 +491,8 @@ class Store:
         messaging["password"] = account["password"]
         messaging["account_number"] = account["account_number"]
         messaging["extension"] = account["extension"]
+        messaging["previous_jids"] = [r[0] for r in conn.execute(
+            "SELECT old_jid FROM messaging_aliases WHERE canonical_jid=? ORDER BY old_jid", (jid,))]
         messaging["ready"] = (account["status"] == "enabled" and account["applied_enabled"] == 1
                               and bool(account["applied_directory_signature"]))
         config["messaging"] = messaging
@@ -453,7 +517,7 @@ class Store:
                 return None
             active = self.messaging_active_references(conn, jid)
             pending = row["applied_enabled"] != bool(active)
-            return {"status": "pending" if pending and row["status"] != "error" else row["status"],
+            return {"status": "pending" if pending and row["status"] not in {"error", "migrating"} else row["status"],
                     "error": row["error"], "active_devices": active}
 
     def update_checkin(

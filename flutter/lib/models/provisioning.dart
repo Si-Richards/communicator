@@ -362,9 +362,8 @@ class ProvisionedDeviceState {
       accessToken: json['access_token']?.toString() ?? '',
       refreshToken: json['refresh_token']?.toString() ?? '',
       accessTokenExpiresAt:
-          DateTime.tryParse(
-            json['access_token_expires_at']?.toString() ?? '',
-          )?.toUtc() ??
+          DateTime.tryParse(json['access_token_expires_at']?.toString() ?? '')
+              ?.toUtc() ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       configurationVersion:
           int.tryParse(json['configuration_version']?.toString() ?? '') ?? 0,
@@ -433,12 +432,14 @@ class MessagingConfiguration {
     required this.password,
     required this.websocket,
     this.ready = true,
+    this.previousJids = const [],
   });
   final bool enabled;
   final String jid;
   final String password;
   final String websocket;
   final bool ready;
+  final List<String> previousJids;
 
   bool get configured {
     final uri = Uri.tryParse(websocket);
@@ -458,6 +459,12 @@ class MessagingConfiguration {
       MessagingConfiguration(
         enabled: json['enabled'] == true,
         ready: json['ready'] != false,
+        previousJids: json['previous_jids'] is List
+            ? (json['previous_jids'] as List)
+                  .take(128)
+                  .map((value) => value.toString().trim().toLowerCase())
+                  .toList(growable: false)
+            : const [],
         jid: (json['jid']?.toString() ?? '').trim().toLowerCase(),
         password: json['password']?.toString() ?? '',
         websocket:
@@ -471,5 +478,6 @@ class MessagingConfiguration {
     if (enabled) 'jid': jid,
     if (enabled) 'password': password,
     if (enabled) 'websocket': websocket,
+    if (enabled && previousJids.isNotEmpty) 'previous_jids': previousJids,
   };
 }

@@ -105,7 +105,7 @@ class InstallerTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = self.root / "commands"
         self.ctl = self.bin / "ejabberdctl"
-        self.ctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$COMMAND_LOG"\ncase "$1" in\nstatus) echo "The node ejabberd@localhost is started with status: started";;\nmodule_install) echo "installed";;\n*) exit 99;;\nesac\n')
+        self.ctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$COMMAND_LOG"\ncase "$1" in\nstatus) echo "The node ejabberd@localhost is started with status: started";;\nmodule_install|module_upgrade) echo "installed";;\n*) exit 99;;\nesac\n')
         self.ctl.chmod(0o755)
         self.contrib = self.root / "custom modules"
         python = self.bin / "python3"
@@ -113,8 +113,8 @@ class InstallerTests(unittest.TestCase):
         python.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], COMMAND_LOG=str(self.log), CONTRIB_TEST_PATH=str(self.contrib), OWNER_TEST_UID=str(os.geteuid()), OWNER_TEST_GID=str(os.getegid()))
 
-    def run_installer(self):
-        return subprocess.run(["bash", str(self.package / "install.sh"), str(self.ctl)], env=self.env, capture_output=True, text=True)
+    def run_installer(self, *args):
+        return subprocess.run(["bash", str(self.package / "install.sh"), str(self.ctl), *args], env=self.env, capture_output=True, text=True)
 
     def test_supported_commands_and_production_files_only(self):
         result = self.run_installer()
@@ -123,6 +123,17 @@ class InstallerTests(unittest.TestCase):
         installed = self.contrib / "sources" / "mod_voicehost_tenants"
         files = sorted(str(p.relative_to(installed)) for p in installed.rglob("*") if p.is_file())
         self.assertEqual(files, ["COPYING", "README.md", "mod_voicehost_tenants.spec", "src/mod_voicehost_tenants.erl"])
+
+    def test_upgrade_uses_supported_upgrade_command(self):
+        result = self.run_installer("--upgrade")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines(), ["status", "module_upgrade mod_voicehost_tenants"])
+
+    def test_invalid_option_stops_before_mutation(self):
+        result = self.run_installer("--unknown")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.contrib.exists())
+        self.assertFalse(self.log.exists())
 
     def test_metadata_failure_stops_before_copy_and_install(self):
         self.env["METADATA_FAIL"] = "1"

@@ -3,23 +3,33 @@
 For account isolation, account-only rosters and extension-only addressing, follow
 [the tenant-module rollout guide](../ejabberd-modules/mod_voicehost_tenants/README.md)
 **before rebuilding these services**. The updated worker requires the installed
-`mod_voicehost_tenants` module and the additional `voicehost_set_identity` API
-permission. That guide uses this deployment's HTTPS API on port 443.
+`mod_voicehost_tenants` module and the `voicehost_set_identity` and `voicehost_migrate_history` API
+permissions. That guide uses this deployment's HTTPS API on port 443.
 
-Automatic messaging uses the **full SIP username**, lowercased, as the XMPP
-username: `10000*207` becomes `10000*207@ejabberd.voicehost.io`. A short extension
-is not substituted when the SIP username is missing. Multiple phones with the
-same SIP identity share one account and generated messaging password. The SIP
-password is never copied to ejabberd.
+Automatic messaging uses a canonical **account number and extension**. SIP logins
+`10000*213`, `10000*213T` and `10000*213D` all share
+`10000*213@ejabberd.voicehost.io`, one generated messaging password and one directory
+entry. Account numbers are numeric; extensions have 3–5 digits, including leading
+zeros. Alphabetic endpoint suffixes are removed only from the messaging identity.
+SIP usernames/passwords and calling configuration remain unchanged. A missing SIP
+username is never replaced with a default account. The SIP password is never
+copied to ejabberd.
+
+Existing endpoint accounts are retained and disabled after their last device moves.
+The migration reuses an existing canonical account's managed password, or reserves
+the oldest endpoint account's secret. It copies same-account direct-chat Mnesia
+archives before making the canonical account ready. Source archives and passwords
+remain available for recovery. See the rollout guide for upgrade order, archive
+requirements and conflict handling.
 
 | Provisioning event | Account behavior |
 | --- | --- |
 | Issue an activation code | No account created yet |
 | Activate a phone with automatic messaging | Reserve one password; worker creates the account |
-| Add another phone with the same SIP username | Reuse the account and password |
+| Add another phone with the same account and extension | Reuse the account and password |
 | Lock, revoke, retire, log out or disable messaging | Disable the account when no active linked phones remain |
 | Unlock a linked phone or activate a replacement | Restore the account with the same password |
-| Change the SIP username | Attach the phone to the new account; reconcile the old account's remaining phones |
+| Change the account or extension | Attach the phone to the new account; reconcile the old account's remaining phones |
 
 Disabling uses `ban_account`; enabling uses `unban_account`. It never calls
 `unregister`, changes the account password, or deletes message history. The
@@ -29,7 +39,7 @@ is not overwritten. Existing manual account configurations remain manual.
 
 ## ejabberd prerequisites
 
-Use **ejabberd 25.08 or newer** and API **v2**. Version 2 selects the ban behavior
+Use **ejabberd 26.09** for the tenant module and archive migration. The basic lifecycle requires 25.08 or newer and API **v2**. Version 2 selects the ban behavior
 that preserves the password and records a ban in private storage. Require
 `mod_admin_extra`, `mod_private` and `mod_http_api`; keep the existing archive
 and WebSocket modules/configuration.
@@ -75,6 +85,7 @@ api_permissions:
       - ban_account
       - unban_account
       - voicehost_set_identity
+      - voicehost_migrate_history
 
 modules:
   mod_admin_extra: {}
@@ -126,8 +137,7 @@ The gateway does not need rebuilding. The worker has no published port. When
 server rejects attempts to enable new automatic configurations. Existing automatic
 accounts are not disabled merely by switching off the integration.
 
-In **Devices → Edit**, select **Enable messaging** and **Create and manage ejabberd
-account from the full SIP username**. Fill the SIP username if missing, save,
+In **Devices → Edit**, select **Enable messaging** and **Create and manage messaging for this account and extension**. Fill the SIP username if missing, save,
 then reopen the editor to see the account status and active-phone count.
 The JID, messaging password and WebSocket fields are disabled in automatic mode.
 New activations have the same option. A generated activation alone does not

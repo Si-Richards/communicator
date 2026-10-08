@@ -6,12 +6,15 @@
 -include_lib("xmpp/include/xmpp.hrl").
 -include("ejabberd_commands.hrl").
 -include("mod_roster.hrl").
+-include("mod_mam.hrl").
 
 -export([start/2, stop/1, reload/3, depends/2, mod_options/1, mod_doc/0,
          filter_packet/1, user_send/1, user_receive/1, roster_get/3,
-         roster_info/4, set_identity/7, valid_identity/3, contacts/2]).
+         roster_info/4, set_identity/7, valid_identity/3, contacts/2,
+         migrate_history/3, canonical_user/1]).
 
 -record(voicehost_identity, {key, account, extension, address, name, enabled = false}).
+-record(voicehost_history_copy, {key, last_id = 0, done = false}).
 
 start(_Host, _Opts) ->
     case mnesia:create_table(voicehost_identity,
@@ -23,6 +26,14 @@ start(_Host, _Opts) ->
         Other -> error({voicehost_identity_table, Other})
     end,
     ok = mnesia:wait_for_tables([voicehost_identity], 30000),
+    case mnesia:create_table(voicehost_history_copy,
+                            [{disc_copies, [node()]},
+                             {attributes, record_info(fields, voicehost_history_copy)}]) of
+        {atomic, ok} -> ok;
+        {aborted, {already_exists, voicehost_history_copy}} -> ok;
+        HistoryError -> error({voicehost_history_copy_table, HistoryError})
+    end,
+    ok = mnesia:wait_for_tables([voicehost_history_copy], 30000),
     {ok, [{hook, filter_packet, filter_packet, 10, global},
           {hook, user_send_packet, user_send, 10},
           {hook, user_receive_packet, user_receive, 10},
@@ -43,7 +54,109 @@ commands() ->
                         module = ?MODULE, function = set_identity,
                         args = [{user, binary}, {host, binary}, {account, binary},
                                 {extension, binary}, {name, binary}, {address, binary}, {enabled, integer}],
+                        result = {res, integer}},
+     #ejabberd_commands{name = voicehost_migrate_history,
+                        tags = [voicehost], version = 2,
+                        desc = "Copy retired SIP endpoint history into its canonical messaging user",
+                        module = ?MODULE, function = migrate_history,
+                        args = [{old_user, binary}, {user, binary}, {host, binary}],
                         result = {res, integer}}].
+
+canonical_user(User) when is_binary(User), byte_size(User) =< 240 ->
+    case re:run(User, <<"\\A([0-9]+)\\*([0-9]{3,5})[a-z]*\\z">>, [{capture, [1,2], binary}]) of
+        {match, [Account, Extension]} -> {ok, <<Account/binary,"*",Extension/binary>>, Account};
+        _ -> error
+    end;
+canonical_user(_) -> error.
+
+%% Archives are copied, never removed. A durable cursor makes timeout/restart
+%% retries idempotent. Only the current Mnesia backend is supported here.
+migrate_history(OldUser, User, Host) ->
+    case {managed(Host), canonical_user(OldUser), User =/= OldUser} of
+        {true, {ok, User, Account}, true} ->
+            case gen_mod:is_loaded(Host, mod_mam) andalso
+                 gen_mod:db_mod(Host, mod_mam) =:= mod_mam_mnesia of
+                false -> 3;
+                true -> copy_history(OldUser, User, Host, Account)
+            end;
+        _ -> 1
+    end.
+
+copy_history(OldUser, User, Host, Account) ->
+    Key = {Host, OldUser, User},
+    case mnesia:transaction(fun() ->
+        %% The worker proves account ownership and bans/kicks the old account
+        %% before this command. Require both server-assigned registry entries.
+        [#voicehost_identity{account=Account,enabled=false}] =
+            mnesia:read(voicehost_identity, {Host,OldUser}),
+        [#voicehost_identity{account=Account}] =
+            mnesia:read(voicehost_identity, {Host,User}),
+        Progress = case mnesia:read(voicehost_history_copy, Key, write) of
+            [] -> #voicehost_history_copy{key=Key};
+            [P] -> P
+        end,
+        case Progress#voicehost_history_copy.done of
+            true -> 0;
+            false ->
+                Source = mnesia:read(archive_msg, {OldUser,Host}),
+                Pending = lists:sort(fun(A,B) -> binary_to_integer(A#archive_msg.id) < binary_to_integer(B#archive_msg.id) end,
+                                    [M || M <- Source, binary_to_integer(M#archive_msg.id) > Progress#voicehost_history_copy.last_id]),
+                Boundary = case length(Pending) > 500 of
+                    true -> binary_to_integer((lists:nth(500, Pending))#archive_msg.id);
+                    false -> infinity
+                end,
+                Batch = [M || M <- Pending, Boundary =:= infinity orelse binary_to_integer(M#archive_msg.id) =< Boundary],
+                Target = mnesia:read(archive_msg, {User,Host}, write),
+                lists:foldl(fun(M, Existing) -> copy_message(M, User, Host, Account, Existing) end, Target, Batch),
+                Last = case Batch of [] -> Progress#voicehost_history_copy.last_id; _ -> binary_to_integer((lists:last(Batch))#archive_msg.id) end,
+                Done = Boundary =:= infinity,
+                mnesia:write(Progress#voicehost_history_copy{last_id=Last,done=Done}),
+                case Done of true -> 0; false -> 2 end
+        end
+    end) of
+        {atomic, Result} -> Result;
+        _ -> 1
+    end.
+
+copy_message(#archive_msg{type=chat,peer={Peer,Host,Resource}} = Msg, User, Host, Account, Existing) ->
+    case canonical_user(Peer) of
+        {ok, CanonicalPeer, Account} ->
+            Packet = case Msg#archive_msg.packet of
+                #xmlel{} = Xml -> Xml;
+                Stanza -> xmpp:encode(Stanza)
+            end,
+            Copy = Msg#archive_msg{us={User,Host},peer={CanonicalPeer,Host,Resource},
+                                   bare_peer={CanonicalPeer,Host,<<>>},
+                                   packet=rewrite_archive_xml(Packet, Host, Account)},
+            case [M || M <- Existing, M#archive_msg.id =:= Copy#archive_msg.id] of
+                [] -> mnesia:write(Copy), [Copy|Existing];
+                [Copy] -> Existing;
+                _ -> mnesia:abort(archive_id_collision)
+            end;
+        _ -> Existing
+    end;
+copy_message(_, _, _, _, Existing) -> Existing.
+
+rewrite_archive_xml(#xmlel{name=Name,attrs=Attrs,children=Children} = Xml, Host, Account) ->
+    NewAttrs = [{K, case {Name,K} of
+                       {<<"message">>,<<"from">>} -> rewrite_archive_jid(V,Host,Account);
+                       {<<"message">>,<<"to">>} -> rewrite_archive_jid(V,Host,Account);
+                       {<<"stanza-id">>,<<"by">>} -> rewrite_archive_jid(V,Host,Account);
+                       _ -> V
+                   end} || {K,V} <- Attrs],
+    Xml#xmlel{attrs=NewAttrs,children=[rewrite_archive_xml(C,Host,Account) || C <- Children]};
+rewrite_archive_xml(Other, _, _) -> Other.
+
+rewrite_archive_jid(Value, Host, Account) ->
+    try jid:decode(Value) of
+        #jid{luser=U,lserver=Host,lresource=Resource} ->
+            case canonical_user(U) of
+                {ok, Canonical, Account} -> jid:encode(jid:make(Canonical,Host,Resource));
+                _ -> Value
+            end;
+        _ -> Value
+    catch _:_ -> Value
+    end.
 
 %% No client stanza can assign account membership. A malformed or mismatched
 %% account/extension never gets a registry entry, including on manual imports.

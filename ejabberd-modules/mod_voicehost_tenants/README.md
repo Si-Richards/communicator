@@ -6,20 +6,19 @@ cannot prevent cross-account traffic from another XMPP client.
 
 ## Behaviour
 
-Provisioning owns the account membership of each full SIP JID. The dedicated
-`voicehost_set_identity` HTTP command publishes its account number, SIP suffix,
-display name, user-facing extension and active status into a persistent Mnesia
-registry. Clients cannot assign their own account membership or edit this roster.
-The command rejects a membership that disagrees with the JID's account prefix,
-and rejects two active identities advertising the same extension in one account.
+Provisioning owns the account membership of each canonical messaging JID. SIP
+logins `10000*213`, `10000*213T` and `10000*213D` share
+`10000*213@ejabberd.voicehost.io`, one stable generated messaging password and one
+contact. Account numbers are numeric; extensions contain 3–5 digits. Leading zeros
+are significant. Alphabetic SIP endpoint suffixes are removed from the messaging
+identity without changing SIP login data or calling behaviour.
 
-The roster contains only other active, provisioned messaging identities in the
-requester's account. Multiple phones sharing a SIP username are one contact.
-The worker uses the oldest active phone's managed display name/extension, never
-the handset's installation name. If a login is `10000*213t` but the provisioned
-extension is `213`, the roster advertises `213` and retains the full JID internally.
-If that phone's configured extension is actually `213t`, the directory shows `213t`;
-no suffix is guessed or stripped. Set the intended extension in the device editor.
+The dedicated `voicehost_set_identity` HTTP command publishes account number,
+numeric extension, display name and active status into a persistent Mnesia registry.
+Clients cannot assign their own membership or edit this roster. The command rejects
+membership that disagrees with the JID account prefix and duplicate active directory
+extensions. The roster contains only other active, provisioned messaging identities
+in the requester's account. The oldest active linked phone supplies the display name.
 
 Messages, presence/subscriptions and direct profile/last-activity IQs must stay
 within one account. Unknown identities, disabled identities, external domains
@@ -59,9 +58,9 @@ production files, and compiles with that server's headers. It honours
 `CONTRIB_MODULES_PATH` and the node's runtime home. It does not require an
 `ejabberdctl eval` command (26.09 does not provide one).
 It does not modify the YAML or enable the module. Never install `test/gen_mod.erl`
-or the test-ebin folder into ejabberd. For a later source update, copy the updated
-production files into the same sources directory and use `module_upgrade`
-instead of `module_install`.
+or the test-ebin folder into ejabberd. For an existing installation, use the same installer with `--upgrade`, as shown
+below. Restart after this upgrade: the new archive table and command are initialized
+at module start; a configuration reload alone does not initialize them.
 
 Merge these changes into the **existing** YAML sections. Do not duplicate
 `modules` or `api_permissions`, and retain all six lifecycle permissions:
@@ -86,6 +85,7 @@ api_permissions:
       - ban_account
       - unban_account
       - voicehost_set_identity
+      - voicehost_migrate_history
 ```
 
 `store_current_id: false` computes roster versions from the generated roster, so
@@ -104,6 +104,59 @@ module first prevents an interval where the new app appears isolated but the
 server is not. Keep the working WSS and restricted HTTPS `/api/v2` Nginx routes.
 No Nginx change is required for this feature.
 
+## Upgrade the existing endpoint-account deployment
+
+This deployment already has the module installed. Back up the ejabberd Mnesia data
+and provisioning SQLite volume together before updating. Preserve both registries,
+archive data and generated passwords. Complete the ejabberd steps **before updating
+RANDY**; the updated worker requires the new history command.
+
+On **149.19.177.17**, pull the branch and upgrade the production module:
+
+```bash
+cd /opt/voicehost-messaging && git pull --ff-only origin feature/ejabberd-messaging
+bash /opt/voicehost-messaging/ejabberd-modules/mod_voicehost_tenants/install.sh /opt/ejabberd-26.09/bin/ejabberdctl --upgrade
+```
+
+In the existing `/opt/ejabberd/conf/ejabberd.yml`, add
+`voicehost_migrate_history` to the dedicated provisioner's `what` list, retaining
+`voicehost_set_identity` and the six account lifecycle commands shown above.
+Keep `mod_mam`, `mod_private`, the tenant module and the existing Mnesia backend.
+Restart the active node to initialize the upgraded module, then confirm the command:
+
+```bash
+/opt/ejabberd-26.09/bin/ejabberdctl restart
+/opt/ejabberd-26.09/bin/ejabberdctl status
+/opt/ejabberd-26.09/bin/ejabberdctl --version 2 help voicehost_migrate_history
+```
+
+Allow the node to finish restarting before checking status. The command takes
+`old_user`, `user` and `host`. No change to Nginx, TLS routes or API credentials is
+needed.
+
+The provisioning SQLite migration redirects managed devices to the canonical JID,
+preserves SIP configuration, and records old JIDs in `messaging_aliases`. An existing
+managed canonical account keeps its password; otherwise the oldest managed endpoint
+supplies the secret. It never overwrites a manual canonical assignment or adopts an
+external ejabberd account. A conflicting manual assignment stops the local migration
+transaction for administrator correction; a remote ownership conflict leaves readiness
+false and reports an error. Resolve ownership deliberately before retrying.
+
+The worker removes old directory/policy access, bans retired endpoint accounts and
+then copies history. Migration requires `mod_mam` with **the Mnesia archive backend**;
+SQL archives return an error and keep the canonical device unready. Copies include
+only same-account direct chat; foreign-account and group records remain untouched in
+source archives. Source accounts, passwords and all source archives are retained.
+A persistent Mnesia cursor copies up to 500 archive records per call (including all
+records sharing its boundary ID); retries resume without duplicate copies. Conflicting
+archive IDs fail without overwriting either account. Large histories can show
+`migrating` over several worker passes. Readiness is published only after all linked
+endpoint archives and the directory entry are synchronized.
+
+Because copies retain the source, plan Mnesia capacity before a large migration.
+Do not change archive backend during the handover or restore only one of the two
+registries. The feature does not automatically delete historical accounts afterward.
+
 ## Update RANDY and the app
 
 Back up the provisioning database volume, then rebuild all three provisioning
@@ -114,9 +167,8 @@ cd /opt/communicator && git pull --ff-only origin feature/ejabberd-messaging && 
 ```
 
 Keep `EJABBERD_API_URL=https://ejabberd.voicehost.io/api/v2`; this deployment uses
-443, not 5444. Preserve the database volume and existing API credentials. Migration
-retains generated passwords, publishes explicit account/extension metadata, and
-bumps existing device configuration versions while awaiting the first policy sync.
+443, not 5444. Preserve the database volume and existing API credentials. Migration retains source secrets, selects one shared canonical secret, and bumps
+existing device configuration versions while waiting for archive and policy sync.
 The worker marks devices ready only after the lifecycle and registry writes succeed.
 It repairs unchanged registry entries at least once per minute while the API works;
 failures retain the existing five-second to five-minute backoff. Last-device
@@ -138,11 +190,26 @@ enter an extension in New conversation. Names/extension labels replace raw JIDs.
 Only extensions actually provisioned for managed messaging appear. This does not
 import every Hosted PBX user or SIP-only phone automatically.
 
+After the worker runs, inspect progress on RANDY without displaying passwords:
+
+```bash
+cd /opt/communicator/provisioning-server && docker compose -f docker-compose.yml logs --tail=80 messaging-worker
+cd /opt/communicator/provisioning-server && docker compose -f docker-compose.yml exec -T messaging-worker python -c 'import sqlite3; from app.config import settings; c=sqlite3.connect(settings.database_path); print("Accounts:",c.execute("SELECT jid,status,error,applied_enabled FROM messaging_accounts").fetchall()); print("Aliases:",c.execute("SELECT old_jid,canonical_jid,history_done FROM messaging_aliases").fetchall()); c.close()'
+```
+
+Expected: `10000*213t`/`10000*213d` rows become `disabled`, the
+`10000*213@ejabberd.voicehost.io` row becomes `enabled`, and its alias rows have
+`history_done=1`. An error keeps devices unready; fix the reported API/ownership
+problem and let the worker retry. Existing phones need **Refresh Configuration**,
+not a fresh activation. Install the updated app to merge their local history.
+
 ## Verify before wider rollout
 
 Use two accounts with the same extension numbers and a second phone sharing one
 identity. Confirm each roster shows only its own account, once per identity; test
-extension-only chat and a suffixed SIP login. Remove/lock the last phone and refresh
+extension-only chat with `213`, `213T` and `213D` sharing one identity. Include
+3-, 4- and 5-digit extensions with leading zeros. Confirm historical messages
+and delivery state survive the handover and reconnects do not duplicate them. Remove/lock the last phone and refresh
 the other phone's directory. Confirm the entry disappears and a still-open XMPP
 session cannot send further traffic after the worker disables its registry entry.
 

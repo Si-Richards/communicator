@@ -341,8 +341,9 @@ restricted by NGINX. Do not expose either administrative surface publicly.
 
 The activation form and device editor support `messaging_enabled`, `messaging_managed`,
 `messaging_jid`, `messaging_password` and `messaging_websocket`. Messaging is disabled by default.
-Automatic mode creates/manages an account named after the full SIP username, generates
-a separate password, and shares it across phones with that SIP identity. Last-device
+Automatic mode creates one account per numeric account number and 3–5 digit extension.
+SIP logins `10000*213`, `10000*213T` and `10000*213D` share `10000*213@ejabberd.voicehost.io`
+and a separate generated password; SIP credentials remain unchanged. Last-device
 disablement bans the account while preserving its password/history; unlocking restores it.
 See [automatic ejabberd deployment and acceptance](EJABBERD-MANAGEMENT.md) for the
 private API setup, environment variables and `messaging-worker` service.

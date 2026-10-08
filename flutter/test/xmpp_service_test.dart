@@ -40,94 +40,85 @@ void main() {
     await _until(() => service.online);
   }
 
-  test(
-    'automatic account waits for readiness then uses the full SIP identity',
-    () async {
-      final alice = client();
-      alice.configureManaged(
-        const MessagingConfiguration(
-          enabled: true,
-          ready: false,
-          jid: '10000*207@ejabberd.voicehost.io',
-          password: 'private-test-password',
-          websocket: 'wss://ejabberd.voicehost.io/websocket',
-        ),
-      );
-      await alice.reconnect();
-      expect(server.connections, isEmpty);
-      expect(alice.error, contains('being prepared'));
-      alice.configureManaged(
-        const MessagingConfiguration(
-          enabled: true,
-          jid: '10000*207@ejabberd.voicehost.io',
-          password: 'private-test-password',
-          websocket: 'wss://ejabberd.voicehost.io/websocket',
-        ),
-      );
-      await _until(() => alice.online);
-      final bob = client();
-      await login(bob, '10000*208');
-      alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
-      await _until(() => bob.messages.isNotEmpty);
-      expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
-    },
-  );
+  test('automatic account waits for readiness then uses the canonical account identity', () async {
+    final alice = client();
+    alice.configureManaged(
+      const MessagingConfiguration(
+        enabled: true,
+        ready: false,
+        jid: '10000*207@ejabberd.voicehost.io',
+        password: 'private-test-password',
+        websocket: 'wss://ejabberd.voicehost.io/websocket',
+      ),
+    );
+    await alice.reconnect();
+    expect(server.connections, isEmpty);
+    expect(alice.error, contains('being prepared'));
+    alice.configureManaged(
+      const MessagingConfiguration(
+        enabled: true,
+        jid: '10000*207@ejabberd.voicehost.io',
+        password: 'private-test-password',
+        websocket: 'wss://ejabberd.voicehost.io/websocket',
+      ),
+    );
+    await _until(() => alice.online);
+    final bob = client();
+    await login(bob, '10000*208');
+    alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
+    await _until(() => bob.messages.isNotEmpty);
+    expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
+  });
 
-  test(
-    'extensions resolve within the account and cross-account traffic is rejected',
-    () async {
-      final alice = client();
-      final bob = client();
-      await login(alice, '10000*207');
-      await login(bob, '10000*208');
-      expect(alice.recipientJid('208'), '10000*208@ejabberd.voicehost.io');
-      expect(alice.extensionFor('10000*208@ejabberd.voicehost.io'), '208');
-      for (final recipient in [
-        '20000*208',
-        '20000*208@ejabberd.voicehost.io',
-        '208@ejabberd.voicehost.io',
-        '10000*208@elsewhere.example',
-      ]) {
-        expect(
-          () => alice.sendMessage(recipient: recipient, body: 'forbidden'),
-          throwsArgumentError,
-        );
-      }
-      alice.sendMessage(recipient: '208', body: 'Extension only');
-      await _until(() => bob.messages.isNotEmpty);
-      expect(bob.messages.single.body, 'Extension only');
-      _sendFixture(
-        server.users['10000*207']!,
-        '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" '
-        'to="10000*207@ejabberd.voicehost.io" type="chat"><body>cross account</body></message>',
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(alice.messages.any((m) => m.body == 'cross account'), isFalse);
-    },
-  );
-
-  test(
-    'account directory filters foreign contacts, deduplicates and clears on lock',
-    () async {
-      server.roster = [
-        ('10000*208@ejabberd.voicehost.io', 'Reception'),
-        ('10000*208@ejabberd.voicehost.io', 'Reception'),
-        ('20000*208@ejabberd.voicehost.io', 'Other account'),
-        ('10000*207@ejabberd.voicehost.io', 'Self'),
-      ];
-      final service = client();
-      await login(service, '10000*207');
-      await _until(() => !service.directoryBusy);
-      expect(service.directory.single.extension, '208');
-      expect(service.directory.single.name, 'Reception');
+  test('extensions resolve within the account and cross-account traffic is rejected', () async {
+    final alice = client();
+    final bob = client();
+    await login(alice, '10000*207');
+    await login(bob, '10000*208');
+    expect(alice.recipientJid('208'), '10000*208@ejabberd.voicehost.io');
+    expect(alice.extensionFor('10000*208@ejabberd.voicehost.io'), '208');
+    for (final recipient in [
+      '20000*208',
+      '20000*208@ejabberd.voicehost.io',
+      '208@ejabberd.voicehost.io',
+      '10000*208@elsewhere.example',
+    ]) {
       expect(
-        service.contactLabel('10000*208@ejabberd.voicehost.io'),
-        'Reception · 208',
+        () => alice.sendMessage(recipient: recipient, body: 'forbidden'),
+        throwsArgumentError,
       );
-      service.setAccessAllowed(false);
-      expect(service.directory, isEmpty);
-    },
-  );
+    }
+    alice.sendMessage(recipient: '208', body: 'Extension only');
+    await _until(() => bob.messages.isNotEmpty);
+    expect(bob.messages.single.body, 'Extension only');
+    _sendFixture(
+      server.users['10000*207']!,
+      '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" '
+      'to="10000*207@ejabberd.voicehost.io" type="chat"><body>cross account</body></message>',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(alice.messages.any((m) => m.body == 'cross account'), isFalse);
+  });
+
+  test('account directory filters foreign contacts, deduplicates and clears on lock', () async {
+    server.roster = [
+      ('10000*208@ejabberd.voicehost.io', 'Reception'),
+      ('10000*208@ejabberd.voicehost.io', 'Reception'),
+      ('20000*208@ejabberd.voicehost.io', 'Other account'),
+      ('10000*207@ejabberd.voicehost.io', 'Self'),
+    ];
+    final service = client();
+    await login(service, '10000*207');
+    await _until(() => !service.directoryBusy);
+    expect(service.directory.single.extension, '208');
+    expect(service.directory.single.name, 'Reception');
+    expect(
+      service.contactLabel('10000*208@ejabberd.voicehost.io'),
+      'Reception · 208',
+    );
+    service.setAccessAllowed(false);
+    expect(service.directory, isEmpty);
+  });
 
   test(
     'provisioned extensions resolve a SIP identity suffix through the roster',
@@ -226,35 +217,32 @@ void main() {
     },
   );
 
-  test(
-    'duplicate delayed incoming text is stored once and a ping is answered',
-    () async {
-      final service = client();
-      await login(service, '207');
-      const message =
-          '<message xmlns="jabber:client" type="chat" id="duplicate" '
-          'from="208@ejabberd.voicehost.io/other"><body>archived &amp; text</body>'
-          '<delay xmlns="urn:xmpp:delay" stamp="2026-10-06T12:00:00Z"/></message>';
-      server.connections.single.add('$message$message');
-      await _until(() => service.messages.isNotEmpty);
-      expect(service.messages.length, 1);
-      expect(
-        service.messages.single.timestamp.toUtc(),
-        DateTime.utc(2026, 10, 6, 12),
-      );
-      server.connections.single.add(
-        '<iq xmlns="jabber:client" type="get" '
-        'id="ping-1" from="ejabberd.voicehost.io"><ping xmlns="urn:xmpp:ping"/></iq>',
-      );
-      await _until(
-        () => server.received.any(
-          (iq) =>
-              iq.getAttribute('id') == 'ping-1' &&
-              iq.getAttribute('type') == 'result',
-        ),
-      );
-    },
-  );
+  test('duplicate delayed incoming text is stored once and a ping is answered', () async {
+    final service = client();
+    await login(service, '207');
+    const message =
+        '<message xmlns="jabber:client" type="chat" id="duplicate" '
+        'from="208@ejabberd.voicehost.io/other"><body>archived &amp; text</body>'
+        '<delay xmlns="urn:xmpp:delay" stamp="2026-10-06T12:00:00Z"/></message>';
+    server.connections.single.add('$message$message');
+    await _until(() => service.messages.isNotEmpty);
+    expect(service.messages.length, 1);
+    expect(
+      service.messages.single.timestamp.toUtc(),
+      DateTime.utc(2026, 10, 6, 12),
+    );
+    server.connections.single.add(
+      '<iq xmlns="jabber:client" type="get" '
+      'id="ping-1" from="ejabberd.voicehost.io"><ping xmlns="urn:xmpp:ping"/></iq>',
+    );
+    await _until(
+      () => server.received.any(
+        (iq) =>
+            iq.getAttribute('id') == 'ping-1' &&
+            iq.getAttribute('type') == 'result',
+      ),
+    );
+  });
 
   test(
     'background pauses and resume reconnects; lock clears and blocks access',
@@ -344,6 +332,158 @@ void main() {
     websocket: 'wss://ejabberd.voicehost.io/websocket',
   );
 
+  test('canonical login merges own endpoint caches once and keeps source files', () async {
+    final history = MemoryChatHistoryRepository();
+    const old =
+        '10000*207t@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
+    const foreign =
+        '20000*207t@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
+    ChatMessage saved(String id, String peer) => ChatMessage(
+      id: id,
+      peer: peer,
+      body: id,
+      outgoing: false,
+      timestamp: DateTime.utc(2026),
+      status: ChatMessageStatus.received,
+    );
+    await history.save(
+      old,
+      ChatHistorySnapshot(
+        cursor: 'old-cursor',
+        messages: [
+          saved('kept', '10000*208d@ejabberd.voicehost.io'),
+          saved('foreign-peer', '20000*208@ejabberd.voicehost.io'),
+        ],
+      ),
+    );
+    await history.save(
+      foreign,
+      ChatHistorySnapshot(
+        messages: [saved('foreign-file', '10000*208@ejabberd.voicehost.io')],
+      ),
+    );
+    await history.save(
+      tenantStorageAccount,
+      ChatHistorySnapshot(
+        messages: [saved('kept', '10000*208@ejabberd.voicehost.io')],
+      ),
+    );
+    final service = client(history: history);
+    service.configureManaged(
+      const MessagingConfiguration(
+        enabled: true,
+        jid: '10000*207@ejabberd.voicehost.io',
+        password: 'private-test-password',
+        websocket: 'wss://ejabberd.voicehost.io/websocket',
+        previousJids: [
+          '10000*207t@ejabberd.voicehost.io',
+          '20000*207t@ejabberd.voicehost.io',
+        ],
+      ),
+    );
+    await _until(() => service.online && !service.historyBusy);
+    await service.flushHistory();
+    expect(service.messages.single.body, 'kept');
+    expect(service.messages.single.peer, '10000*208@ejabberd.voicehost.io');
+    expect((await history.load(old)).messages, hasLength(2));
+    expect((await history.load(tenantStorageAccount)).migratedAccounts, [old]);
+    await service.reconnect();
+    await _until(() => service.online && !service.historyBusy);
+    expect(service.messages, hasLength(1));
+    service.setAccessAllowed(false);
+    await service.forgetHistory();
+    expect((await history.load(old)).messages, isEmpty);
+    expect((await history.load(tenantStorageAccount)).messages, isEmpty);
+    expect((await history.load(foreign)).messages, hasLength(1));
+  });
+
+  test('failed canonical cache save retains endpoint history for retry', () async {
+    final history = _FailingHistoryRepository();
+    history.failWrites = false;
+    const old =
+        '10000*207d@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
+    await history.save(
+      old,
+      ChatHistorySnapshot(
+        messages: [
+          ChatMessage(
+            id: 'retained',
+            peer: '10000*208t@ejabberd.voicehost.io',
+            body: 'retained',
+            outgoing: true,
+            timestamp: DateTime.utc(2026),
+            status: ChatMessageStatus.delivered,
+          ),
+        ],
+      ),
+    );
+    history.failWrites = true;
+    final service = client(history: history);
+    service.configureManaged(
+      const MessagingConfiguration(
+        enabled: true,
+        jid: '10000*207@ejabberd.voicehost.io',
+        password: 'private-test-password',
+        websocket: 'wss://ejabberd.voicehost.io/websocket',
+        previousJids: ['10000*207d@ejabberd.voicehost.io'],
+      ),
+    );
+    await _until(() => service.online && !service.historyBusy);
+    expect(
+      (await history.load(old)).messages.single.status,
+      ChatMessageStatus.delivered,
+    );
+    expect(
+      (await history.load(tenantStorageAccount)).migratedAccounts,
+      isEmpty,
+    );
+    history.failWrites = false;
+    await service.reconnect();
+    await _until(() => service.online && !service.historyBusy);
+    expect(service.messages.single.status, ChatMessageStatus.delivered);
+    expect((await history.load(tenantStorageAccount)).migratedAccounts, [old]);
+  });
+
+  test('canonical managed directory normalizes suffixes and preserves leading zeros', () async {
+    server.roster = [('10000*00208t@ejabberd.voicehost.io', 'Reception')];
+    final service = client();
+    service.configureManaged(managed);
+    await _until(() => service.online && !service.directoryBusy);
+    expect(service.directory.single.jid, '10000*00208@ejabberd.voicehost.io');
+    expect(service.recipientJid('00208'), '10000*00208@ejabberd.voicehost.io');
+    expect(service.recipientJid('208D'), '10000*208@ejabberd.voicehost.io');
+    for (final invalid in ['20', '123456', '20000*208', '208_']) {
+      expect(() => service.recipientJid(invalid), throwsArgumentError);
+    }
+  });
+
+  test(
+    'migration metadata survives configuration and history serialization',
+    () {
+      const previous = ['10000*207t@ejabberd.voicehost.io'];
+      const configuration = MessagingConfiguration(
+        enabled: true,
+        jid: '10000*207@ejabberd.voicehost.io',
+        password: 'test',
+        websocket: 'wss://ejabberd.voicehost.io/websocket',
+        previousJids: previous,
+      );
+      expect(
+        MessagingConfiguration.fromJson(configuration.toJson()).previousJids,
+        previous,
+      );
+      final snapshot = ChatHistorySnapshot(migratedAccounts: previous);
+      expect(
+        ChatHistorySnapshot.fromJson(snapshot.toJson()).migratedAccounts,
+        previous,
+      );
+      expect(
+        ChatHistorySnapshot.fromJson({'messages': []}).migratedAccounts,
+        isEmpty,
+      );
+    },
+  );
+
   test(
     'managed login recovers newest archive page and loads older history',
     () async {
@@ -365,41 +505,38 @@ void main() {
     },
   );
 
-  test(
-    'restart and reconnect page missed messages without duplicate outgoing text',
-    () async {
-      final history = MemoryChatHistoryRepository();
-      server.archive.add(_Archived('1', 'first'));
-      final service = client(history: history);
-      await login(service, '207');
-      await _until(() => !service.historyBusy);
-      service.sendMessage(recipient: '208', body: 'sent locally');
-      final sent = service.messages.last;
-      server.archive.add(
-        _Archived('2', sent.body, clientId: sent.id, outgoing: true),
-      );
-      service.pause();
-      server.archive.addAll([
-        for (var i = 3; i <= 6; i++) _Archived('$i', 'missed-$i'),
-      ]);
-      final restarted = client(history: history);
-      await login(restarted, '207');
-      await _until(() => !restarted.historyBusy);
-      expect(
-        restarted.messages.where((m) => m.body == 'sent locally'),
-        hasLength(1),
-      );
-      expect(
-        restarted.messages.where((m) => m.body.startsWith('missed-')),
-        hasLength(4),
-      );
-      expect(
-        server.archiveQueries.where((q) => q.after != null).map((q) => q.after),
-        ['1', '3', '5'],
-      );
-      expect((await history.load(storageAccount)).cursor, '6');
-    },
-  );
+  test('restart and reconnect page missed messages without duplicate outgoing text', () async {
+    final history = MemoryChatHistoryRepository();
+    server.archive.add(_Archived('1', 'first'));
+    final service = client(history: history);
+    await login(service, '207');
+    await _until(() => !service.historyBusy);
+    service.sendMessage(recipient: '208', body: 'sent locally');
+    final sent = service.messages.last;
+    server.archive.add(
+      _Archived('2', sent.body, clientId: sent.id, outgoing: true),
+    );
+    service.pause();
+    server.archive.addAll([
+      for (var i = 3; i <= 6; i++) _Archived('$i', 'missed-$i'),
+    ]);
+    final restarted = client(history: history);
+    await login(restarted, '207');
+    await _until(() => !restarted.historyBusy);
+    expect(
+      restarted.messages.where((m) => m.body == 'sent locally'),
+      hasLength(1),
+    );
+    expect(
+      restarted.messages.where((m) => m.body.startsWith('missed-')),
+      hasLength(4),
+    );
+    expect(
+      server.archiveQueries.where((q) => q.after != null).map((q) => q.after),
+      ['1', '3', '5'],
+    );
+    expect((await history.load(storageAccount)).cursor, '6');
+  });
 
   test(
     'archive wrappers from another user and uncorrelated queries are ignored',
@@ -511,40 +648,37 @@ void main() {
     },
   );
 
-  test(
-    'changing managed account isolates history and manual login cannot override it',
-    () async {
-      final history = MemoryChatHistoryRepository();
-      final service = client(history: history);
-      service.configureManaged(managed);
-      await _until(() => service.online && !service.historyBusy);
-      service.sendMessage(recipient: '208', body: 'account 207 only');
-      await service.flushHistory();
-      service.configureManaged(
-        const MessagingConfiguration(
-          enabled: true,
-          jid: '10000*209@ejabberd.voicehost.io',
-          password: 'other-secret',
-          websocket: 'wss://ejabberd.voicehost.io/websocket',
-        ),
-      );
-      await _until(
-        () =>
-            service.online &&
-            service.jid!.startsWith('10000*209@') &&
-            !service.historyBusy,
-      );
-      expect(service.messages, isEmpty);
-      await expectLater(
-        service.connect(username: '207', password: 'secret'),
-        throwsStateError,
-      );
-      expect(
-        (await history.load(tenantStorageAccount)).messages.single.body,
-        'account 207 only',
-      );
-    },
-  );
+  test('changing managed account isolates history and manual login cannot override it', () async {
+    final history = MemoryChatHistoryRepository();
+    final service = client(history: history);
+    service.configureManaged(managed);
+    await _until(() => service.online && !service.historyBusy);
+    service.sendMessage(recipient: '208', body: 'account 207 only');
+    await service.flushHistory();
+    service.configureManaged(
+      const MessagingConfiguration(
+        enabled: true,
+        jid: '10000*209@ejabberd.voicehost.io',
+        password: 'other-secret',
+        websocket: 'wss://ejabberd.voicehost.io/websocket',
+      ),
+    );
+    await _until(
+      () =>
+          service.online &&
+          service.jid!.startsWith('10000*209@') &&
+          !service.historyBusy,
+    );
+    expect(service.messages, isEmpty);
+    await expectLater(
+      service.connect(username: '207', password: 'secret'),
+      throwsStateError,
+    );
+    expect(
+      (await history.load(tenantStorageAccount)).messages.single.body,
+      'account 207 only',
+    );
+  });
 
   test('unsupported archive keeps live messaging usable', () async {
     server.mamSupported = false;

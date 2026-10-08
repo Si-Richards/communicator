@@ -2,11 +2,92 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("xmpp/include/xmpp.hrl").
 -include("mod_roster.hrl").
+-include("mod_mam.hrl").
 
 -define(HOST, <<"ejabberd.voicehost.io">>).
 
 isolation_test_() ->
     {setup, fun setup/0, fun cleanup/1, fun(_) -> cases() end}.
+
+history_migration_test_() ->
+    {setup, fun history_setup/0, fun cleanup/1, fun(_) -> history_cases() end}.
+
+history_setup() ->
+    ok = mnesia:create_schema([node()]),
+    ok = application:start(mnesia),
+    {ok, _} = mod_voicehost_tenants:start(?HOST, []),
+    {atomic,ok} = mnesia:create_table(archive_msg, [{disc_copies,[node()]},{type,bag},
+                                                 {attributes,record_info(fields,archive_msg)}]),
+    0 = publish(<<"10000*213t">>, <<"10000">>, <<"213t">>, <<"Legacy">>, 0),
+    0 = publish(<<"10000*213">>, <<"10000">>, <<"213">>, <<"Simon">>, 0),
+    Source = [archive(<<"10000*213t">>, <<"10000*230d">>, 1, <<"Incoming">>, recv),
+              archive(<<"10000*213t">>, <<"10000*230d">>, 2, <<"Outgoing">>, send),
+              archive(<<"10000*213t">>, <<"20000*230">>, 3, <<"Foreign">>, recv),
+              (archive(<<"10000*213t">>, <<"10000*230">>, 4, <<"Old room">>, recv))#archive_msg{type=groupchat}],
+    lists:foreach(fun mnesia:dirty_write/1, Source),
+    ok.
+
+archive(User, Peer, ID, Body, Direction) ->
+    OwnJid = <<User/binary,"@",?HOST/binary>>,
+    PeerJid = <<Peer/binary,"@",?HOST/binary>>,
+    {From,To} = case Direction of send -> {OwnJid,PeerJid}; recv -> {PeerJid,OwnJid} end,
+    #archive_msg{us={User,?HOST},id=integer_to_binary(ID),timestamp={0,0,ID},
+                 peer={Peer,?HOST,<<>>},bare_peer={Peer,?HOST,<<>>},origin_id=integer_to_binary(ID),
+                 packet=#xmlel{name = <<"message">>,attrs=[{<<"xmlns">>,<<"jabber:client">>},{<<"from">>,From},{<<"to">>,To}],
+                               children=[#xmlel{name = <<"body">>,children=[{xmlcdata,Body}]},
+                                         #xmlel{name = <<"stanza-id">>,attrs=[{<<"xmlns">>,<<"urn:xmpp:sid:0">>},{<<"by">>,OwnJid},{<<"id">>,integer_to_binary(ID)}]}]}}.
+
+history_cases() ->
+    [?_assertEqual({ok,<<"00100*01234">>,<<"00100">>},mod_voicehost_tenants:canonical_user(<<"00100*01234t">>)),
+     ?_assertEqual(error,mod_voicehost_tenants:canonical_user(<<"10000*12">>)),
+     ?_assertEqual(error,mod_voicehost_tenants:canonical_user(<<"10000*123456">>)),
+     ?_assertEqual(error,mod_voicehost_tenants:canonical_user(<<"10000*213t2">>)),
+     ?_assertEqual(1,mod_voicehost_tenants:migrate_history(<<"10000*213t">>,<<"20000*213">>,?HOST)),
+     ?_assertEqual(1,mod_voicehost_tenants:migrate_history(<<"10000*213t">>,<<"10000*214">>,?HOST)),
+     ?_assertEqual(0,mod_voicehost_tenants:migrate_history(<<"10000*213t">>,<<"10000*213">>,?HOST)),
+     ?_test(begin
+         Target = mnesia:dirty_read(archive_msg,{<<"10000*213">>,?HOST}),
+         ?assertEqual(2,length(Target)),
+         ?assertEqual(4,length(mnesia:dirty_read(archive_msg,{<<"10000*213t">>,?HOST}))),
+         ?assert(lists:all(fun(M) -> M#archive_msg.bare_peer =:= {<<"10000*230">>,?HOST,<<>>} end,Target)),
+         [Incoming] = [M || M <- Target, M#archive_msg.id =:= <<"1">>],
+         ?assertEqual(<<"10000*230@ejabberd.voicehost.io">>,proplists:get_value(<<"from">>,(Incoming#archive_msg.packet)#xmlel.attrs)),
+         ?assertEqual(<<"10000*213@ejabberd.voicehost.io">>,proplists:get_value(<<"to">>,(Incoming#archive_msg.packet)#xmlel.attrs))
+     end),
+     ?_test(begin
+         ?assertEqual(0,mod_voicehost_tenants:migrate_history(<<"10000*213t">>,<<"10000*213">>,?HOST)),
+         ?assertEqual(2,length(mnesia:dirty_read(archive_msg,{<<"10000*213">>,?HOST})))
+     end),
+     ?_test(begin
+         0 = publish(<<"10000*213t">>,<<"10000">>,<<"213t">>,<<"Legacy">>,1),
+         ?assertEqual(1,mod_voicehost_tenants:migrate_history(<<"10000*213t">>,<<"10000*213">>,?HOST)),
+         0 = publish(<<"10000*213t">>,<<"10000">>,<<"213t">>,<<"Legacy">>,0)
+     end),
+     ?_test(begin
+         persistent_term:put(voicehost_test_mam_backend,mod_mam_sql),
+         try ?assertEqual(3,mod_voicehost_tenants:migrate_history(<<"10000*213t">>,<<"10000*213">>,?HOST))
+         after persistent_term:erase(voicehost_test_mam_backend) end
+     end),
+     ?_test(begin
+         0 = publish(<<"10000*216d">>,<<"10000">>,<<"216d">>,<<"Legacy">>,0),
+         0 = publish(<<"10000*216">>,<<"10000">>,<<"216">>,<<"User">>,0),
+         lists:foreach(fun(I) -> mnesia:dirty_write(archive(<<"10000*216d">>,<<"10000*230t">>,1000+I,<<"Message">>,send)) end,lists:seq(1,501)),
+         ?assertEqual(2,mod_voicehost_tenants:migrate_history(<<"10000*216d">>,<<"10000*216">>,?HOST)),
+         ?assertEqual(500,length(mnesia:dirty_read(archive_msg,{<<"10000*216">>,?HOST}))),
+         ?assertEqual(0,mod_voicehost_tenants:migrate_history(<<"10000*216d">>,<<"10000*216">>,?HOST)),
+         ?assertEqual(501,length(mnesia:dirty_read(archive_msg,{<<"10000*216">>,?HOST}))),
+         ?assertEqual(0,mod_voicehost_tenants:migrate_history(<<"10000*216d">>,<<"10000*216">>,?HOST)),
+         ?assertEqual(501,length(mnesia:dirty_read(archive_msg,{<<"10000*216">>,?HOST})))
+     end),
+     ?_test(begin
+         0 = publish(<<"10000*217t">>,<<"10000">>,<<"217t">>,<<"Legacy">>,0),
+         0 = publish(<<"10000*217">>,<<"10000">>,<<"217">>,<<"User">>,0),
+         mnesia:dirty_write(archive(<<"10000*217t">>,<<"10000*230">>,10,<<"Old">>,send)),
+         mnesia:dirty_write(archive(<<"10000*217">>,<<"10000*230">>,10,<<"Different">>,send)),
+         ?assertEqual(1,mod_voicehost_tenants:migrate_history(<<"10000*217t">>,<<"10000*217">>,?HOST)),
+         ?assertEqual(1,length(mnesia:dirty_read(archive_msg,{<<"10000*217">>,?HOST}))),
+         ?assertEqual(1,length(mnesia:dirty_read(archive_msg,{<<"10000*217t">>,?HOST})))
+     end)].
 
 setup() ->
     ok = mnesia:create_schema([node()]),

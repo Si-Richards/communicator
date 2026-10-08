@@ -2,6 +2,11 @@
 # Install only the production module; never copy test stubs into ejabberd.
 set -euo pipefail
 ctl=${1:?Usage: bash install.sh /path/to/the/running/ejabberdctl}
+case ${2:-install} in
+  install) operation=module_install;;
+  --upgrade) operation=module_upgrade;;
+  *) echo 'Second argument must be --upgrade or omitted' >&2; exit 1;;
+esac
 [[ -x "$ctl" ]] || { echo "ejabberdctl is not executable: $ctl" >&2; exit 1; }
 status=$("$ctl" status)
 printf '%s\n' "$status"
@@ -26,5 +31,5 @@ if [[ $(id -u) = 0 ]]; then
 fi
 # Installing compiles against the running server's own headers/libraries.
 # Existing installs must be upgraded explicitly; do not hide install errors.
-"$ctl" module_install mod_voicehost_tenants
-echo 'Module installed. Merge the README configuration and reload ejabberd before rebuilding provisioning.'
+"$ctl" "$operation" mod_voicehost_tenants
+echo 'Module compiled. Merge the README configuration and restart ejabberd before rebuilding provisioning.'

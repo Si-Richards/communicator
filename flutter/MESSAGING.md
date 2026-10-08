@@ -4,8 +4,8 @@ Account directory and extension addressing are implemented on this branch.
 Install/configure the [ejabberd tenant module](../ejabberd-modules/mod_voicehost_tenants/README.md)
 before rebuilding provisioning and installing this app update. Directory lists
 only other active messaging identities in the account; search names/extensions,
-tap a contact, or type its provisioned extension in New conversation. A SIP login
-suffix such as `213t` stays internal when the provisioned extension is `213`.
+tap a contact, or type its provisioned extension in New conversation. SIP endpoint suffixes such as `213T` and `213D` share the canonical messaging
+identity `10000*213@ejabberd.voicehost.io` and one directory entry.
 Cross-account peers are rejected locally and by ejabberd. External invitations
 and group conversations remain a future stage.
 
@@ -13,15 +13,15 @@ Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-soft
 
 ## Deployment order
 
-1. Choose automatic account management or existing manual accounts, and check the archive policy below. [Automatic setup](../provisioning-server/EJABBERD-MANAGEMENT.md) creates/manages accounts on the provisioning server using the full SIP username, for example `10000*207@ejabberd.voicehost.io`. API credentials stay on the server.
-2. Pull `feature/ejabberd-messaging` on the provisioning host and rebuild **both** provisioning containers from `provisioning-server/`:
+1. Choose automatic account management or existing manual accounts, and check the archive policy below. [Automatic setup](../provisioning-server/EJABBERD-MANAGEMENT.md) creates/manages accounts on the provisioning server using the numeric account number and 3–5 digit extension, for example `10000*207@ejabberd.voicehost.io`. API credentials stay on the server.
+2. Pull `feature/ejabberd-messaging` on the provisioning host and rebuild **all three** provisioning services from `provisioning-server/`:
 
    ```bash
-   docker compose up -d --build provisioning provisioning-admin
+   docker compose up -d --build provisioning provisioning-admin messaging-worker
    ```
 
    Retain the current `.env`, database volume, refresh retry key and admin portal configuration. Automatic mode also needs the documented ejabberd environment variables and `messaging-worker` service. The gateway does not need rebuilding. Keep the administration listener restricted as before.
-3. In the provisioning portal, open **Devices → Edit** for the existing iPhone, or create a new activation. Enable messaging and select **Create and manage ejabberd account from the full SIP username** for automatic mode; then save. For existing manual accounts, enter:
+3. In the provisioning portal, open **Devices → Edit** for the existing iPhone, or create a new activation. Enable messaging and select **Create and manage messaging for this account and extension** for automatic mode; then save. For existing manual accounts, enter:
 
    | Field | Example |
    | --- | --- |
@@ -70,7 +70,7 @@ modules:
     request_activates_archiving: false
 ```
 
-Keep the existing archive database backend. A configured SQL backend is preferred for durable history; switching to `db_type: sql` also requires the matching SQL connection/schema setup and migration, so this deployment does not change it automatically. Back up the archive and set retention deliberately. Existing per-user MAM preferences can override `default`; verify those accounts actually archive incoming and outgoing text. Messages from before archiving was enabled cannot be reconstructed.
+Keep the existing archive database backend. **Endpoint-to-canonical history migration currently requires Mnesia archives**; a SQL deployment must arrange archive migration separately before enabling this handover. A configured SQL backend is preferred for durable history; switching to `db_type: sql` also requires the matching SQL connection/schema setup and migration, so this deployment does not change it automatically. Back up the archive and set retention deliberately. Existing per-user MAM preferences can override `default`; verify those accounts actually archive incoming and outgoing text. Messages from before archiving was enabled cannot be reconstructed.
 
 References: [ejabberd mod_mam options](https://docs.ejabberd.im/admin/configuration/modules/#mod-mam), [XEP-0313](https://xmpp.org/extensions/xep-0313.html), [XEP-0359](https://xmpp.org/extensions/xep-0359.html).
 
@@ -101,3 +101,23 @@ Supported: managed login, one-to-one same-domain text, local conversations, arch
 Not yet included: APNs/FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, live message carbons between multiple clients, attachments, groups, typing/read markers or roster/name lookup. Background messages appear on return to the app; enabling `mod_push` alone does not provide notifications.
 
 The protocol tests use a real loopback WebSocket fixture for login, routing, receipts, MAM discovery/paging, duplicate recovery, interrupted pages, expired cursors, failed storage, account changes and lock/logout. Storage tests verify encrypted reopening, account/endpoint isolation and tamper rejection. Provisioning tests verify credential retention/rotation, account-change validation, disablement, portal redaction and validation secrecy. These checks supplement the on-device tests above; this environment cannot build/sign an iOS binary or verify your private account's live archive.
+
+## SIP endpoint handover
+
+Update ejabberd and API permissions first, then provisioning, then the app, following
+[the module rollout guide](../ejabberd-modules/mod_voicehost_tenants/README.md).
+Existing enrolled devices receive a versioned configuration; a fresh activation is
+not required. The server supplies `previous_jids` for the same person's retired SIP
+endpoints. On canonical login, the app merges their encrypted caches, normalizes
+same-account peers and removes duplicates. It ignores other accounts and other
+extensions even if they appear in migration metadata. Successful merges are marked
+in the canonical cache so reconnecting does not repeat them. Separate archive cursors
+are reset for canonical MAM recovery. Original cache files are retained until the
+normal explicit forget/logout flow deletes this identity's caches.
+
+Test `213`, `213T` and `213D` simultaneously, plus 3-, 4- and 5-digit extensions
+including leading zeros. Existing conversations should retain text and delivery
+status, each person should appear once in Directory, and another tenant with the
+same extension must remain inaccessible. Migration requires the updated app;
+older builds can log in after refreshing configuration but do not merge old local
+cache files or normalize historical suffixed peers.

@@ -14,11 +14,13 @@ class ChatHistorySnapshot {
     this.cursor,
     this.oldest,
     this.hasOlder = false,
+    this.migratedAccounts = const [],
   });
   final List<ChatMessage> messages;
   final String? cursor;
   final String? oldest;
   final bool hasOlder;
+  final List<String> migratedAccounts;
 
   Map<String, dynamic> toJson() => {
     'version': 1,
@@ -26,6 +28,7 @@ class ChatHistorySnapshot {
     'cursor': cursor,
     'oldest': oldest,
     'has_older': hasOlder,
+    'migrated_accounts': migratedAccounts,
   };
 
   factory ChatHistorySnapshot.fromJson(Map<String, dynamic> json) {
@@ -46,6 +49,12 @@ class ChatHistorySnapshot {
       cursor: json['cursor'] as String?,
       oldest: json['oldest'] as String?,
       hasOlder: json['has_older'] == true,
+      migratedAccounts: json['migrated_accounts'] is List
+          ? (json['migrated_accounts'] as List)
+                .take(128)
+                .whereType<String>()
+                .toList(growable: false)
+          : const [],
     );
   }
 }
