@@ -178,6 +178,20 @@ import flutter_callkit_incoming
             switch call.method {
             case "getNotificationToken":
                 result(UserDefaults.standard.string(forKey: self.notificationTokenKey))
+            case "getMessagingRegistration":
+                UNUserNotificationCenter.current().getNotificationSettings { settings in
+                    let allowed: Bool
+                    if #available(iOS 14.0, *) {
+                        allowed = settings.authorizationStatus == .authorized ||
+                            settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral
+                    } else {
+                        allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+                    }
+                    DispatchQueue.main.async {
+                        result(["token": allowed ? (UserDefaults.standard.string(forKey: self.notificationTokenKey) ?? "") : "",
+                                "environment": self.notificationEnvironment()])
+                    }
+                }
             case "drainPendingActions":
                 result(self.drainPendingNotificationActions())
             default:
@@ -191,6 +205,34 @@ import flutter_callkit_incoming
         recordNativeLog("Native CallKit recovery channel ready")
         recordNativeLog("Native contacts channel ready")
         recordNativeLog("Native notification channel ready")
+    }
+
+    private func notificationEnvironment() -> String {
+        // Match the signing profile, including development-signed Release builds.
+        // App Store/TestFlight apps have no embedded development profile.
+        if let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+           let data = try? Foundation.Data(contentsOf: url),
+           let text = String(data: data, encoding: .isoLatin1),
+           let start = text.range(of: "<plist"), let end = text.range(of: "</plist>"),
+           start.lowerBound < end.upperBound,
+           let xml = String(text[start.lowerBound..<end.upperBound]).data(using: .utf8),
+           let plist = try? PropertyListSerialization.propertyList(from: xml, options: [], format: nil),
+           let profile = plist as? [String: Any],
+           let entitlements = profile["Entitlements"] as? [String: Any],
+           let environment = entitlements["aps-environment"] as? String {
+            return environment == "development" ? "sandbox" : "production"
+        }
+        return "production"
+    }
+
+    private func messagingNotification(_ userInfo: [AnyHashable: Any]) -> [String: String]? {
+        guard userInfo["type"] as? String == "messaging",
+              let owner = userInfo["owner_jid"] as? String,
+              let peer = userInfo["peer_jid"] as? String,
+              let event = userInfo["event_id"] as? String,
+              owner.count <= 320, peer.count <= 320, event.count == 64 else { return nil }
+        // Dart validates tenant/account membership after a provisioning refresh.
+        return ["type": "messaging", "owner_jid": owner, "peer_jid": peer, "event_id": event]
     }
 
     private func configureUserNotifications(_ application: UIApplication) {
@@ -251,6 +293,11 @@ import flutter_callkit_incoming
                 arguments: "voicemail"
             )
         }
+        if let message = messagingNotification(userInfo) {
+            notificationChannel?.invokeMethod("notificationReceived", arguments: message)
+            completionHandler([]) // Live chat/MAM handles foreground messages.
+            return
+        }
         completionHandler([.banner, .sound, .badge])
     }
 
@@ -260,6 +307,15 @@ import flutter_callkit_incoming
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+        if let message = messagingNotification(userInfo) {
+            if let data = try? JSONSerialization.data(withJSONObject: message),
+               let action = String(data: data, encoding: .utf8) {
+                persistPendingNotificationAction(action)
+            }
+            notificationChannel?.invokeMethod("notificationTapped", arguments: message)
+            completionHandler()
+            return
+        }
         if userInfo["type"] as? String == "voicemail" {
             persistPendingNotificationAction("voicemail")
             notificationChannel?.invokeMethod(

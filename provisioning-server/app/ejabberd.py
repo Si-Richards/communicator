@@ -23,7 +23,7 @@ class EjabberdClient:
     def close(self):
         self.client.close()
 
-    def call(self, command, **arguments):
+    def _request(self, command, **arguments):
         try:
             response = self.client.post(f"{self.url}/{command}", json=arguments)
             response.raise_for_status()
@@ -38,6 +38,10 @@ class EjabberdClient:
             ) from None
         except ValueError:
             raise EjabberdError(f"ejabberd {command} returned invalid JSON.") from None
+        return result
+
+    def call(self, command, **args):
+        result = self._request(command, **args)
         if command in {"check_account", "check_password"}:
             if type(result) is int and result in {0, 1}:
                 return result == 0
@@ -107,3 +111,21 @@ class EjabberdClient:
         if old_host != host:
             raise EjabberdError("Messaging archive migration cannot cross hosts.")
         return self.call("voicehost_migrate_history", old_user=old_user, user=user, host=host)
+
+    def push_events(self, host, limit=100):
+        result = self._request("voicehost_push_events", host=host, limit=limit)
+        if not isinstance(result, list) or len(result) > limit:
+            raise EjabberdError("ejabberd push event response was invalid.")
+        import re
+        for event in result:
+            if (not isinstance(event, dict) or set(event) != {"id", "node", "jid", "peer", "created"}
+                    or not all(isinstance(event[k], str) for k in ("id", "node", "jid", "peer"))
+                    or not re.fullmatch(r"[a-f0-9]{64}", event["id"])
+                    or not re.fullmatch(r"vh-[a-f0-9]{64}", event["node"])
+                    or type(event["created"]) is not int
+                    or len(event["jid"]) > 320 or len(event["peer"]) > 320):
+                raise EjabberdError("ejabberd push event response was invalid.")
+        return result
+
+    def acknowledge_push(self, host, event_id):
+        return self.call("voicehost_ack_push", host=host, id=event_id)

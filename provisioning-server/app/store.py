@@ -119,6 +119,28 @@ class Store:
                     next_retry_at TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS messaging_push_devices (
+                    device_id TEXT PRIMARY KEY,
+                    jid TEXT NOT NULL,
+                    node TEXT NOT NULL UNIQUE,
+                    token TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(token, environment)
+                );
+                CREATE TABLE IF NOT EXISTS messaging_push_jobs (
+                    event_id TEXT PRIMARY KEY,
+                    node TEXT NOT NULL,
+                    jid TEXT NOT NULL,
+                    peer TEXT NOT NULL,
+                    created INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_retry INTEGER NOT NULL DEFAULT 0,
+                    error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS messaging_push_due
+                    ON messaging_push_jobs(status,next_retry,created);
                 CREATE TABLE IF NOT EXISTS messaging_aliases (
                     old_jid TEXT PRIMARY KEY,
                     canonical_jid TEXT NOT NULL,
@@ -456,6 +478,13 @@ class Store:
                 """,
                 (version, json.dumps(updated), iso(now), device_id),
             )
+            messaging = updated.get("messaging") or {}
+            if (not messaging.get("enabled") or not messaging.get("managed") or not messaging.get("ready")
+                    or updated.get("features", {}).get("messaging") is False):
+                conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device_id,))
+            else:
+                conn.execute("DELETE FROM messaging_push_devices WHERE device_id=? AND jid!=?",
+                             (device_id, messaging.get("jid", "")))
             conn.commit()
         return self.get_device(device_id)
 
@@ -577,6 +606,10 @@ class Store:
                 """,
                 (state, iso(now), device_id),
             )
+            if state != "active":
+                # A later unlock must obtain a fresh opaque node, so old queued
+                # events cannot become eligible again after a brief lock.
+                conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device_id,))
             if state in {"revoked", "retired"}:
                 conn.execute(
                     """
@@ -771,6 +804,7 @@ class Store:
     def revoke_device_tokens(self, device_id: str) -> None:
         now = iso(utcnow())
         with self._connect() as conn:
+            conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device_id,))
             conn.execute(
                 """
                 UPDATE access_tokens SET revoked_at = ?

@@ -12,6 +12,70 @@ isolation_test_() ->
 history_migration_test_() ->
     {setup, fun history_setup/0, fun cleanup/1, fun(_) -> history_cases() end}.
 
+push_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) -> push_cases() end}.
+
+push_iq(Node) ->
+    #iq{type=set,from=jid(<<>>),to=jid(<<>>),
+        sub_els=[#pubsub{publish=#ps_publish{node=Node}}]}.
+
+push_cases() ->
+    Node = <<"vh-",(binary:copy(<<"a">>,64))/binary>>,
+    Node2 = <<"vh-",(binary:copy(<<"b">>,64))/binary>>,
+    IQ = push_iq(Node),
+    A = jid(<<"10000*207">>), B = jid(<<"10000*208">>),
+    Message = #message{type=chat,from=A,to=B,id = <<"message-1">>,
+                       body=[#text{data = <<"Private text never enters the push queue">>}]},
+    [?_test(begin
+         %% The authenticated client enables push on its own JID, never a service bypass.
+         Enable = #iq{type=set,from=B,to=B,sub_els=[#push_enable{jid=jid(<<>>),node=Node}]},
+         ?assertEqual(Enable,mod_voicehost_tenants:filter_packet(Enable)),
+         ?assertEqual(drop,mod_voicehost_tenants:push_send(IQ,Message)),
+         ?assertEqual(drop,mod_voicehost_tenants:push_send(IQ,Message)),
+         [{ID,Node,Owner,Peer,Created}] = mod_voicehost_tenants:push_events(?HOST,100),
+         ?assertEqual(64,byte_size(ID)),
+         ?assertEqual(<<"10000*208@ejabberd.voicehost.io">>,Owner),
+         ?assertEqual(<<"10000*207@ejabberd.voicehost.io">>,Peer),
+         ?assert(is_integer(Created)),
+         ?assertEqual(1,mnesia:table_info(voicehost_push_event,size)),
+         ?assertEqual(drop,mod_voicehost_tenants:push_send(push_iq(Node2),Message)),
+         ?assertEqual(2,length(mod_voicehost_tenants:push_events(?HOST,100))),
+         ?assertEqual(1,length(mod_voicehost_tenants:push_events(?HOST,1))),
+         ?assertEqual(0,mod_voicehost_tenants:ack_push(?HOST,ID)),
+         ?assertEqual(0,mod_voicehost_tenants:ack_push(?HOST,ID)),
+         ?assertEqual(1,length(mod_voicehost_tenants:push_events(?HOST,100)))
+     end),
+     ?_test(begin
+         Before = mod_voicehost_tenants:push_events(?HOST,100),
+         Invalid = [Message#message{to=jid(<<"20000*207">>)},
+                    Message#message{from=jid(<<"10000*209">>)},
+                    Message#message{from=jid(<<"10000*999">>)},
+                    Message#message{from=jid(<<"user">>,<<"foreign.example">>)},
+                    Message#message{to=A},Message#message{body=[]},
+                    Message#message{body=[#text{data = <<>>}]},Message#message{type=groupchat}],
+         lists:foreach(fun(M) -> ?assertEqual(drop,mod_voicehost_tenants:push_send(IQ,M)) end,Invalid),
+         ?assertEqual(Before,mod_voicehost_tenants:push_events(?HOST,100))
+     end),
+     ?_test(begin
+         %% Never intercept other push providers, arbitrary nodes, or client-generated IQs.
+         Foreign = IQ#iq{to=jid(<<>>,<<"push.example">>)},
+         Client = IQ#iq{from=B},
+         Other = push_iq(<<"not-a-managed-node">>),
+         ?assertEqual(Foreign,mod_voicehost_tenants:push_send(Foreign,Message)),
+         ?assertEqual(Client,mod_voicehost_tenants:push_send(Client,Message)),
+         ?assertEqual(Other,mod_voicehost_tenants:push_send(Other,Message)),
+         ?assertError(invalid_push_request,mod_voicehost_tenants:push_events(?HOST,101)),
+         ?assertError(invalid_push_request,mod_voicehost_tenants:push_events(?HOST,0)),
+         ?assertEqual(1,mod_voicehost_tenants:ack_push(<<"foreign.example">>,<<"id">>))
+     end),
+     ?_test(begin
+         [{ID,_,_,_,_}] = mod_voicehost_tenants:push_events(?HOST,100),
+         [Row] = mnesia:dirty_read(voicehost_push_event,ID),
+         mnesia:dirty_write(setelement(7,Row,erlang:system_time(second)-901)),
+         ?assertEqual([],mod_voicehost_tenants:push_events(?HOST,100)),
+         ?assertEqual([],mnesia:dirty_read(voicehost_push_event,ID))
+     end)].
+
 history_setup() ->
     ok = mnesia:create_schema([node()]),
     ok = application:start(mnesia),

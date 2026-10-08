@@ -27,7 +27,7 @@ class MessagesScreen extends StatelessWidget {
   void _openChat(BuildContext context, String peer) =>
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => _ChatScreen(messaging: messaging, peer: peer),
+          builder: (_) => MessagingChatScreen(messaging: messaging, peer: peer),
         ),
       );
 
@@ -163,9 +163,8 @@ class MessagesScreen extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 trailing: Text(
-                                  TimeOfDay.fromDateTime(
-                                    message.timestamp,
-                                  ).format(context),
+                                  TimeOfDay.fromDateTime(message.timestamp)
+                                      .format(context),
                                 ),
                                 onTap: () => _openChat(context, message.peer),
                               );
@@ -323,15 +322,19 @@ class _AccountDirectoryState extends State<_AccountDirectory> {
   }
 }
 
-class _ChatScreen extends StatefulWidget {
-  const _ChatScreen({required this.messaging, required this.peer});
+class MessagingChatScreen extends StatefulWidget {
+  const MessagingChatScreen({
+    super.key,
+    required this.messaging,
+    required this.peer,
+  });
   final XmppService messaging;
   final String peer;
   @override
-  State<_ChatScreen> createState() => _ChatScreenState();
+  State<MessagingChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<_ChatScreen> {
+class _ChatScreenState extends State<MessagingChatScreen> {
   final _text = TextEditingController();
   @override
   void dispose() {

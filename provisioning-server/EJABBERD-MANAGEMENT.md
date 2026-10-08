@@ -1,5 +1,7 @@
 # Automatic ejabberd account lifecycle
 
+For standard iOS chat alerts, follow the [APNs notification rollout guide](MESSAGING-NOTIFICATIONS.md).
+
 For account isolation, account-only rosters and extension-only addressing, follow
 [the tenant-module rollout guide](../ejabberd-modules/mod_voicehost_tenants/README.md)
 **before rebuilding these services**. The updated worker requires the installed

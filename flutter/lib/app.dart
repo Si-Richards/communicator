@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
 import 'controllers/phone_controller.dart';
 import 'controllers/provisioning_controller.dart';
+import 'models/provisioning.dart';
 import 'services/mobile_call_coordinator.dart';
 import 'services/xmpp_service.dart';
 import 'ui/call_history_screen.dart';
@@ -111,6 +114,13 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   final _messaging = XmppService();
+  Timer? _pushTimer;
+  bool _pushRegistering = false;
+  String? _pushIdentity;
+  DateTime _nextPushAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+  MessagingNotification? _pendingMessageTap;
+  bool _openingMessageTap = false;
+  final Set<String> _openedNotificationIds = {};
 
   @override
   void initState() {
@@ -124,6 +134,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     widget.provisioning.addListener(_syncMessagingAccess);
     _syncMessagingAccess();
     widget.mobileCalls.addListener(_handleNotificationNavigation);
+    widget.mobileCalls.addListener(_syncPushRegistration);
+    _pushTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _syncPushRegistration(),
+    );
+
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _handleNotificationNavigation(),
     );
@@ -135,6 +151,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     widget.provisioning.removeListener(_syncMessagingAccess);
     _messaging.dispose();
     widget.mobileCalls.removeListener(_handleNotificationNavigation);
+    widget.mobileCalls.removeListener(_syncPushRegistration);
+    _pushTimer?.cancel();
     super.dispose();
   }
 
@@ -153,6 +171,56 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           ? null
           : configuration?.messaging,
     );
+    if (!provisioning.canUseApp || configuration?.messaging?.enabled != true) {
+      _messaging.configurePush(null);
+    }
+    _syncPushRegistration();
+    if (_pendingMessageTap != null && !_openingMessageTap) {
+      unawaited(_openMessageNotification());
+    }
+  }
+
+  void _syncPushRegistration() {
+    final provisioning = widget.provisioning;
+    final identity =
+        '${provisioning.deviceId}|${provisioning.configuration?.messaging?.jid}|${widget.mobileCalls.notificationPushToken}';
+    if (identity != _pushIdentity) {
+      _pushIdentity = identity;
+      _nextPushAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+    }
+    if (!mounted ||
+        _pushRegistering ||
+        provisioning.busy ||
+        !provisioning.canUseApp ||
+        defaultTargetPlatform != TargetPlatform.iOS ||
+        provisioning.configuration?.features['messaging'] == false ||
+        provisioning.configuration?.messaging?.enabled != true ||
+        provisioning.configuration?.messaging?.ready != true ||
+        DateTime.now().isBefore(_nextPushAttempt)) {
+      return;
+    }
+    final device = provisioning.deviceId;
+    final jid = provisioning.configuration?.messaging?.jid;
+    _pushRegistering = true;
+    _nextPushAttempt = DateTime.now().add(const Duration(seconds: 60));
+    unawaited(() async {
+      try {
+        final subscription = await provisioning.registerMessagingPush();
+        if (!mounted ||
+            !provisioning.canUseApp ||
+            provisioning.deviceId != device ||
+            provisioning.configuration?.messaging?.jid != jid) {
+          return;
+        }
+        _messaging.configurePush(subscription);
+      } catch (_) {
+        debugPrint(
+          '[VoiceHost Messaging] notification registration will retry',
+        );
+      } finally {
+        _pushRegistering = false;
+      }
+    }());
   }
 
   @override
@@ -168,11 +236,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void _goToPhone() => setState(() => _selectedIndex = 0);
 
   void _handleNotificationNavigation() {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
     final target = widget.mobileCalls.consumeNavigationTarget();
-    if (target != 'voicemail' || !widget.provisioning.canUseApp) return;
+    if (target == 'messaging') {
+      _pendingMessageTap = widget.mobileCalls.consumeMessagingNotification();
+      unawaited(_openMessageNotification());
+      return;
+    }
+    if (target != 'voicemail' || !widget.provisioning.canUseApp) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => VoicemailScreen(
@@ -188,6 +267,58 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         ),
       );
     });
+  }
+
+  Future<void> _openMessageNotification() async {
+    final tap = _pendingMessageTap;
+    final provisioning = widget.provisioning;
+    if (tap == null ||
+        _openingMessageTap ||
+        provisioning.busy ||
+        !provisioning.initialized ||
+        !provisioning.isEnrolled) {
+      return;
+    }
+    _openingMessageTap = true;
+    try {
+      await provisioning.checkIn();
+      if (!mounted || provisioning.error != null) {
+        return;
+      }
+      final configuration = provisioning.configuration;
+      if (!provisioning.canUseApp ||
+          configuration?.features['messaging'] == false ||
+          configuration?.messaging?.enabled != true ||
+          configuration?.messaging?.jid != tap.ownerJid) {
+        _pendingMessageTap = null;
+        return;
+      }
+      _syncMessagingAccess();
+      final peer = _messaging.recipientJid(tap.peerJid);
+      _pendingMessageTap = null;
+      if (!_openedNotificationIds.add(tap.eventId)) {
+        return;
+      }
+      if (_openedNotificationIds.length > 20) {
+        _openedNotificationIds.remove(_openedNotificationIds.first);
+      }
+      setState(() => _selectedIndex = 3);
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      unawaited(
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                MessagingChatScreen(messaging: _messaging, peer: peer),
+          ),
+        ),
+      );
+    } on ArgumentError {
+      _pendingMessageTap = null;
+    } catch (_) {
+      // Preserve the pending tap for the next successful provisioning check.
+    } finally {
+      _openingMessageTap = false;
+    }
   }
 
   @override
@@ -295,10 +426,8 @@ class _ProvisioningLoadingScreen extends StatelessWidget {
                 const SizedBox(height: 24),
                 Text(
                   brandingName,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: navy,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.headlineMedium
+                      ?.copyWith(color: navy, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 24),
                 const CircularProgressIndicator(),
@@ -352,10 +481,8 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                 Text(
                   'App locked',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: navy,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.headlineMedium
+                      ?.copyWith(color: navy, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -363,9 +490,8 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                       ? 'This device needs to be re-activated by your administrator.'
                       : 'This app is locked. Please contact your administrator.',
                   textAlign: TextAlign.center,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyLarge?.copyWith(color: navy, height: 1.45),
+                  style: Theme.of(context).textTheme.bodyLarge
+                      ?.copyWith(color: navy, height: 1.45),
                 ),
                 if (provisioning.credentialsInvalid) ...[
                   const SizedBox(height: 24),

@@ -1,5 +1,7 @@
 # VoiceHost account isolation and extension directory
 
+For standard iOS chat alerts, follow the [APNs notification rollout guide](../../provisioning-server/MESSAGING-NOTIFICATIONS.md).
+
 For ejabberd 26.09. Install this module on **149.19.177.17 before updating the
 provisioning containers**. It is the enforcement boundary; the Flutter app alone
 cannot prevent cross-account traffic from another XMPP client.

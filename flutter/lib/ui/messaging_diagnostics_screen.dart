@@ -62,8 +62,7 @@ class _MessagingDiagnosticsScreenState
       setState(() => _formError = null);
     } on ArgumentError {
       setState(
-        () => _formError =
-            'Enter an extension in your account and a message of up to 10,000 characters.',
+        () => _formError = 'Enter an extension in your account and a message of up to 10,000 characters.',
       );
     } on StateError {
       setState(() => _formError = 'Connect messaging before sending.');
@@ -107,7 +106,7 @@ class _MessagingDiagnosticsScreenState
               const Text(
                 'Managed accounts connect through provisioning. Manual test login is available '
                 'when managed messaging is disabled. Conversations are encrypted on this device; '
-                'server archive recovery runs after login. Background notifications are not enabled yet.',
+                'server archive recovery runs after login. Standard iOS message alerts use the provisioning notification worker.',
               ),
               const SizedBox(height: 16),
               Card(
@@ -126,6 +125,10 @@ class _MessagingDiagnosticsScreenState
                           color: service.online ? Colors.green.shade700 : null,
                           fontWeight: FontWeight.bold,
                         ),
+                      ),
+                      Text(
+                        service.notificationStatus,
+                        key: const Key('xmpp-push-status'),
                       ),
                       if (service.jid != null) SelectableText(service.jid!),
                       if (service.error != null) ...[

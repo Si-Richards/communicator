@@ -70,6 +70,90 @@ void main() {
     expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
   });
 
+  const pushOwner = '10000*207@ejabberd.voicehost.io';
+  MessagingPushSubscription push(
+    String character, {
+    String owner = pushOwner,
+  }) => MessagingPushSubscription(
+    ownerJid: owner,
+    jid: 'ejabberd.voicehost.io',
+    node: 'vh-${List.filled(64, character).join()}',
+  );
+
+  void managed(XmppService service) => service.configureManaged(
+    const MessagingConfiguration(
+      enabled: true,
+      jid: pushOwner,
+      password: 'private-test-password',
+      websocket: 'wss://ejabberd.voicehost.io/websocket',
+    ),
+  );
+
+  List<XmlElement> pushRequests(String action) => server.received
+      .where(
+        (stanza) =>
+            stanza.name.local == 'iq' &&
+            stanza.getElement(action, namespace: 'urn:xmpp:push:0') != null,
+      )
+      .toList();
+
+  test(
+    'managed device enables standard push on its own JID and rotates its node',
+    () async {
+      final alice = client();
+      managed(alice);
+      alice.configurePush(push('a'));
+      await _until(
+        () => alice.notificationStatus == 'Notifications registered',
+      );
+      final first = pushRequests('enable').single;
+      expect(first.getAttribute('to'), pushOwner);
+      expect(
+        first
+            .getElement('enable', namespace: 'urn:xmpp:push:0')!
+            .getAttribute('jid'),
+        'ejabberd.voicehost.io',
+      );
+      expect(first.toXmlString(), isNot(contains('private-test-password')));
+      alice.configurePush(push('b'));
+      await _until(
+        () =>
+            pushRequests('enable').length == 2 &&
+            alice.notificationStatus == 'Notifications registered',
+      );
+      expect(
+        pushRequests('disable').single
+            .getElement('disable', namespace: 'urn:xmpp:push:0')!
+            .getAttribute('node'),
+        push('a').node,
+      );
+      alice.configurePush(null);
+      await _until(() => pushRequests('disable').length == 2);
+    },
+  );
+
+  test('push permission failure leaves chat online and reconnect retries registration', () async {
+    server.rejectPush = true;
+    final alice = client();
+    managed(alice);
+    alice.configurePush(push('a'));
+    await _until(() => alice.notificationStatus.contains('failed'));
+    expect(alice.online, isTrue);
+    server.rejectPush = false;
+    await alice.reconnect();
+    await _until(() => alice.notificationStatus == 'Notifications registered');
+    expect(pushRequests('enable').length, 2);
+  });
+
+  test('foreign push ownership never produces an enable request', () async {
+    final alice = client();
+    managed(alice);
+    alice.configurePush(push('a', owner: '20000*207@ejabberd.voicehost.io'));
+    await _until(() => alice.online);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(pushRequests('enable'), isEmpty);
+  });
+
   test('extensions resolve within the account and cross-account traffic is rejected', () async {
     final alice = client();
     final bob = client();
@@ -719,6 +803,7 @@ class _XmppServer {
   bool rejectAuth = false;
   bool requireSession = false;
   bool wrongIdentity = false;
+  bool rejectPush = false;
   int sessionRequests = 0;
   Duration upgradeDelay = Duration.zero;
   Uri get uri => Uri.parse('ws://127.0.0.1:${http.port}/websocket');
@@ -840,6 +925,17 @@ class _XmppServer {
               '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
               '<query xmlns="http://jabber.org/protocol/disco#info">'
               '${mamSupported ? '<feature var="urn:xmpp:mam:2"/>' : ''}</query></iq>',
+            );
+          } else if (stanza.getElement(
+                    'enable',
+                    namespace: 'urn:xmpp:push:0',
+                  ) !=
+                  null ||
+              stanza.getElement('disable', namespace: 'urn:xmpp:push:0') !=
+                  null) {
+            _sendFixture(
+              socket,
+              '<iq xmlns="jabber:client" type="${rejectPush ? 'error' : 'result'}" id="${stanza.getAttribute('id')}"/>',
             );
           } else if (stanza.getElement('query', namespace: 'urn:xmpp:mam:2') !=
               null) {

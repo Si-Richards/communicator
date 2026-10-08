@@ -481,3 +481,61 @@ class MessagingConfiguration {
     if (enabled && previousJids.isNotEmpty) 'previous_jids': previousJids,
   };
 }
+
+class MessagingPushSubscription {
+  const MessagingPushSubscription({
+    required this.ownerJid,
+    required this.jid,
+    required this.node,
+  });
+  final String ownerJid;
+  final String jid;
+  final String node;
+
+  static MessagingPushSubscription? fromJson(Map<String, dynamic> json) {
+    if (json['enabled'] != true) {
+      return null;
+    }
+    final owner = json['owner_jid']?.toString() ?? '';
+    final service = json['jid']?.toString() ?? '';
+    final node = json['node']?.toString() ?? '';
+    if (!RegExp(r'^[0-9]+\*[0-9]{3,5}@[a-z0-9.-]+$').hasMatch(owner) ||
+        service != owner.split('@').last ||
+        !RegExp(r'^vh-[a-f0-9]{64}$').hasMatch(node)) {
+      throw const FormatException('Invalid messaging push subscription.');
+    }
+    return MessagingPushSubscription(ownerJid: owner, jid: service, node: node);
+  }
+}
+
+class MessagingNotification {
+  const MessagingNotification({
+    required this.ownerJid,
+    required this.peerJid,
+    required this.eventId,
+  });
+  final String ownerJid;
+  final String peerJid;
+  final String eventId;
+
+  static MessagingNotification? fromJson(Map<dynamic, dynamic> json) {
+    if (json['type'] != 'messaging') {
+      return null;
+    }
+    final owner = json['owner_jid']?.toString() ?? '';
+    final peer = json['peer_jid']?.toString() ?? '';
+    final id = json['event_id']?.toString() ?? '';
+    final jidPattern = RegExp(r'^([0-9]+)\*[0-9]{3,5}@([a-z0-9.-]+)$');
+    final ownMatch = jidPattern.firstMatch(owner);
+    final peerMatch = jidPattern.firstMatch(peer);
+    if (ownMatch == null ||
+        peerMatch == null ||
+        owner == peer ||
+        ownMatch.group(1) != peerMatch.group(1) ||
+        ownMatch.group(2) != peerMatch.group(2) ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(id)) {
+      return null;
+    }
+    return MessagingNotification(ownerJid: owner, peerJid: peer, eventId: id);
+  }
+}

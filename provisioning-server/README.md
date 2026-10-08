@@ -1,5 +1,7 @@
 # VoiceHost Provisioning Server
 
+For standard iOS chat alerts, follow the [APNs notification rollout guide](MESSAGING-NOTIFICATIONS.md).
+
 Standalone reference/staging implementation of the VoiceHost endpoint provisioning API. Configuration is **VoiceHost managed only**; the Flutter settings screen no longer offers manual SIP or Janus editing.
 
 This service is intentionally separate from RANDY. It owns activation, device identity, device state and managed endpoint configuration. RANDY remains the mobile telephony runtime.

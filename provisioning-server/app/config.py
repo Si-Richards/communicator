@@ -37,5 +37,11 @@ class Settings:
     ejabberd_api_username: str = os.getenv("EJABBERD_API_USERNAME", "")
     ejabberd_api_password: str = os.getenv("EJABBERD_API_PASSWORD", "")
 
+    messaging_push_enabled: bool = os.getenv("MESSAGING_PUSH_ENABLED", "false").lower() == "true"
+    apns_team_id: str = os.getenv("MESSAGING_APNS_TEAM_ID", "")
+    apns_key_id: str = os.getenv("MESSAGING_APNS_KEY_ID", "")
+    apns_bundle_id: str = os.getenv("MESSAGING_APNS_BUNDLE_ID", "")
+    apns_key_path: str = os.getenv("MESSAGING_APNS_KEY_PATH", "/run/secrets/messaging-apns.p8")
+
 
 settings = Settings()

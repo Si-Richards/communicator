@@ -54,6 +54,18 @@ class PushTokenUpdateRequest(BaseModel):
     tokens: list[PushToken] = Field(min_length=1)
 
 
+class MessagingPushRegistration(BaseModel):
+    model_config = {"extra": "forbid"}
+    token: str = Field(pattern=r"^[a-fA-F0-9]{32,512}$")
+    environment: Literal["sandbox", "production"]
+
+    @model_validator(mode="after")
+    def valid_token(self):
+        if len(self.token) % 2:
+            raise ValueError("APNs token must contain whole bytes")
+        return self
+
+
 class LogoutRequest(BaseModel):
     reason: Literal["user_requested", "reprovision", "other"] = "user_requested"
 

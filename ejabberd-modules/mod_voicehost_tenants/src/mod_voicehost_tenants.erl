@@ -11,10 +11,11 @@
 -export([start/2, stop/1, reload/3, depends/2, mod_options/1, mod_doc/0,
          filter_packet/1, user_send/1, user_receive/1, roster_get/3,
          roster_info/4, set_identity/7, valid_identity/3, contacts/2,
-         migrate_history/3, canonical_user/1]).
+         migrate_history/3, canonical_user/1, push_send/2, push_events/2, ack_push/2]).
 
 -record(voicehost_identity, {key, account, extension, address, name, enabled = false}).
 -record(voicehost_history_copy, {key, last_id = 0, done = false}).
+-record(voicehost_push_event, {key, host, node, jid, peer, created}).
 
 start(_Host, _Opts) ->
     case mnesia:create_table(voicehost_identity,
@@ -34,16 +35,25 @@ start(_Host, _Opts) ->
         HistoryError -> error({voicehost_history_copy_table, HistoryError})
     end,
     ok = mnesia:wait_for_tables([voicehost_history_copy], 30000),
+    case mnesia:create_table(voicehost_push_event,
+                            [{disc_copies, [node()]},
+                             {attributes, record_info(fields, voicehost_push_event)}]) of
+        {atomic, ok} -> ok;
+        {aborted, {already_exists, voicehost_push_event}} -> ok;
+        PushError -> error({voicehost_push_event_table, PushError})
+    end,
+    ok = mnesia:wait_for_tables([voicehost_push_event], 30000),
     {ok, [{hook, filter_packet, filter_packet, 10, global},
           {hook, user_send_packet, user_send, 10},
           {hook, user_receive_packet, user_receive, 10},
           {hook, roster_get, roster_get, 100},
           {hook, roster_get_jid_info, roster_info, 100},
+          {hook, push_send_notification, push_send, 10},
           {commands, commands()}]}.
 
 stop(_Host) -> ok.
 reload(_Host, _NewOpts, _OldOpts) -> ok.
-depends(_Host, _Opts) -> [{mod_roster, hard}].
+depends(_Host, _Opts) -> [{mod_roster, hard}, {mod_push, soft}].
 mod_options(_Host) -> [].
 mod_doc() -> #{desc => [<<"Account isolation and provisioned account roster for VoiceHost.">>]}.
 
@@ -60,7 +70,96 @@ commands() ->
                         desc = "Copy retired SIP endpoint history into its canonical messaging user",
                         module = ?MODULE, function = migrate_history,
                         args = [{old_user, binary}, {user, binary}, {host, binary}],
-                        result = {res, integer}}].
+                        result = {res, integer}},
+     #ejabberd_commands{name = voicehost_push_events, tags = [voicehost], version = 2,
+                        desc = "Read pending device-bound messaging push events",
+                        module = ?MODULE, function = push_events,
+                        args = [{host, binary}, {limit, integer}],
+                        result = {events, {list, {event, {tuple, [{id, binary}, {node, binary},
+                                  {jid, binary}, {peer, binary}, {created, integer}]}}}}},
+     #ejabberd_commands{name = voicehost_ack_push, tags = [voicehost], version = 2,
+                        desc = "Acknowledge a durably accepted messaging push event",
+                        module = ?MODULE, function = ack_push,
+                        args = [{host, binary}, {id, binary}], result = {res, integer}}].
+
+%% mod_push produces this server-originated PubSub IQ per registered device.
+%% Handle only our opaque provisioning nodes; no public component or webhook.
+push_send(#iq{from=#jid{luser = <<>>,lserver=Host},
+              to=#jid{luser = <<>>,lserver=Host,lresource = <<>>},
+              sub_els=[#pubsub{publish=#ps_publish{node=Node}}]} = IQ, Packet) ->
+    case managed(Host) andalso valid_push_node(Node) of
+        true -> enqueue_push(Node, Host, Packet), drop;
+        false -> IQ
+    end;
+push_send(IQ, _) -> IQ.
+
+valid_push_node(Node) when is_binary(Node) ->
+    re:run(Node, <<"\\Avh-[a-f0-9]{64}\\z">>, [{capture,none}]) =:= match;
+valid_push_node(_) -> false.
+
+enqueue_push(Node, Host, #message{type=chat,from=From,to=To,body=Body,id=ID,sub_els=Els} = Packet) ->
+    case allowed(Packet) andalso lists:any(fun(#text{data=D}) -> D =/= <<>> end,Body) andalso
+         From#jid.lserver =:= Host andalso To#jid.lserver =:= Host andalso
+         From#jid.luser =/= To#jid.luser of
+        true ->
+            %% Prefer trusted archive IDs. The client message ID also deduplicates
+            %% repeated hook invocations; missing IDs get a fresh server nonce.
+            SIDs = [SID || #stanza_id{id=SID,by=#jid{lserver=H}} <- Els, H =:= Host],
+            Stamp = case {ID,SIDs} of {<<>>,[]} -> crypto:strong_rand_bytes(16); _ -> {ID,SIDs} end,
+            Key = hex(crypto:hash(sha256,term_to_binary({Node,jid:remove_resource(From),jid:remove_resource(To),Stamp}))),
+            Event = #voicehost_push_event{key=Key,host=Host,node=Node,
+                        jid=jid:encode(jid:make(To#jid.luser,Host)),
+                        peer=jid:encode(jid:make(From#jid.luser,Host)),created=erlang:system_time(second)},
+            case mnesia:transaction(fun() ->
+                mnesia:lock({table,voicehost_push_event},write),
+                case mnesia:read(voicehost_push_event,Key) of
+                    [] -> case mnesia:table_info(voicehost_push_event,size) < 50000 of
+                              true -> mnesia:write(Event);
+                              false -> mnesia:abort(push_queue_full)
+                          end;
+                    [_] -> ok
+                end
+            end) of
+                {atomic,ok} -> ok;
+                _ -> error_logger:warning_msg("VoiceHost push queue unavailable; message archives remain authoritative~n")
+            end;
+        false -> ok
+    end;
+enqueue_push(_, _, _) -> ok.
+
+hex(Bytes) -> << <<(hex_digit(B bsr 4)),(hex_digit(B band 15))>> || <<B>> <= Bytes >>.
+hex_digit(N) when N < 10 -> $0 + N;
+hex_digit(N) -> $a + N - 10.
+
+push_events(Host, Limit) when is_integer(Limit), Limit > 0, Limit =< 100 ->
+    true = managed(Host),
+    Now = erlang:system_time(second),
+    {atomic, Events} = mnesia:transaction(fun() ->
+        mnesia:foldl(fun(#voicehost_push_event{key=Key,host=H,created=Created}=E,Acc) ->
+            case Created + 900 =< Now of
+                true -> mnesia:delete({voicehost_push_event,Key}), Acc;
+                false when H =:= Host -> [E|Acc];
+                false -> Acc
+            end
+        end, [], voicehost_push_event)
+    end),
+    Sorted = lists:sort(fun(A,B) -> {A#voicehost_push_event.created,A#voicehost_push_event.key} <
+                                  {B#voicehost_push_event.created,B#voicehost_push_event.key} end,Events),
+    [{E#voicehost_push_event.key,E#voicehost_push_event.node,E#voicehost_push_event.jid,
+      E#voicehost_push_event.peer,E#voicehost_push_event.created} || E <- lists:sublist(Sorted,Limit)];
+push_events(_, _) -> error(invalid_push_request).
+
+ack_push(Host, ID) ->
+    case managed(Host) of
+        true -> case mnesia:transaction(fun() ->
+            case mnesia:read(voicehost_push_event,ID,write) of
+                [] -> 0;
+                [#voicehost_push_event{host=Host}] -> mnesia:delete({voicehost_push_event,ID}), 0;
+                _ -> 1
+            end
+        end) of {atomic,Result} -> Result; _ -> 1 end;
+        false -> 1
+    end.
 
 canonical_user(User) when is_binary(User), byte_size(User) =< 240 ->
     case re:run(User, <<"\\A([0-9]+)\\*([0-9]{3,5})[a-z]*\\z">>, [{capture, [1,2], binary}]) of

@@ -39,6 +39,20 @@ services:
       - default
       - mobile-gateway-shared
 
+  messaging-notifications:
+    profiles: ["messaging-push"]
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["python", "-m", "app.messaging_notifications"]
+    volumes:
+      - provisioning-data:/data
+      - ./secrets/messaging-apns.p8:/run/secrets/messaging-apns.p8:ro
+    networks:
+      - default
+
+
 volumes:
   provisioning-data:
 

@@ -16,6 +16,7 @@ from .models import (
     AdminHousekeepingRequest,
     CheckInRequest,
     LogoutRequest,
+    MessagingPushRegistration,
     PushTokenUpdateRequest,
     RefreshRequest,
 )
@@ -581,6 +582,27 @@ def update_push_tokens(
         [item.model_dump(exclude_none=True) for item in request.tokens],
     )
     store.audit("push_tokens_updated", device["id"])
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.put("/api/v1/device/messaging/push")
+def register_messaging_push(
+    request: MessagingPushRegistration,
+    device: Annotated[dict, Depends(bearer_device)],
+) -> dict:
+    if not settings.messaging_push_enabled:
+        return {"enabled": False}
+    from .messaging_push import register_device
+    try:
+        return register_device(store, device["id"], request.token.lower(), request.environment)
+    except ValueError:
+        raise error("messaging_push_unavailable", "Messaging notifications require an active managed messaging account.", 409)
+
+
+@app.delete("/api/v1/device/messaging/push", status_code=status.HTTP_204_NO_CONTENT)
+def remove_messaging_push(device: Annotated[dict, Depends(authenticated_device)]) -> Response:
+    with store._connect() as conn:
+        conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device["id"],))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

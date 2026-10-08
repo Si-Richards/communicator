@@ -145,6 +145,37 @@ class ProvisioningService {
     }
   }
 
+  Future<MessagingPushSubscription?> registerMessagingPush({
+    required String accessToken,
+    required String token,
+    required String environment,
+  }) async {
+    final response = await _client
+        .put(
+          _uri('/device/messaging/push'),
+          headers: _authHeaders(accessToken),
+          body: jsonEncode({'token': token, 'environment': environment}),
+        )
+        .timeout(const Duration(seconds: 15));
+    final json = _decode(response);
+    if (response.statusCode != 200) {
+      throw _exception(response, json);
+    }
+    return MessagingPushSubscription.fromJson(json);
+  }
+
+  Future<void> removeMessagingPush({required String accessToken}) async {
+    final response = await _client
+        .delete(
+          _uri('/device/messaging/push'),
+          headers: _authHeaders(accessToken),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 204) {
+      throw _exception(response, _decode(response));
+    }
+  }
+
   Future<void> logout({
     required String accessToken,
     String reason = 'user_requested',

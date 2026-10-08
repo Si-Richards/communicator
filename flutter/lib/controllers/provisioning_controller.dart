@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
@@ -419,6 +420,63 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _error = null;
     _status = 'Not provisioned';
     _setBusy(false);
+  }
+
+  Future<MessagingPushSubscription?> registerMessagingPush() async {
+    if (_busy || !canUseApp || !Platform.isIOS) {
+      return null;
+    }
+    final device = _state?.deviceId;
+    final configuration = _state?.configuration?.messaging;
+    if (configuration?.enabled != true || configuration?.ready != true) {
+      return null;
+    }
+    _setBusy(true);
+    final service = _serviceFactory(phone.provisioningUrl);
+    try {
+      const native = MethodChannel('voicehost/notifications');
+      final registration = await native.invokeMapMethod<String, dynamic>(
+        'getMessagingRegistration',
+      );
+      final token = registration?['token']?.toString() ?? '';
+      final environment = registration?['environment']?.toString() ?? '';
+      if (token.isEmpty) {
+        await _ensureFreshToken(service);
+        try {
+          await service.removeMessagingPush(accessToken: _state!.accessToken);
+        } on ProvisioningException catch (error) {
+          if (error.statusCode != 401) rethrow;
+          await _refreshToken(service);
+          await service.removeMessagingPush(accessToken: _state!.accessToken);
+        }
+        return null;
+      }
+      MessagingPushSubscription? result;
+      try {
+        result = await service.registerMessagingPush(
+          accessToken: _state!.accessToken,
+          token: token,
+          environment: environment,
+        );
+      } on ProvisioningException catch (error) {
+        if (error.statusCode != 401) rethrow;
+        await _refreshToken(service);
+        result = await service.registerMessagingPush(
+          accessToken: _state!.accessToken,
+          token: token,
+          environment: environment,
+        );
+      }
+      if (_state?.deviceId != device ||
+          !canUseApp ||
+          result?.ownerJid != configuration?.jid) {
+        return null;
+      }
+      return result;
+    } finally {
+      service.close();
+      _setBusy(false);
+    }
   }
 
   Future<void> _ensureFreshToken(ProvisioningService service) async {

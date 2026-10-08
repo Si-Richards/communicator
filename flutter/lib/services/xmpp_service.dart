@@ -600,6 +600,115 @@ class XmppService extends ChangeNotifier {
     }
   }
 
+  MessagingPushSubscription? _pushSubscription;
+  String? _enabledPushNode;
+  String? _pushError;
+  bool _pushBusy = false;
+  String get notificationStatus =>
+      _pushError ??
+      (_enabledPushNode != null
+          ? 'Notifications registered'
+          : _pushSubscription == null
+          ? 'Notifications not configured'
+          : 'Notifications awaiting registration');
+
+  void configurePush(MessagingPushSubscription? subscription) {
+    if (subscription != null && subscription.ownerJid != _managed?.jid) {
+      return;
+    }
+    if (_pushSubscription?.node == subscription?.node) {
+      if (online && _enabledPushNode == null) {
+        unawaited(_syncPush());
+      }
+      return;
+    }
+    final previous = _pushSubscription;
+    _pushSubscription = subscription;
+    if (online) {
+      unawaited(_syncPush(previous: previous));
+    }
+  }
+
+  Future<void> _syncPush({MessagingPushSubscription? previous}) async {
+    if (!online || _pushBusy) {
+      return;
+    }
+    final generation = _generation;
+    final subscription = _pushSubscription;
+    _pushBusy = true;
+    try {
+      if (previous != null &&
+          previous.ownerJid == _account &&
+          previous.node != subscription?.node) {
+        final id = _id();
+        await _query(
+          id,
+          _element(
+            'iq',
+            _client,
+            attributes: {'id': id, 'type': 'set', 'to': _account!},
+            children: [
+              _element(
+                'disable',
+                'urn:xmpp:push:0',
+                attributes: {'jid': previous.jid, 'node': previous.node},
+              ),
+            ],
+          ),
+        );
+      }
+      if (generation != _generation) {
+        return;
+      }
+      if (subscription == null ||
+          subscription.ownerJid != _account ||
+          !_accessAllowed) {
+        _enabledPushNode = null;
+        return;
+      }
+      final id = _id();
+      final response = await _query(
+        id,
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'set', 'to': _account!},
+          children: [
+            _element(
+              'enable',
+              'urn:xmpp:push:0',
+              attributes: {'jid': subscription.jid, 'node': subscription.node},
+            ),
+          ],
+        ),
+      );
+      if (generation != _generation || subscription != _pushSubscription) {
+        return;
+      }
+      if (response.getAttribute('type') != 'result') {
+        throw StateError('Push registration rejected.');
+      }
+      _enabledPushNode = subscription.node;
+      _pushError = null;
+    } catch (_) {
+      if (generation == _generation) {
+        _pushError =
+            'Messaging notification registration failed; reconnect to retry.';
+      }
+    } finally {
+      _pushBusy = false;
+      if (!_disposed) {
+        if (generation == _generation) {
+          notifyListeners();
+        }
+        if (online &&
+            (generation != _generation || subscription != _pushSubscription)) {
+          unawaited(_syncPush(previous: subscription));
+        }
+      }
+    }
+  }
+
   void _becomeOnline() {
     _deadline?.cancel();
     _attempts = 0;
@@ -607,6 +716,7 @@ class XmppService extends ChangeNotifier {
     _setState(XmppState.online);
     unawaited(_recoverHistory());
     if (accountNumber != null) unawaited(refreshDirectory());
+    unawaited(_syncPush());
   }
 
   String recipientJid(String value) {
@@ -1218,6 +1328,7 @@ class XmppService extends ChangeNotifier {
   }
 
   void _closeTransport() {
+    _enabledPushNode = null;
     _generation++;
     _directoryBusy = false;
     _historyBusy = false;

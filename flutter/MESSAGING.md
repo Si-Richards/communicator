@@ -11,6 +11,15 @@ and group conversations remain a future stage.
 
 Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-softphone`. This stage adds automatic managed login, encrypted local conversation storage and XEP-0313 archive recovery. The Messages tab is available in release/profile builds when managed messaging is enabled. Telephony and the mobile gateway are unchanged.
 
+## Standard iOS notifications
+
+Standard APNs chat alerts are implemented for managed messaging. Follow the
+[notification rollout guide](../provisioning-server/MESSAGING-NOTIFICATIONS.md)
+to upgrade the ejabberd bridge, configure the provider key, start the separate
+RANDY notification worker and copy the updated native iOS template before building.
+Existing enrolled devices register without a fresh activation. Tenant/account scope
+is checked both before delivery and when a notification opens a conversation.
+
 ## Deployment order
 
 1. Choose automatic account management or existing manual accounts, and check the archive policy below. [Automatic setup](../provisioning-server/EJABBERD-MANAGEMENT.md) creates/manages accounts on the provisioning server using the numeric account number and 3–5 digit extension, for example `10000*207@ejabberd.voicehost.io`. API credentials stay on the server.
@@ -39,7 +48,7 @@ Work is isolated on `feature/ejabberd-messaging`, based on `feature/flutter-soft
    flutter run
    ```
 
-   Use your existing signing setup. No new messaging entitlements or native XMPP library are required. Flutter already includes secure storage and application-support path plugins. A full rebuild is needed for the new Dart dependencies.
+   Use your existing signing setup. No native XMPP library is required. For APNs alerts, retain Push Notifications and follow the notification rollout guide above. Flutter already includes secure storage and application-support path plugins. A full rebuild is needed for the new Dart dependencies.
 5. Let the phone check in, or refresh its provisioning configuration through Settings. Automatic accounts show **account being prepared** until the worker confirms readiness; another check-in then connects. Open **Messages** and expect automatic connection. Manual diagnostic login is only available in debug builds when managed messaging is disabled.
 
 ## ejabberd archive prerequisites
@@ -98,7 +107,7 @@ References: [ejabberd mod_mam options](https://docs.ejabberd.im/admin/configurat
 
 Supported: managed login, one-to-one same-domain text, local conversations, archive recovery, older pages, XEP-0184 delivery receipts, XEP-0359 outgoing origin IDs, lifecycle reconnect and provisioning access enforcement. `sent` means handed to the WebSocket, not proof of server acceptance. Text is encrypted locally and transported over TLS; this is not end-to-end encryption.
 
-Not yet included: APNs/FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, live message carbons between multiple clients, attachments, groups, typing/read markers or roster/name lookup. Background messages appear on return to the app; enabling `mod_push` alone does not provide notifications.
+Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, live message carbons between multiple clients, attachments, groups or typing/read markers. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
 
 The protocol tests use a real loopback WebSocket fixture for login, routing, receipts, MAM discovery/paging, duplicate recovery, interrupted pages, expired cursors, failed storage, account changes and lock/logout. Storage tests verify encrypted reopening, account/endpoint isolation and tamper rejection. Provisioning tests verify credential retention/rotation, account-change validation, disablement, portal redaction and validation secrecy. These checks supplement the on-device tests above; this environment cannot build/sign an iOS binary or verify your private account's live archive.
 
