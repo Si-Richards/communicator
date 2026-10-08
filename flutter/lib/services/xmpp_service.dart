@@ -239,8 +239,9 @@ class XmppService extends ChangeNotifier {
                   m.peer == peer &&
                   m.outgoing == message.outgoing &&
                   m.body == message.body,
-            ))
+            )) {
               continue;
+            }
             _messages.add(
               ChatMessage.fromJson({...message.toJson(), 'peer': peer}),
             );
@@ -259,8 +260,9 @@ class XmppService extends ChangeNotifier {
       for (final previous in _managed?.previousJids ?? const <String>[]) {
         if (previous == account ||
             _canonicalPeer(previous) != account ||
-            !_isCanonicalAccount)
+            !_isCanonicalAccount) {
           continue;
+        }
         final previousStorage = '$previous|$endpoint';
         if (_migratedHistoryAccounts.contains(previousStorage)) continue;
         try {
