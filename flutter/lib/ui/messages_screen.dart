@@ -69,6 +69,9 @@ class MessagesScreen extends StatelessWidget {
           appBar: AppBar(
             title: const Text('Messages'),
             bottom: const TabBar(
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white70,
+              indicatorColor: Colors.white,
               tabs: [
                 Tab(text: 'Conversations'),
                 Tab(text: 'Directory'),
