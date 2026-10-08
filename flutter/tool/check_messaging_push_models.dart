@@ -1,5 +1,7 @@
 // Run with: dart --enable-asserts tool/check_messaging_push_models.dart
-import '../lib/models/provisioning.dart';
+import 'dart:io';
+
+import 'package:voicehost_softphone/models/provisioning.dart';
 
 void main() {
   final id = List.filled(64, 'a').join();
@@ -46,5 +48,5 @@ void main() {
   ]) {
     assert(MessagingNotification.fromJson({...message, ...change}) == null);
   }
-  print('Messaging push model checks passed.');
+  stdout.writeln('Messaging push model checks passed.');
 }

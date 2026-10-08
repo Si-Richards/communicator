@@ -80,7 +80,7 @@ void main() {
     node: 'vh-${List.filled(64, character).join()}',
   );
 
-  void managed(XmppService service) => service.configureManaged(
+  void configureManagedForPush(XmppService service) => service.configureManaged(
     const MessagingConfiguration(
       enabled: true,
       jid: pushOwner,
@@ -101,7 +101,7 @@ void main() {
     'managed device enables standard push on its own JID and rotates its node',
     () async {
       final alice = client();
-      managed(alice);
+      configureManagedForPush(alice);
       alice.configurePush(push('a'));
       await _until(
         () => alice.notificationStatus == 'Notifications registered',
@@ -135,7 +135,7 @@ void main() {
   test('push permission failure leaves chat online and reconnect retries registration', () async {
     server.rejectPush = true;
     final alice = client();
-    managed(alice);
+    configureManagedForPush(alice);
     alice.configurePush(push('a'));
     await _until(() => alice.notificationStatus.contains('failed'));
     expect(alice.online, isTrue);
@@ -147,7 +147,7 @@ void main() {
 
   test('foreign push ownership never produces an enable request', () async {
     final alice = client();
-    managed(alice);
+    configureManagedForPush(alice);
     alice.configurePush(push('a', owner: '20000*207@ejabberd.voicehost.io'));
     await _until(() => alice.online);
     await Future<void>.delayed(const Duration(milliseconds: 20));
