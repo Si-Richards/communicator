@@ -4,6 +4,7 @@ import json
 import hashlib
 import signal
 import threading
+import time
 from datetime import timedelta
 
 from .config import settings
@@ -132,8 +133,16 @@ def main():
         return
     client = EjabberdClient(settings.ejabberd_api_url, settings.ejabberd_api_username, settings.ejabberd_api_password)
     try:
+        from .messaging_attachments import Attachments
+        next_cleanup = 0
         while not stop.is_set():
             reconcile_accounts(store, client)
+            if time.monotonic() >= next_cleanup:
+                try:
+                    Attachments(store, settings).cleanup()
+                except OSError:
+                    log.warning("Attachment cleanup failed; check storage permissions.")
+                next_cleanup = time.monotonic() + 60
             stop.wait(5)
     finally:
         client.close()

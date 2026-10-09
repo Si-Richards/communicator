@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:xml/xml.dart';
 import 'package:voicehost_softphone/models/chat_message.dart';
+import 'package:voicehost_softphone/models/chat_attachment.dart';
 import 'package:voicehost_softphone/models/provisioning.dart';
 import 'package:voicehost_softphone/models/messaging_presence.dart';
 import 'package:voicehost_softphone/services/xmpp_service.dart';
@@ -74,6 +75,103 @@ void main() {
       '<$direction xmlns="urn:xmpp:carbons:2">'
       '<forwarded xmlns="urn:xmpp:forward:0">$inner</forwarded>'
       '</$direction></message>';
+
+  test(
+    'attachments retain metadata and ordinary delivery/read semantics',
+    () async {
+      final alice = client();
+      final bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      final attachment = ChatAttachment(
+        id: 'a' * 64,
+        name: 'Notes & Plans.pdf',
+        mediaType: 'application/octet-stream',
+        size: 3,
+        sha256: 'b' * 64,
+      );
+      alice.sendMessage(
+        recipient: '208',
+        body: attachment.summary,
+        attachment: attachment,
+      );
+      await _until(
+        () =>
+            bob.messages.isNotEmpty &&
+            alice.messages.first.status == ChatMessageStatus.delivered,
+      );
+      expect(bob.messages.single.attachment?.id, attachment.id);
+      expect(bob.messages.single.attachment?.name, 'Notes & Plans.pdf');
+      expect(bob.messages.single.markable, isTrue);
+      bob.markConversationDisplayed(
+        '10000*207@ejabberd.voicehost.io',
+        bob.messages.single.id,
+      );
+      await _until(
+        () => alice.messages.single.status == ChatMessageStatus.read,
+      );
+      final wire = server.received
+          .where(
+            (s) =>
+                s.getElement(
+                  'attachment',
+                  namespace: ChatAttachment.namespace,
+                ) !=
+                null,
+          )
+          .first;
+      expect(wire.toXmlString(), isNot(contains('Bearer')));
+      expect(wire.toXmlString(), isNot(contains('https://')));
+    },
+  );
+
+  test(
+    'attachment metadata recovers through MAM and trusted own-device carbons',
+    () async {
+      final xml =
+          '<attachment xmlns="${ChatAttachment.namespace}" id="${'a' * 64}" '
+          'name="photo.png" media-type="image/png" size="3" sha256="${'b' * 64}"/>';
+      server.archive.add(
+        _Archived('1', 'Photo: photo.png', attachmentXml: xml),
+      );
+      final service = client();
+      await login(service, '10000*207');
+      await _until(() => service.messages.isNotEmpty && !service.historyBusy);
+      expect(service.messages.single.attachment?.isImage, isTrue);
+      final owner = '10000*207@ejabberd.voicehost.io';
+      final inner =
+          '<message xmlns="jabber:client" from="$owner/desktop" to="$peer" type="chat" id="other-device">'
+          '<body>Photo: photo.png</body>$xml</message>';
+      receive(service, carbon(owner, 'sent', inner));
+      await _until(() => service.messages.length == 2);
+      expect(service.messages.last.outgoing, isTrue);
+      expect(service.messages.last.attachment?.id, 'a' * 64);
+    },
+  );
+
+  test(
+    'invalid attachment metadata stays text and foreign tenants remain rejected',
+    () async {
+      final service = client();
+      await login(service, '10000*207');
+      final invalid =
+          '<attachment xmlns="${ChatAttachment.namespace}" id="https://outside.example/file" '
+          'name="../file.svg" media-type="image/svg+xml" size="3" sha256="${'b' * 64}"/>';
+      receive(
+        service,
+        '<message xmlns="jabber:client" from="$peer" type="chat" id="invalid">'
+        '<body>File unavailable</body>$invalid</message>',
+      );
+      receive(
+        service,
+        '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" type="chat" id="foreign">'
+        '<body>Foreign file</body>$invalid</message>',
+      );
+      await _until(() => service.messages.isNotEmpty);
+      expect(service.messages.single.body, 'File unavailable');
+      expect(service.messages.single.attachment, isNull);
+    },
+  );
 
   test(
     'presence combines resources, rejects foreign tenants and resets on pause',
@@ -1405,6 +1503,7 @@ class _Archived {
     this.outgoing = false,
     this.marker,
     this.receipt,
+    this.attachmentXml,
   });
   final String id;
   final String body;
@@ -1412,6 +1511,7 @@ class _Archived {
   final bool outgoing;
   final String? marker;
   final String? receipt;
+  final String? attachmentXml;
   String xml(String query, String user, {String? from}) {
     final account = '$user@ejabberd.voicehost.io';
     final peer = user.contains('*')
@@ -1426,6 +1526,7 @@ class _Archived {
         '${body.isEmpty ? '' : '<body>${XmlText(body).toXmlString()}</body>'}'
         '${marker == null ? '' : '<displayed xmlns="urn:xmpp:chat-markers:0" id="$marker"/>'}'
         '${receipt == null ? '' : '<received xmlns="urn:xmpp:receipts" id="$receipt"/>'}'
+        '${attachmentXml ?? ''}'
         '</message></forwarded></result></message>';
   }
 }

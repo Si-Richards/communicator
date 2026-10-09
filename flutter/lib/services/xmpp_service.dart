@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:xml/xml.dart';
 
 import '../models/chat_message.dart';
+import '../models/chat_attachment.dart';
 import '../models/messaging_contact.dart';
 import '../models/messaging_presence.dart';
 import '../models/provisioning.dart';
@@ -951,7 +952,12 @@ class XmppService extends ChangeNotifier {
               'query',
               _disco,
               children: [
-                for (final feature in [_chatStates, _markers, _receipts])
+                for (final feature in [
+                  _chatStates,
+                  _markers,
+                  _receipts,
+                  ChatAttachment.namespace,
+                ])
                   _element('feature', _disco, attributes: {'var': feature}),
               ],
             ),
@@ -1237,7 +1243,11 @@ class XmppService extends ChangeNotifier {
     }
   }
 
-  void sendMessage({required String recipient, required String body}) {
+  void sendMessage({
+    required String recipient,
+    required String body,
+    ChatAttachment? attachment,
+  }) {
     if (!online) throw StateError('Messaging is not online.');
     final peer = recipientJid(recipient);
     if (body.trim().isEmpty || body.length > 10000) {
@@ -1251,6 +1261,18 @@ class XmppService extends ChangeNotifier {
         attributes: {'id': id, 'type': 'chat', 'to': peer},
         children: [
           _element('body', _client, text: body),
+          if (attachment != null)
+            _element(
+              'attachment',
+              ChatAttachment.namespace,
+              attributes: {
+                'id': attachment.id,
+                'name': attachment.name,
+                'media-type': attachment.mediaType,
+                'size': attachment.size.toString(),
+                'sha256': attachment.sha256,
+              },
+            ),
           _element('request', _receipts),
           _element('markable', _markers),
           if (_shareTyping) _element('active', _chatStates),
@@ -1266,6 +1288,7 @@ class XmppService extends ChangeNotifier {
         outgoing: true,
         timestamp: DateTime.now(),
         status: ChatMessageStatus.sent,
+        attachment: attachment,
       ),
     );
     if (_shareTyping) _sentChatStates[peer] = 'active';
@@ -1277,6 +1300,21 @@ class XmppService extends ChangeNotifier {
     unawaited(_persist());
     _event('Text message sent');
     notifyListeners();
+  }
+
+  ChatAttachment? _attachment(XmlElement message) {
+    final elements = message
+        .findElements('attachment', namespace: ChatAttachment.namespace)
+        .toList();
+    if (elements.length != 1) return null;
+    final element = elements.single;
+    return ChatAttachment.tryFromJson({
+      'id': element.getAttribute('id'),
+      'name': element.getAttribute('name'),
+      'media_type': element.getAttribute('media-type'),
+      'size': int.tryParse(element.getAttribute('size') ?? ''),
+      'sha256': element.getAttribute('sha256'),
+    });
   }
 
   void _message(XmlElement message) {
@@ -1423,6 +1461,7 @@ class XmppService extends ChangeNotifier {
             DateTime.now(),
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: _trustedArchiveId(message),
+        attachment: _attachment(message),
         markable:
             !outgoing &&
             id != null &&
@@ -1782,6 +1821,7 @@ class XmppService extends ChangeNotifier {
         timestamp: timestamp.toLocal(),
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: archiveId,
+        attachment: _attachment(message),
         markable:
             !outgoing &&
             message.getAttribute('id') != null &&

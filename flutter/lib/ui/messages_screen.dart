@@ -1,7 +1,15 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/chat_message.dart';
+import '../models/chat_attachment.dart';
+import '../controllers/provisioning_controller.dart';
+import '../services/attachment_bytes.dart';
 import '../models/messaging_presence.dart';
 import '../services/xmpp_service.dart';
 import 'messaging_diagnostics_screen.dart';
@@ -9,8 +17,9 @@ import 'messaging_diagnostics_screen.dart';
 final messagingRouteObserver = RouteObserver<ModalRoute<dynamic>>();
 
 class MessagesScreen extends StatelessWidget {
-  const MessagesScreen({super.key, required this.messaging});
+  const MessagesScreen({super.key, required this.messaging, this.provisioning});
   final XmppService messaging;
+  final ProvisioningController? provisioning;
 
   Future<void> _newChat(BuildContext context) async {
     final recipient = await showDialog<String>(
@@ -30,7 +39,11 @@ class MessagesScreen extends StatelessWidget {
   void _openChat(BuildContext context, String peer) =>
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => MessagingChatScreen(messaging: messaging, peer: peer),
+          builder: (_) => MessagingChatScreen(
+            messaging: messaging,
+            peer: peer,
+            provisioning: provisioning,
+          ),
         ),
       );
 
@@ -479,9 +492,11 @@ class MessagingChatScreen extends StatefulWidget {
     super.key,
     required this.messaging,
     required this.peer,
+    this.provisioning,
   });
   final XmppService messaging;
   final String peer;
+  final ProvisioningController? provisioning;
   @override
   State<MessagingChatScreen> createState() => _ChatScreenState();
 }
@@ -494,6 +509,250 @@ class _ChatScreenState extends State<MessagingChatScreen>
   final _messageKeys = <String, GlobalKey>{};
   ModalRoute<dynamic>? _route;
   bool _readScheduled = false;
+  bool _attachmentBusy = false;
+  String _attachmentActivity = '';
+  Uint8List? _draftBytes;
+  String? _draftName;
+  String? _draftOwner;
+  String? _draftDevice;
+  String? _draftPeer;
+  bool _draftPhoto = false;
+
+  bool _attachmentOwnerAllowed(String? owner, String? device) =>
+      mounted &&
+      _peerAllowed &&
+      widget.messaging.accessAllowed &&
+      widget.provisioning?.attachmentsAvailable == true &&
+      widget.provisioning?.configuration?.messaging?.jid == owner &&
+      widget.provisioning?.deviceId == device;
+
+  void _attachmentError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _selectAttachment(String source) async {
+    if (_attachmentBusy || widget.provisioning?.attachmentsAvailable != true) {
+      return;
+    }
+    final owner = widget.provisioning!.configuration!.messaging!.jid;
+    final device = widget.provisioning!.deviceId;
+    final peer = widget.peer;
+    setState(() {
+      _attachmentBusy = true;
+      _attachmentActivity = 'Preparing attachment…';
+    });
+    try {
+      String name;
+      Stream<List<int>> stream;
+      int size;
+      if (source == 'file') {
+        final picked = await FilePicker.platform.pickFiles(
+          allowMultiple: false,
+          withData: false,
+          withReadStream: true,
+        );
+        if (picked == null || picked.files.isEmpty) return;
+        final file = picked.files.single;
+        size = file.size;
+        name = file.name;
+        final selectedStream = file.readStream;
+        if (selectedStream == null) throw StateError('File could not be read.');
+        stream = selectedStream;
+      } else {
+        final image = await ImagePicker().pickImage(
+          source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+          maxWidth: 2048,
+          maxHeight: 2048,
+          imageQuality: 85,
+          requestFullMetadata: false,
+        );
+        if (image == null) return;
+        size = await image.length();
+        name = image.name;
+        stream = image.openRead();
+      }
+      if (size > ChatAttachment.maxBytes) {
+        throw ArgumentError('Attachments must be no larger than 10 MB.');
+      }
+      final bytes = await readAttachmentBytes(stream);
+      if (!_attachmentOwnerAllowed(owner, device) || widget.peer != peer) {
+        return;
+      }
+      name = name
+          .replaceAll('\\', '/')
+          .split('/')
+          .last
+          .replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '')
+          .trim();
+      if (name.isEmpty) name = 'attachment';
+      if (name.length > 160) name = name.substring(0, 160);
+      setState(() {
+        _draftBytes = bytes;
+        _draftName = name;
+        _draftPhoto = source != 'file';
+        _draftOwner = owner;
+        _draftDevice = device;
+        _draftPeer = peer;
+      });
+    } on ArgumentError catch (error) {
+      _attachmentError(error.message.toString());
+    } catch (_) {
+      _attachmentError(
+        'Could not select the attachment. Check permissions and try again.',
+      );
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
+    }
+  }
+
+  Future<void> _sendAttachment() async {
+    final bytes = _draftBytes;
+    if (bytes == null ||
+        _attachmentBusy ||
+        !_attachmentOwnerAllowed(_draftOwner, _draftDevice) ||
+        _draftPeer != widget.peer) {
+      return;
+    }
+    final caption = _text.text;
+    final peer = widget.peer;
+    setState(() {
+      _attachmentBusy = true;
+      _attachmentActivity = 'Uploading attachment…';
+    });
+    try {
+      final attachment = await widget.provisioning!.uploadMessagingAttachment(
+        peer: peer,
+        name: _draftName!,
+        bytes: bytes,
+      );
+      if (!_attachmentOwnerAllowed(_draftOwner, _draftDevice) ||
+          widget.peer != peer) {
+        return;
+      }
+      // Keep the selected file and caption for retry if XMPP disconnected
+      // during upload; never send it to a newly selected account.
+      widget.messaging.sendMessage(
+        recipient: peer,
+        body: caption.trim().isEmpty ? attachment.summary : caption,
+        attachment: attachment,
+      );
+      setState(() {
+        _draftBytes = null;
+        _draftName = null;
+      });
+      _text.clear();
+    } catch (_) {
+      _attachmentError(
+        'Could not send the attachment. Check your connection and try again. The file is still selected.',
+      );
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
+    }
+  }
+
+  Future<void> _saveAttachment(
+    ChatAttachment attachment,
+    Uint8List bytes,
+  ) async {
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save attachment',
+      fileName: attachment.name,
+      bytes: bytes,
+    );
+    if (path != null && !Platform.isIOS && !Platform.isAndroid) {
+      await File(path).writeAsBytes(bytes, flush: true);
+    }
+  }
+
+  Future<void> _openAttachment(ChatAttachment attachment) async {
+    if (_attachmentBusy || widget.provisioning?.attachmentsAvailable != true) {
+      return;
+    }
+    final owner = widget.provisioning!.configuration!.messaging!.jid;
+    final device = widget.provisioning!.deviceId;
+    final peer = widget.peer;
+    setState(() {
+      _attachmentBusy = true;
+      _attachmentActivity = 'Downloading attachment…';
+    });
+    try {
+      final bytes = await widget.provisioning!.downloadMessagingAttachment(
+        peer: peer,
+        attachment: attachment,
+      );
+      if (!_attachmentOwnerAllowed(owner, device) || widget.peer != peer) {
+        return;
+      }
+      if (attachment.isImage) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AnimatedBuilder(
+            animation: widget.provisioning!,
+            builder: (_, _) {
+              final allowed =
+                  _attachmentOwnerAllowed(owner, device) && widget.peer == peer;
+              return AlertDialog(
+                title: Text(attachment.name),
+                content: allowed
+                    ? SizedBox(
+                        width: 600,
+                        height: 360,
+                        child: InteractiveViewer(
+                          child: Image(
+                            image: ResizeImage(
+                              MemoryImage(bytes),
+                              width: 2048,
+                              height: 2048,
+                              policy: ResizeImagePolicy.fit,
+                            ),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const Center(
+                              child: Text(
+                                'Image preview unavailable. You can save the file.',
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : const Text('This attachment is unavailable.'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Close'),
+                  ),
+                  if (allowed)
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          await _saveAttachment(attachment, bytes);
+                        } catch (_) {
+                          _attachmentError(
+                            'Could not save the attachment. Please retry.',
+                          );
+                        }
+                      },
+                      child: const Text('Save'),
+                    ),
+                ],
+              );
+            },
+          ),
+        );
+      } else {
+        await _saveAttachment(attachment, bytes);
+      }
+    } catch (_) {
+      _attachmentError(
+        'Could not download this attachment. It may have expired, or your connection or access changed.',
+      );
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
+    }
+  }
 
   @override
   void initState() {
@@ -501,6 +760,35 @@ class _ChatScreenState extends State<MessagingChatScreen>
     WidgetsBinding.instance.addObserver(this);
     _scroll.addListener(_scheduleRead);
     _text.addListener(_typingChanged);
+    widget.provisioning?.addListener(_discardUnavailableDraft);
+  }
+
+  void _discardUnavailableDraft() {
+    if (_draftBytes == null ||
+        (_attachmentOwnerAllowed(_draftOwner, _draftDevice) &&
+            _draftPeer == widget.peer)) {
+      return;
+    }
+    setState(() {
+      _draftBytes = null;
+      _draftName = null;
+    });
+    _text.clear();
+  }
+
+  @override
+  void didUpdateWidget(covariant MessagingChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.provisioning != widget.provisioning) {
+      oldWidget.provisioning?.removeListener(_discardUnavailableDraft);
+      widget.provisioning?.addListener(_discardUnavailableDraft);
+    }
+    if (oldWidget.peer != widget.peer ||
+        oldWidget.provisioning != widget.provisioning) {
+      _draftBytes = null;
+      _draftName = null;
+      _text.clear();
+    }
   }
 
   @override
@@ -590,6 +878,7 @@ class _ChatScreenState extends State<MessagingChatScreen>
   void dispose() {
     messagingRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
+    widget.provisioning?.removeListener(_discardUnavailableDraft);
     widget.messaging.stopTyping(widget.peer);
     _scroll.dispose();
     _text.dispose();
@@ -597,6 +886,10 @@ class _ChatScreenState extends State<MessagingChatScreen>
   }
 
   void _send() {
+    if (_draftBytes != null) {
+      _sendAttachment();
+      return;
+    }
     try {
       widget.messaging.sendMessage(recipient: widget.peer, body: _text.text);
       _text.clear();
@@ -613,7 +906,10 @@ class _ChatScreenState extends State<MessagingChatScreen>
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: widget.messaging,
+    animation: Listenable.merge([
+      widget.messaging,
+      if (widget.provisioning != null) widget.provisioning!,
+    ]),
     builder: (context, _) {
       if (!widget.messaging.accessAllowed) {
         return Scaffold(
@@ -706,14 +1002,51 @@ class _ChatScreenState extends State<MessagingChatScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              message.body,
-                              style: TextStyle(
-                                color: message.outgoing
-                                    ? colors.onSecondary
-                                    : colors.onSurface,
+                            if (message.attachment != null)
+                              TextButton.icon(
+                                style: TextButton.styleFrom(
+                                  foregroundColor: message.outgoing
+                                      ? colors.onSecondary
+                                      : colors.onSurface,
+                                ),
+                                onPressed:
+                                    !_attachmentBusy &&
+                                        widget
+                                                .provisioning
+                                                ?.attachmentsAvailable ==
+                                            true
+                                    ? () => _openAttachment(message.attachment!)
+                                    : null,
+                                icon: Icon(
+                                  message.attachment!.isImage
+                                      ? Icons.photo_outlined
+                                      : Icons.insert_drive_file_outlined,
+                                ),
+                                label: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      message.attachment!.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      '${message.attachment!.sizeLabel} · ${message.attachment!.isImage ? 'View photo' : 'Save file'}',
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
+                            if (message.attachment == null ||
+                                message.body != message.attachment!.summary)
+                              Text(
+                                message.body,
+                                style: TextStyle(
+                                  color: message.outgoing
+                                      ? colors.onSecondary
+                                      : colors.onSurface,
+                                ),
+                              ),
                             const SizedBox(height: 5),
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -744,16 +1077,84 @@ class _ChatScreenState extends State<MessagingChatScreen>
                   },
                 ),
               ),
+              if (_attachmentBusy) ...[
+                const LinearProgressIndicator(),
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(_attachmentActivity),
+                ),
+              ],
+              if (_draftBytes != null &&
+                  _attachmentOwnerAllowed(_draftOwner, _draftDevice))
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Card(
+                    child: ListTile(
+                      leading: _draftPhoto
+                          ? Image.memory(
+                              _draftBytes!,
+                              width: 48,
+                              height: 48,
+                              cacheWidth: 96,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) =>
+                                  const Icon(Icons.photo_outlined),
+                            )
+                          : const Icon(Icons.insert_drive_file_outlined),
+                      title: Text(
+                        _draftName!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: const Text(
+                        'Ready to send · add a caption below',
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Remove selected attachment',
+                        onPressed: _attachmentBusy
+                            ? null
+                            : () => setState(() {
+                                _draftBytes = null;
+                                _draftName = null;
+                              }),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
                 child: Row(
                   children: [
+                    if (widget.provisioning?.attachmentsAvailable == true)
+                      PopupMenuButton<String>(
+                        tooltip: 'Attach photo or file',
+                        enabled: widget.messaging.online && !_attachmentBusy,
+                        onSelected: _selectAttachment,
+                        itemBuilder: (_) => [
+                          if (defaultTargetPlatform == TargetPlatform.iOS ||
+                              defaultTargetPlatform == TargetPlatform.android)
+                            const PopupMenuItem(
+                              value: 'camera',
+                              child: Text('Take photo'),
+                            ),
+                          const PopupMenuItem(
+                            value: 'photos',
+                            child: Text('Choose photo'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'file',
+                            child: Text('Choose file'),
+                          ),
+                        ],
+                        icon: const Icon(Icons.attach_file),
+                      ),
                     Expanded(
                       child: TextField(
                         controller: _text,
                         minLines: 1,
                         maxLines: 5,
-                        enabled: widget.messaging.online,
+                        enabled: widget.messaging.online && !_attachmentBusy,
                         maxLength: 10000,
                         decoration: const InputDecoration(
                           hintText: 'Message…',
@@ -764,7 +1165,9 @@ class _ChatScreenState extends State<MessagingChatScreen>
                     ),
                     IconButton(
                       tooltip: 'Send message',
-                      onPressed: widget.messaging.online ? _send : null,
+                      onPressed: widget.messaging.online && !_attachmentBusy
+                          ? _send
+                          : null,
                       icon: const Icon(Icons.send),
                     ),
                   ],

@@ -38,6 +38,9 @@ class Settings:
     ejabberd_api_password: str = os.getenv("EJABBERD_API_PASSWORD", "")
 
     messaging_push_enabled: bool = os.getenv("MESSAGING_PUSH_ENABLED", "false").lower() == "true"
+    messaging_attachment_directory: str = os.getenv("MESSAGING_ATTACHMENT_DIRECTORY", "/data/messaging-attachments")
+    messaging_attachment_quota_bytes: int = int(os.getenv("MESSAGING_ATTACHMENT_QUOTA_BYTES", str(1024 * 1024 * 1024)))
+    messaging_attachment_retention_days: int = int(os.getenv("MESSAGING_ATTACHMENT_RETENTION_DAYS", "30"))
     apns_team_id: str = os.getenv("MESSAGING_APNS_TEAM_ID", "")
     apns_key_id: str = os.getenv("MESSAGING_APNS_KEY_ID", "")
     apns_bundle_id: str = os.getenv("MESSAGING_APNS_BUNDLE_ID", "")

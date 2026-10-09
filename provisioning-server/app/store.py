@@ -146,6 +146,23 @@ class Store:
                     canonical_jid TEXT NOT NULL,
                     history_done INTEGER NOT NULL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS messaging_attachments (
+                    id TEXT PRIMARY KEY,
+                    account TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    peer TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    sha256 TEXT,
+                    media_type TEXT,
+                    status TEXT NOT NULL,
+                    created INTEGER NOT NULL,
+                    expires INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS messaging_attachment_expiry
+                    ON messaging_attachments(expires);
+                CREATE INDEX IF NOT EXISTS messaging_attachment_account
+                    ON messaging_attachments(account);
                 """
             )
             # Additive migration: retain shared passwords, accounts and history.

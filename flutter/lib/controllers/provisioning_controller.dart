@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
 import '../models/provisioning.dart';
+import '../models/chat_attachment.dart';
 import '../repositories/provisioning_repository.dart';
 import '../repositories/settings_repository.dart';
 import '../services/mobile_call_coordinator.dart';
@@ -484,6 +486,71 @@ class ProvisioningController extends ChangeNotifier
     _status = 'Not provisioned';
     _setBusy(false);
   }
+
+  bool get attachmentsAvailable =>
+      canUseApp &&
+      configuration?.messaging?.enabled == true &&
+      configuration?.messaging?.ready == true &&
+      configuration?.features['messaging'] != false;
+
+  Future<T> _attachmentRequest<T>(
+    Future<T> Function(ProvisioningService service, String token) operation,
+  ) async {
+    if (_busy || !attachmentsAvailable || _disposed) {
+      throw StateError(
+        'Messaging attachments are temporarily unavailable. Please retry.',
+      );
+    }
+    final device = _state!.deviceId;
+    final jid = configuration!.messaging!.jid;
+    final service = _serviceFactory(phone.provisioningUrl);
+    _setBusy(true);
+    try {
+      await _ensureFreshToken(service);
+      T result;
+      try {
+        result = await operation(service, _state!.accessToken);
+      } on ProvisioningException catch (error) {
+        if (error.statusCode != 401) rethrow;
+        await _refreshToken(service);
+        result = await operation(service, _state!.accessToken);
+      }
+      if (_disposed ||
+          !attachmentsAvailable ||
+          _state?.deviceId != device ||
+          configuration?.messaging?.jid != jid) {
+        throw StateError('This conversation is unavailable for your account.');
+      }
+      return result;
+    } finally {
+      service.close();
+      if (!_disposed) _setBusy(false);
+    }
+  }
+
+  Future<ChatAttachment> uploadMessagingAttachment({
+    required String peer,
+    required String name,
+    required Uint8List bytes,
+  }) => _attachmentRequest(
+    (service, token) => service.uploadAttachment(
+      accessToken: token,
+      peer: peer,
+      name: name,
+      bytes: bytes,
+    ),
+  );
+
+  Future<Uint8List> downloadMessagingAttachment({
+    required String peer,
+    required ChatAttachment attachment,
+  }) => _attachmentRequest(
+    (service, token) => service.downloadAttachment(
+      accessToken: token,
+      peer: peer,
+      attachment: attachment,
+    ),
+  );
 
   Future<MessagingPushSubscription?> registerMessagingPush() async {
     if (_busy || !canUseApp || !Platform.isIOS) {

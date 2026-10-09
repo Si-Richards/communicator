@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/chat_attachment.dart';
 import '../models/provisioning.dart';
 
 class ProvisioningException implements Exception {
@@ -174,6 +177,100 @@ class ProvisioningService {
     if (response.statusCode != 204) {
       throw _exception(response, _decode(response));
     }
+  }
+
+  Future<ChatAttachment> uploadAttachment({
+    required String accessToken,
+    required String peer,
+    required String name,
+    required Uint8List bytes,
+  }) async {
+    if (bytes.isEmpty || bytes.length > ChatAttachment.maxBytes) {
+      throw const ProvisioningException(
+        'Attachments must be between 1 byte and 10 MB.',
+      );
+    }
+    final request =
+        http.Request(
+            'POST',
+            _uri(
+              '/device/messaging/attachments',
+            ).replace(queryParameters: {'peer': peer, 'name': name}),
+          )
+          ..followRedirects = false
+          ..headers.addAll({
+            'Authorization': 'Bearer $accessToken',
+            'Content-Type': 'application/octet-stream',
+          })
+          ..bodyBytes = bytes;
+    final response = await http.Response.fromStream(
+      await _client.send(request).timeout(const Duration(seconds: 90)),
+    ).timeout(const Duration(seconds: 90));
+    if (response.statusCode != 201) {
+      throw _exception(response, _decode(response));
+    }
+    final attachment = ChatAttachment.fromJson(_decode(response));
+    if (attachment.size != bytes.length ||
+        attachment.sha256 != sha256.convert(bytes).toString()) {
+      throw const ProvisioningException(
+        'The uploaded attachment could not be verified.',
+      );
+    }
+    return attachment;
+  }
+
+  Future<Uint8List> downloadAttachment({
+    required String accessToken,
+    required String peer,
+    required ChatAttachment attachment,
+  }) async {
+    final request =
+        http.Request(
+            'GET',
+            _uri(
+              '/device/messaging/attachments/${attachment.id}',
+            ).replace(queryParameters: {'peer': peer}),
+          )
+          ..followRedirects = false
+          ..headers['Authorization'] = 'Bearer $accessToken';
+    final response = await _client
+        .send(request)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      final failure = await http.Response.fromStream(
+        response,
+      ).timeout(const Duration(seconds: 30));
+      throw _exception(failure, _decode(failure));
+    }
+    final bytes = BytesBuilder(copy: false);
+    await (() async {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 30),
+      )) {
+        if (bytes.length + chunk.length > attachment.size) {
+          throw const ProvisioningException(
+            'The downloaded attachment is larger than expected.',
+          );
+        }
+        bytes.add(chunk);
+      }
+    })().timeout(
+      const Duration(seconds: 90),
+      onTimeout: () {
+        _client.close();
+        throw const ProvisioningException(
+          'The attachment download timed out. Please retry.',
+        );
+      },
+    );
+    final result = bytes.takeBytes();
+    if (result.length != attachment.size ||
+        sha256.convert(result).toString() != attachment.sha256) {
+      throw const ProvisioningException(
+        'The downloaded attachment could not be verified.',
+      );
+    }
+    return result;
   }
 
   Future<void> logout({

@@ -1,8 +1,10 @@
 import hmac
+import asyncio
+import hashlib
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.exceptions import RequestValidationError
 
 from .config import settings
@@ -604,6 +606,58 @@ def remove_messaging_push(device: Annotated[dict, Depends(authenticated_device)]
     with store._connect() as conn:
         conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device["id"],))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/v1/device/messaging/attachments", status_code=201)
+async def upload_messaging_attachment(
+    request: Request,
+    device: Annotated[dict, Depends(bearer_device)],
+    peer: Annotated[str, Query(min_length=1, max_length=200)],
+    name: Annotated[str, Query(min_length=1, max_length=200)],
+) -> dict:
+    from .messaging_attachments import Attachments, denied
+    try:
+        size = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        raise denied("attachment_length", 400)
+    attachments = Attachments(store, settings)
+    id = attachments.reserve(device, peer, name, size)
+    finished = False
+    try:
+        digest = hashlib.sha256()
+        received = 0
+        header = b""
+        async with asyncio.timeout(90):
+            with attachments.path(id, True).open("xb") as blob:
+                async for chunk in request.stream():
+                    received += len(chunk)
+                    if received > size:
+                        raise denied("attachment_length", 400)
+                    header = (header + chunk)[:16]
+                    digest.update(chunk)
+                    blob.write(chunk)
+        if received != size:
+            raise denied("attachment_length", 400)
+        result = attachments.finish(id, device, peer, digest.hexdigest(), header)
+        finished = True
+        return result
+    except TimeoutError:
+        raise error("attachment_timeout", "The attachment upload timed out. Please retry.", 408)
+    finally:
+        if not finished:
+            attachments.discard(id)
+
+
+@app.get("/api/v1/device/messaging/attachments/{attachment_id}")
+def download_messaging_attachment(
+    attachment_id: str,
+    device: Annotated[dict, Depends(bearer_device)],
+    peer: Annotated[str, Query(min_length=1, max_length=200)],
+) -> FileResponse:
+    from .messaging_attachments import Attachments
+    path, metadata = Attachments(store, settings).download(attachment_id, device, peer)
+    return FileResponse(path, filename=metadata["name"], media_type=metadata["media_type"],
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
 @app.post("/api/v1/device/logout", status_code=status.HTTP_204_NO_CONTENT)

@@ -185,7 +185,13 @@ References: [ejabberd mod_mam options](https://docs.ejabberd.im/admin/configurat
 
 Supported: managed login, one-to-one same-domain text, local conversations, archive recovery, older pages, XEP-0184 delivery receipts, XEP-0333 displayed markers, XEP-0085 typing, resource-aware presence, XEP-0280 live carbons, XEP-0359 outgoing origin IDs, lifecycle reconnect and provisioning access enforcement. `sent` means handed to the WebSocket, not proof of server acceptance. Text is encrypted locally and transported over TLS; this is not end-to-end encryption.
 
-Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, editing/retraction, attachments or groups. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
+Stage 3 adds private camera/photo/file attachments, selected-file previews,
+captions, authenticated image viewing and OS file saving. Attachment metadata
+recovers through MAM, carbons and the encrypted chat cache. Limits, participant
+authorization, retention and the required provisioning/Nginx/app rollout are in
+[MESSAGING-ATTACHMENTS.md](../provisioning-server/MESSAGING-ATTACHMENTS.md).
+
+Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, durable outbox/retry guarantees, editing/retraction or groups. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
 
 The protocol tests use a real loopback WebSocket fixture for login, routing, receipts, MAM discovery/paging, duplicate recovery, interrupted pages, expired cursors, failed storage, account changes and lock/logout. Storage tests verify encrypted reopening, account/endpoint isolation and tamper rejection. Provisioning tests verify credential retention/rotation, account-change validation, disablement, portal redaction and validation secrecy. These checks supplement the on-device tests above; this environment cannot build/sign an iOS binary or verify your private account's live archive.
 

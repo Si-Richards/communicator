@@ -1,3 +1,5 @@
+import 'chat_attachment.dart';
+
 enum ChatMessageStatus { received, sent, delivered, read, failed }
 
 /// Archived status metadata can precede its message in a backwards page.
@@ -38,6 +40,7 @@ class ChatMessage {
     this.archiveId,
     this.markable = false,
     this.displayed = false,
+    this.attachment,
   });
 
   final String id;
@@ -45,6 +48,7 @@ class ChatMessage {
   final String body;
   final bool outgoing;
   final DateTime timestamp;
+  final ChatAttachment? attachment;
   ChatMessageStatus status;
   String? archiveId;
   bool markable;
@@ -75,6 +79,7 @@ class ChatMessage {
     if (archiveId != null) 'archive_id': archiveId,
     'markable': markable,
     'displayed': displayed,
+    if (attachment != null) 'attachment': attachment!.toJson(),
   };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -87,5 +92,6 @@ class ChatMessage {
     archiveId: json['archive_id'] as String?,
     markable: json['markable'] == true,
     displayed: json['displayed'] == true,
+    attachment: ChatAttachment.tryFromJson(json['attachment']),
   );
 }

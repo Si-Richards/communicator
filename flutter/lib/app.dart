@@ -312,8 +312,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       unawaited(
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) =>
-                MessagingChatScreen(messaging: _messaging, peer: peer),
+            builder: (_) => MessagingChatScreen(
+              messaging: _messaging,
+              peer: peer,
+              provisioning: widget.provisioning,
+            ),
           ),
         ),
       );
@@ -346,7 +349,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         provisioning: widget.provisioning,
         onGoToPhone: _goToPhone,
       ),
-      MessagesScreen(messaging: _messaging),
+      MessagesScreen(messaging: _messaging, provisioning: widget.provisioning),
     ];
 
     return AnimatedBuilder(
@@ -534,4 +537,3 @@ class _ProvisioningLockedScreen extends StatelessWidget {
     );
   }
 }
-
