@@ -20,6 +20,84 @@ RANDY notification worker and copy the updated native iOS template before buildi
 Existing enrolled devices register without a fresh activation. Tenant/account scope
 is checked both before delivery and when a notification opens a conversation.
 
+## Conversation activity: names, presence, typing and read receipts
+
+This app update adds the first messaging improvement stage. Update **both**
+conversation participants for typing/read indicators. Existing clients continue
+text messaging and delivery receipts. For an already working managed deployment,
+this stage needs only the app update: keep the existing `mod_roster`,
+`mod_carboncopy`, `mod_disco` and `mod_mam` enabled. No provisioning/gateway rebuild,
+fresh activation, ejabberd tenant-module reinstall or Nginx change is needed.
+
+From `flutter/` on the Mac:
+
+```bash
+git pull --ff-only origin feature/ejabberd-messaging && flutter pub get && flutter analyze && flutter test test/xmpp_service_test.dart test/chat_history_repository_test.dart test/messaging_activity_screen_test.dart test/messaging_push_test.dart
+```
+
+Then install on the test devices with your existing `flutter run`/Xcode process.
+This stage changes Dart code only; it does not change the native PushKit template.
+
+- Names come from the provisioned account roster. Conversation titles, the chat
+  header and Directory use `Connor · 230`, falling back to the extension when no
+  friendly name is supplied. Refresh Directory after an administrator changes a name.
+- Availability is messaging presence, independent of SIP registration and call
+  DND. Multiple resources are combined: any Available device wins; otherwise Busy
+  wins over Away. Directory users without an available resource show Offline.
+  When this client's connection is unavailable, statuses show Status unavailable.
+  Suspending the phone closes its XMPP connection; another connected device can
+  keep the person Available. Offline does not imply APNs cannot notify the phone.
+- Typing uses XEP-0085 support negotiation. Activity sends only state changes,
+  pauses after five seconds without typing, stops when sending/leaving/backgrounding,
+  and stale remote typing expires after 45 seconds. It never appears in message
+  history or generates a chat alert.
+- Outgoing bubbles show one tick for Sent, two for Delivered and highlighted two
+  ticks for Read, with accessible labels/tooltips. Sent means handed to the socket,
+  not server acknowledgement. Delivered requires a recipient-client receipt.
+  Read means displayed by a participating client, not proof a person understood it.
+- Read markers are emitted only for an incoming message visible in the current
+  foreground chat route. A notification, another open screen, an archive load or
+  a background/inactive app cannot mark a message read. A displayed marker applies
+  to earlier incoming messages in that conversation. Late receipts/errors cannot
+  downgrade Read; unrelated peers and unknown live marker IDs are ignored.
+- XEP-0280 carbons copy incoming/outgoing messages and read updates between the
+  same identity's connected devices, without reply loops. Only wrappers from the
+  exact own bare JID with valid direction and same-account inner peers are accepted.
+  MAM catches up disconnected devices. Receipts/read markers request archive storage
+  but have no message body, so the notification worker does not alert for them.
+- Status metadata and privacy preferences remain in the existing encrypted,
+  account/endpoint-scoped cache. Up to 500 archived updates/read watermarks are
+  retained for backwards paging/reconnect, even if an update precedes its message.
+  Old caches default to enabled sharing. New accounts do not inherit another
+  account's preferences; forgetting history also removes these saved preferences.
+- Open Messages → Messaging preferences to choose this device's Available/Away/Busy
+  status or disable sharing typing/read activity. Read-sharing opt-out suppresses
+  this device's displayed markers; delivery acknowledgements remain enabled.
+  Other devices use their own preferences, and can still report their own reads.
+
+Test on updated clients:
+
+1. Confirm names/extensions match the provisioned directory and another account
+   remains inaccessible, including its presence and typing information.
+2. Open a chat on both devices. Type without sending, pause for five seconds,
+   continue, then send. The other client should show and clear Typing appropriately.
+3. Leave the recipient on another screen. Send a message: Delivered should appear
+   once received, while Read should wait until its bubble is shown in the chat.
+4. Background/lock the recipient phone. Check the APNs alert still works and does
+   not mark the message Read. Reopen the conversation and check Read appears.
+5. Connect two devices as the same extension. Send from either, read on one, then
+   reconnect the other. Check text/read state synchronizes without duplicate messages.
+6. Change availability on devices; disconnect one and check the other keeps the
+   person online. Turn off sharing, restart, and verify preferences persist.
+7. Scroll older history, cover the chat with another route, and reconnect. Messages
+   outside the viewport/covered chat should not emit new read markers; existing
+   read state should survive recovery.
+
+References: [XEP-0085](https://xmpp.org/extensions/xep-0085.html),
+[XEP-0184](https://xmpp.org/extensions/xep-0184.html),
+[XEP-0333](https://xmpp.org/extensions/xep-0333.html),
+[XEP-0280](https://xmpp.org/extensions/xep-0280.html).
+
 ## Deployment order
 
 1. Choose automatic account management or existing manual accounts, and check the archive policy below. [Automatic setup](../provisioning-server/EJABBERD-MANAGEMENT.md) creates/manages accounts on the provisioning server using the numeric account number and 3–5 digit extension, for example `10000*207@ejabberd.voicehost.io`. API credentials stay on the server.
@@ -105,9 +183,9 @@ References: [ejabberd mod_mam options](https://docs.ejabberd.im/admin/configurat
 
 ## Scope and verification
 
-Supported: managed login, one-to-one same-domain text, local conversations, archive recovery, older pages, XEP-0184 delivery receipts, XEP-0359 outgoing origin IDs, lifecycle reconnect and provisioning access enforcement. `sent` means handed to the WebSocket, not proof of server acceptance. Text is encrypted locally and transported over TLS; this is not end-to-end encryption.
+Supported: managed login, one-to-one same-domain text, local conversations, archive recovery, older pages, XEP-0184 delivery receipts, XEP-0333 displayed markers, XEP-0085 typing, resource-aware presence, XEP-0280 live carbons, XEP-0359 outgoing origin IDs, lifecycle reconnect and provisioning access enforcement. `sent` means handed to the WebSocket, not proof of server acceptance. Text is encrypted locally and transported over TLS; this is not end-to-end encryption.
 
-Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, live message carbons between multiple clients, attachments, groups or typing/read markers. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
+Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, outbox/retry guarantees, editing/retraction, attachments or groups. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
 
 The protocol tests use a real loopback WebSocket fixture for login, routing, receipts, MAM discovery/paging, duplicate recovery, interrupted pages, expired cursors, failed storage, account changes and lock/logout. Storage tests verify encrypted reopening, account/endpoint isolation and tamper rejection. Provisioning tests verify credential retention/rotation, account-change validation, disablement, portal redaction and validation secrecy. These checks supplement the on-device tests above; this environment cannot build/sign an iOS binary or verify your private account's live archive.
 

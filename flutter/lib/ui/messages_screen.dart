@@ -2,8 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/chat_message.dart';
+import '../models/messaging_presence.dart';
 import '../services/xmpp_service.dart';
 import 'messaging_diagnostics_screen.dart';
+
+final messagingRouteObserver = RouteObserver<ModalRoute<dynamic>>();
 
 class MessagesScreen extends StatelessWidget {
   const MessagesScreen({super.key, required this.messaging});
@@ -78,6 +81,14 @@ class MessagesScreen extends StatelessWidget {
               ],
             ),
             actions: [
+              IconButton(
+                tooltip: 'Messaging preferences',
+                icon: const Icon(Icons.tune),
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => _ActivitySettingsDialog(messaging: messaging),
+                ),
+              ),
               if (kDebugMode)
                 IconButton(
                   tooltip: 'Messaging diagnostics',
@@ -151,20 +162,23 @@ class MessagesScreen extends StatelessWidget {
                             itemBuilder: (context, index) {
                               final message = conversations[index];
                               return ListTile(
-                                leading: const CircleAvatar(
-                                  child: Icon(Icons.person_outline),
+                                leading: _PresenceAvatar(
+                                  presence: messaging.presenceFor(message.peer),
                                 ),
                                 title: Text(
                                   messaging.contactLabel(message.peer),
                                 ),
                                 subtitle: Text(
-                                  message.body,
+                                  messaging.isTyping(message.peer)
+                                      ? 'Typing…'
+                                      : message.body,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 trailing: Text(
-                                  TimeOfDay.fromDateTime(message.timestamp)
-                                      .format(context),
+                                  TimeOfDay.fromDateTime(
+                                    message.timestamp,
+                                  ).format(context),
                                 ),
                                 onTap: () => _openChat(context, message.peer),
                               );
@@ -190,6 +204,146 @@ class _RecipientDialog extends StatefulWidget {
   final XmppService messaging;
   @override
   State<_RecipientDialog> createState() => _RecipientDialogState();
+}
+
+class _PresenceAvatar extends StatelessWidget {
+  const _PresenceAvatar({required this.presence});
+  final MessagingPresence presence;
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (presence) {
+      MessagingPresence.available => Colors.green.shade700,
+      MessagingPresence.away => Colors.amber.shade800,
+      MessagingPresence.busy => Colors.red.shade700,
+      _ => Colors.grey.shade600,
+    };
+    return Semantics(
+      label: presence.label,
+      child: Stack(
+        children: [
+          const CircleAvatar(child: Icon(Icons.person_outline)),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.surface,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageStatusIcon extends StatelessWidget {
+  const _MessageStatusIcon({required this.status});
+  final ChatMessageStatus status;
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (status) {
+      ChatMessageStatus.read => 'Read',
+      ChatMessageStatus.delivered => 'Delivered',
+      ChatMessageStatus.failed => 'Failed to send',
+      _ => 'Sent',
+    };
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        child: Icon(
+          switch (status) {
+            ChatMessageStatus.read ||
+            ChatMessageStatus.delivered => Icons.done_all,
+            ChatMessageStatus.failed => Icons.error_outline,
+            _ => Icons.done,
+          },
+          size: 16,
+          color: status == ChatMessageStatus.read
+              ? const Color(0xFF80D8FF)
+              : status == ChatMessageStatus.failed
+              ? const Color(0xFFFFAB91)
+              : Theme.of(
+                  context,
+                ).colorScheme.onSecondary.withValues(alpha: 0.75),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivitySettingsDialog extends StatelessWidget {
+  const _ActivitySettingsDialog({required this.messaging});
+  final XmppService messaging;
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: messaging,
+    builder: (context, _) => AlertDialog(
+      title: const Text('Messaging preferences'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<MessagingPresence>(
+              initialValue: messaging.ownPresence,
+              decoration: const InputDecoration(
+                labelText: 'My messaging status',
+              ),
+              items: [
+                for (final state in [
+                  MessagingPresence.available,
+                  MessagingPresence.away,
+                  MessagingPresence.busy,
+                ])
+                  DropdownMenuItem(value: state, child: Text(state.label)),
+              ],
+              onChanged: messaging.accessAllowed
+                  ? (value) {
+                      if (value != null) messaging.setPresence(value);
+                    }
+                  : null,
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Share typing activity'),
+              value: messaging.shareTyping,
+              onChanged: messaging.accessAllowed
+                  ? (value) => messaging.setActivitySharing(typing: value)
+                  : null,
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Share read receipts'),
+              subtitle: const Text('Delivery receipts remain enabled.'),
+              value: messaging.shareReadReceipts,
+              onChanged: messaging.accessAllowed
+                  ? (value) => messaging.setActivitySharing(readReceipts: value)
+                  : null,
+            ),
+            const Text(
+              'These preferences apply to this device. Messaging status is separate from call Do Not Disturb.',
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Done'),
+        ),
+      ],
+    ),
+  );
 }
 
 class _RecipientDialogState extends State<_RecipientDialog> {
@@ -303,13 +457,11 @@ class _AccountDirectoryState extends State<_AccountDirectory> {
                   itemBuilder: (context, index) {
                     final contact = contacts[index];
                     return ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.person_outline),
+                      leading: _PresenceAvatar(
+                        presence: messaging.presenceFor(contact.jid),
                       ),
-                      title: Text(
-                        contact.name.isEmpty ? contact.extension : contact.name,
-                      ),
-                      subtitle: Text('Extension ${contact.extension}'),
+                      title: Text(contact.label),
+                      subtitle: Text(messaging.presenceFor(contact.jid).label),
                       onTap: messaging.online
                           ? () => widget.onSelect(contact.jid)
                           : null,
@@ -334,10 +486,112 @@ class MessagingChatScreen extends StatefulWidget {
   State<MessagingChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<MessagingChatScreen> {
+class _ChatScreenState extends State<MessagingChatScreen>
+    with WidgetsBindingObserver, RouteAware {
   final _text = TextEditingController();
+  final _scroll = ScrollController();
+  final _viewport = GlobalKey();
+  final _messageKeys = <String, GlobalKey>{};
+  ModalRoute<dynamic>? _route;
+  bool _readScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scroll.addListener(_scheduleRead);
+    _text.addListener(_typingChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (_route != route) {
+      messagingRouteObserver.unsubscribe(this);
+      _route = route;
+      if (route != null) messagingRouteObserver.subscribe(this, route);
+    }
+    _scheduleRead();
+  }
+
+  bool get _visible =>
+      mounted &&
+      _peerAllowed &&
+      (_route?.isCurrent ?? false) &&
+      (WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed);
+
+  bool get _peerAllowed {
+    try {
+      return widget.messaging.recipientJid(widget.peer) == widget.peer;
+    } on ArgumentError {
+      return false;
+    }
+  }
+
+  void _typingChanged() {
+    if (_visible && widget.messaging.online) {
+      widget.messaging.updateTyping(
+        widget.peer,
+        composing: _text.text.isNotEmpty,
+      );
+    }
+  }
+
+  @override
+  void didPushNext() => widget.messaging.stopTyping(widget.peer);
+  @override
+  void didPopNext() => _scheduleRead();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleRead();
+    } else {
+      widget.messaging.stopTyping(widget.peer);
+    }
+  }
+
+  void _scheduleRead() {
+    if (_readScheduled || !mounted) return;
+    _readScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _readScheduled = false;
+      if (!_visible ||
+          !widget.messaging.online ||
+          !widget.messaging.accessAllowed) {
+        return;
+      }
+      widget.messaging.prepareConversation(widget.peer);
+      final viewport = _viewport.currentContext?.findRenderObject();
+      if (viewport is! RenderBox || !viewport.hasSize) return;
+      final bounds = viewport.localToGlobal(Offset.zero) & viewport.size;
+      for (final message in widget.messaging.messages.reversed) {
+        if (message.peer != widget.peer ||
+            message.outgoing ||
+            message.displayed) {
+          continue;
+        }
+        final box = _messageKeys[message.id]?.currentContext
+            ?.findRenderObject();
+        if (box is! RenderBox || !box.hasSize || !box.attached) continue;
+        final rect = box.localToGlobal(Offset.zero) & box.size;
+        final visible = bounds.intersect(rect);
+        if (visible.width > 0 &&
+            visible.height >= (rect.height < 24 ? rect.height : 24)) {
+          widget.messaging.markConversationDisplayed(widget.peer, message.id);
+          break;
+        }
+      }
+    });
+  }
+
   @override
   void dispose() {
+    messagingRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    widget.messaging.stopTyping(widget.peer);
+    _scroll.dispose();
     _text.dispose();
     super.dispose();
   }
@@ -375,11 +629,35 @@ class _ChatScreenState extends State<MessagingChatScreen> {
           ),
         );
       }
+      if (!_peerAllowed) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('Messages')),
+          body: const Center(
+            child: Text('This conversation is unavailable for your account.'),
+          ),
+        );
+      }
       final messages = widget.messaging.messages
           .where((m) => m.peer == widget.peer)
           .toList();
+      _scheduleRead();
+      final ids = messages.map((m) => m.id).toSet();
+      _messageKeys.removeWhere((id, _) => !ids.contains(id));
       return Scaffold(
-        appBar: AppBar(title: Text(widget.messaging.contactLabel(widget.peer))),
+        appBar: AppBar(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.messaging.contactLabel(widget.peer)),
+              Text(
+                widget.messaging.isTyping(widget.peer)
+                    ? '${widget.messaging.contactLabel(widget.peer)} is typing…'
+                    : widget.messaging.presenceFor(widget.peer).label,
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
         body: SafeArea(
           child: Column(
             children: [
@@ -398,6 +676,8 @@ class _ChatScreenState extends State<MessagingChatScreen> {
                 ),
               Expanded(
                 child: ListView.builder(
+                  key: _viewport,
+                  controller: _scroll,
                   reverse: true,
                   padding: const EdgeInsets.all(16),
                   itemCount: messages.length,
@@ -405,6 +685,9 @@ class _ChatScreenState extends State<MessagingChatScreen> {
                     final message = messages[messages.length - 1 - index];
                     final colors = Theme.of(context).colorScheme;
                     return Align(
+                      key: message.outgoing
+                          ? ValueKey('out-${message.id}')
+                          : _messageKeys.putIfAbsent(message.id, GlobalKey.new),
                       alignment: message.outgoing
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
@@ -432,15 +715,27 @@ class _ChatScreenState extends State<MessagingChatScreen> {
                               ),
                             ),
                             const SizedBox(height: 5),
-                            Text(
-                              '${TimeOfDay.fromDateTime(message.timestamp).format(context)}'
-                              '${message.outgoing ? ' · ${message.status.name}' : ''}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: message.outgoing
-                                    ? colors.onSecondary.withValues(alpha: 0.75)
-                                    : colors.onSurfaceVariant,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  TimeOfDay.fromDateTime(
+                                    message.timestamp,
+                                  ).format(context),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: message.outgoing
+                                        ? colors.onSecondary.withValues(
+                                            alpha: 0.75,
+                                          )
+                                        : colors.onSurfaceVariant,
+                                  ),
+                                ),
+                                if (message.outgoing) ...[
+                                  const SizedBox(width: 6),
+                                  _MessageStatusIcon(status: message.status),
+                                ],
+                              ],
                             ),
                           ],
                         ),

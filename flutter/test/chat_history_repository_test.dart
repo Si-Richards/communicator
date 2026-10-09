@@ -4,9 +4,54 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voicehost_softphone/models/chat_message.dart';
 import 'package:voicehost_softphone/models/provisioning.dart';
+import 'package:voicehost_softphone/models/messaging_presence.dart';
 import 'package:voicehost_softphone/services/chat_history_repository.dart';
 
 void main() {
+  test(
+    'old caches default activity settings and new caches retain read metadata',
+    () {
+      final old = ChatHistorySnapshot.fromJson({'version': 1, 'messages': []});
+      expect(old.shareTyping, isTrue);
+      expect(old.shareReadReceipts, isTrue);
+      expect(old.presence, MessagingPresence.available);
+      final snapshot = ChatHistorySnapshot(
+        shareTyping: false,
+        shareReadReceipts: false,
+        presence: MessagingPresence.busy,
+        statusUpdates: [
+          const ChatMessageUpdate(
+            '208@ejabberd.voicehost.io',
+            'read',
+            outgoing: true,
+            displayed: true,
+          ),
+        ],
+        messages: [
+          ChatMessage(
+            id: 'read',
+            peer: '208@ejabberd.voicehost.io',
+            body: 'text',
+            outgoing: true,
+            timestamp: DateTime.utc(2026),
+            status: ChatMessageStatus.read,
+            markable: true,
+            displayed: true,
+          ),
+        ],
+      );
+      final recovered = ChatHistorySnapshot.fromJson(snapshot.toJson());
+      expect(recovered.shareTyping, isFalse);
+      expect(recovered.shareReadReceipts, isFalse);
+      expect(recovered.presence, MessagingPresence.busy);
+      expect(recovered.messages.single.status, ChatMessageStatus.read);
+      expect(recovered.messages.single.markable, isTrue);
+      expect(recovered.messages.single.displayed, isTrue);
+      expect(recovered.statusUpdates.single.id, 'read');
+      expect(recovered.statusUpdates.single.displayed, isTrue);
+    },
+  );
+
   test(
     'history survives reopening, is encrypted and is isolated by account',
     () async {

@@ -36,6 +36,7 @@ class VoiceHostApp extends StatelessWidget {
     return MaterialApp(
       title: 'Softphone',
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [messagingRouteObserver],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: orange,
@@ -127,6 +128,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _messaging.setForeground(
+      lifecycle == null || lifecycle == AppLifecycleState.resumed,
+    );
     if (lifecycle == AppLifecycleState.paused ||
         lifecycle == AppLifecycleState.detached) {
       _messaging.pause();
@@ -225,6 +229,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _messaging.setForeground(state == AppLifecycleState.resumed);
     if (state == AppLifecycleState.resumed) {
       _messaging.resume();
     } else if (state == AppLifecycleState.paused ||

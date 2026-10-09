@@ -7,6 +7,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:xml/xml.dart';
 import 'package:voicehost_softphone/models/chat_message.dart';
 import 'package:voicehost_softphone/models/provisioning.dart';
+import 'package:voicehost_softphone/models/messaging_presence.dart';
 import 'package:voicehost_softphone/services/xmpp_service.dart';
 import 'package:voicehost_softphone/services/chat_history_repository.dart';
 
@@ -25,9 +26,15 @@ void main() {
     await server.close();
   });
 
-  XmppService client({ChatHistoryRepository? history}) {
+  XmppService client({
+    ChatHistoryRepository? history,
+    Duration typingPause = const Duration(seconds: 5),
+    Duration typingExpiry = const Duration(seconds: 45),
+  }) {
     final service = XmppService(
       historyRepository: history ?? MemoryChatHistoryRepository(),
+      typingPause: typingPause,
+      typingExpiry: typingExpiry,
       channelFactory: (_) =>
           IOWebSocketChannel.connect(server.uri, protocols: ['xmpp']),
     );
@@ -40,35 +47,360 @@ void main() {
     await _until(() => service.online);
   }
 
-  test('automatic account waits for readiness then uses the canonical account identity', () async {
-    final alice = client();
-    alice.configureManaged(
-      const MessagingConfiguration(
-        enabled: true,
-        ready: false,
-        jid: '10000*207@ejabberd.voicehost.io',
-        password: 'private-test-password',
-        websocket: 'wss://ejabberd.voicehost.io/websocket',
-      ),
-    );
-    await alice.reconnect();
-    expect(server.connections, isEmpty);
-    expect(alice.error, contains('being prepared'));
-    alice.configureManaged(
-      const MessagingConfiguration(
-        enabled: true,
-        jid: '10000*207@ejabberd.voicehost.io',
-        password: 'private-test-password',
-        websocket: 'wss://ejabberd.voicehost.io/websocket',
-      ),
-    );
-    await _until(() => alice.online);
-    final bob = client();
-    await login(bob, '10000*208');
-    alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
-    await _until(() => bob.messages.isNotEmpty);
-    expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
+  const peer = '10000*208@ejabberd.voicehost.io';
+  List<XmlElement> states(String state) => server.received
+      .where(
+        (s) =>
+            s.name.local == 'message' &&
+            s.getElement(
+                  state,
+                  namespace: 'http://jabber.org/protocol/chatstates',
+                ) !=
+                null,
+      )
+      .toList();
+  List<XmlElement> readMarkers() => server.received
+      .where(
+        (s) =>
+            s.name.local == 'message' &&
+            s.getElement('displayed', namespace: 'urn:xmpp:chat-markers:0') !=
+                null,
+      )
+      .toList();
+  void receive(XmppService service, String xml) =>
+      _sendFixture(server.users[service.jid!.split('@').first]!, xml);
+  String carbon(String owner, String direction, String inner) =>
+      '<message xmlns="jabber:client" from="$owner">'
+      '<$direction xmlns="urn:xmpp:carbons:2">'
+      '<forwarded xmlns="urn:xmpp:forward:0">$inner</forwarded>'
+      '</$direction></message>';
+
+  test(
+    'presence combines resources, rejects foreign tenants and resets on pause',
+    () async {
+      final service = client();
+      await login(service, '10000*207');
+      receive(
+        service,
+        '<presence xmlns="jabber:client" from="$peer/phone"/>'
+        '<presence xmlns="jabber:client" from="$peer/desktop"><show>dnd</show></presence>'
+        '<presence xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io/foreign"/>',
+      );
+      await _until(
+        () => service.presenceFor(peer) == MessagingPresence.available,
+      );
+      expect(
+        service.presenceFor('20000*208@ejabberd.voicehost.io'),
+        MessagingPresence.unknown,
+      );
+      receive(
+        service,
+        '<presence xmlns="jabber:client" from="$peer/phone" type="unavailable"/>',
+      );
+      await _until(() => service.presenceFor(peer) == MessagingPresence.busy);
+      receive(
+        service,
+        '<presence xmlns="jabber:client" from="$peer/desktop" type="unavailable"/>',
+      );
+      await _until(
+        () => service.presenceFor(peer) == MessagingPresence.offline,
+      );
+      service.pause();
+      expect(service.presenceFor(peer), MessagingPresence.unknown);
+    },
+  );
+
+  test(
+    'typing expires and a paused resource does not clear another resource',
+    () async {
+      final service = client(typingExpiry: const Duration(milliseconds: 150));
+      await login(service, '10000*207');
+      String state(String resource, String value) =>
+          '<message xmlns="jabber:client" '
+          'from="$peer/$resource" type="chat"><$value xmlns="http://jabber.org/protocol/chatstates"/></message>';
+      receive(
+        service,
+        state('phone', 'composing') + state('desktop', 'composing'),
+      );
+      await _until(() => service.isTyping(peer));
+      receive(service, state('phone', 'paused'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(service.isTyping(peer), isTrue);
+      await _until(() => !service.isTyping(peer));
+      receive(
+        service,
+        '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" '
+        'type="chat"><composing xmlns="http://jabber.org/protocol/chatstates"/></message>',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(service.isTyping('20000*208@ejabberd.voicehost.io'), isFalse);
+      expect(service.messages, isEmpty);
+    },
+  );
+
+  test(
+    'typing negotiation, debounce, idle, privacy and foreground rules',
+    () async {
+      final service = client(typingPause: const Duration(milliseconds: 70));
+      await login(service, '10000*207');
+      receive(
+        service,
+        '<message xmlns="jabber:client" from="$peer/phone" type="chat">'
+        '<active xmlns="http://jabber.org/protocol/chatstates"/></message>',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      service.updateTyping(peer, composing: true);
+      service.updateTyping(peer, composing: true);
+      await _until(() => states('composing').length == 1);
+      await _until(() => states('paused').length == 1);
+      service.updateTyping(peer, composing: true);
+      await _until(() => states('composing').length == 2);
+      service.setActivitySharing(typing: false);
+      await _until(() => states('inactive').length == 1);
+      service.updateTyping(peer, composing: true);
+      service.setActivitySharing(typing: true);
+      service.setForeground(false);
+      service.updateTyping(peer, composing: true);
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      expect(states('composing'), hasLength(2));
+    },
+  );
+
+  test('peer discovery enables typing before the first text message', () async {
+    final service = client();
+    await login(service, '10000*207');
+    service.prepareConversation(peer);
+    await _until(() {
+      service.updateTyping(peer, composing: true);
+      return states('composing').isNotEmpty;
+    });
   });
+
+  test(
+    'delivery is separate from display and later receipts never downgrade read',
+    () async {
+      final alice = client();
+      final bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      alice.sendMessage(recipient: '209', body: 'other peer');
+      alice.sendMessage(recipient: '208', body: 'first');
+      alice.sendMessage(recipient: '208', body: 'second');
+      await _until(
+        () =>
+            bob.messages.length == 2 &&
+            alice.messages.last.status == ChatMessageStatus.delivered,
+      );
+      expect(readMarkers(), isEmpty);
+      bob.markConversationDisplayed('10000*207', bob.messages.last.id);
+      await _until(() => alice.messages.last.status == ChatMessageStatus.read);
+      expect(alice.messages[1].status, ChatMessageStatus.read);
+      expect(alice.messages.first.status, ChatMessageStatus.sent);
+      final id = alice.messages.last.id;
+      receive(
+        alice,
+        '<message xmlns="jabber:client" from="$peer/phone" type="chat">'
+        '<received xmlns="urn:xmpp:receipts" id="$id"/></message>'
+        '<message xmlns="jabber:client" from="$peer/phone" type="error" id="$id"/>',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(alice.messages.last.status, ChatMessageStatus.read);
+      expect(readMarkers(), hasLength(1));
+      bob.markConversationDisplayed('10000*207', id);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(readMarkers(), hasLength(1));
+    },
+  );
+
+  test(
+    'background, disabled read sharing and unknown marker IDs cannot signal read',
+    () async {
+      final alice = client();
+      final bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      alice.sendMessage(recipient: '208', body: 'not opened');
+      await _until(() => bob.messages.isNotEmpty);
+      bob.setForeground(false);
+      bob.markConversationDisplayed('10000*207', bob.messages.single.id);
+      expect(bob.messages.single.displayed, isFalse);
+      bob.setForeground(true);
+      bob.setActivitySharing(readReceipts: false);
+      bob.markConversationDisplayed('10000*207', bob.messages.single.id);
+      expect(bob.messages.single.displayed, isTrue);
+      receive(
+        alice,
+        '<message xmlns="jabber:client" from="$peer" type="chat">'
+        '<displayed xmlns="urn:xmpp:chat-markers:0" id="unknown"/></message>',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(readMarkers(), isEmpty);
+      expect(alice.messages.single.status, ChatMessageStatus.delivered);
+    },
+  );
+
+  test(
+    'carbons synchronize text and own display without echoing receipts or markers',
+    () async {
+      final service = client();
+      await login(service, '10000*207');
+      const owner = '10000*207@ejabberd.voicehost.io';
+      final sent =
+          '<message xmlns="jabber:client" from="$owner/desktop" to="$peer" '
+          'type="chat" id="sent"><body>desktop text</body></message>';
+      final incoming =
+          '<message xmlns="jabber:client" from="$peer/phone" to="$owner/desktop" '
+          'type="chat" id="incoming"><body>incoming text</body>'
+          '<request xmlns="urn:xmpp:receipts"/><markable xmlns="urn:xmpp:chat-markers:0"/></message>';
+      receive(
+        service,
+        carbon(owner, 'sent', sent) + carbon(owner, 'received', incoming),
+      );
+      await _until(() => service.messages.length == 2);
+      expect(service.messages.first.outgoing, isTrue);
+      expect(service.messages.last.outgoing, isFalse);
+      receive(
+        service,
+        carbon(
+          owner,
+          'sent',
+          '<message xmlns="jabber:client" '
+              'from="$owner/desktop" to="$peer" type="chat">'
+              '<displayed xmlns="urn:xmpp:chat-markers:0" id="incoming"/></message>',
+        ),
+      );
+      await _until(() => service.messages.last.displayed);
+      receive(
+        service,
+        carbon(
+          owner,
+          'received',
+          '<message xmlns="jabber:client" '
+              'from="$peer/phone" to="$owner/desktop" type="chat">'
+              '<displayed xmlns="urn:xmpp:chat-markers:0" id="sent"/></message>',
+        ),
+      );
+      await _until(
+        () => service.messages.first.status == ChatMessageStatus.read,
+      );
+      receive(service, carbon(owner, 'sent', sent));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(service.messages, hasLength(2));
+      expect(readMarkers(), isEmpty);
+      expect(
+        server.received.where(
+          (s) =>
+              s.getElement('received', namespace: 'urn:xmpp:receipts') != null,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'forged carbon wrappers and cross-tenant inner messages are rejected',
+    () async {
+      final service = client();
+      await login(service, '10000*207');
+      const owner = '10000*207@ejabberd.voicehost.io';
+      String inner(String sender) =>
+          '<message xmlns="jabber:client" '
+          'from="$sender" to="$owner" type="chat" id="forged"><body>forged</body></message>';
+      receive(
+        service,
+        carbon(peer, 'received', inner(peer)) +
+            carbon('$owner/resource', 'received', inner(peer)) +
+            carbon(owner, 'received', inner('20000*208@ejabberd.voicehost.io')),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(service.messages, isEmpty);
+    },
+  );
+
+  test(
+    'archive recovers read across pages without rendering or replying to metadata',
+    () async {
+      server.archive.addAll([
+        _Archived('1', 'sent', outgoing: true, clientId: 'known'),
+        _Archived('2', '', marker: 'known'),
+        _Archived('3', '', receipt: 'known'),
+      ]);
+      final history = MemoryChatHistoryRepository();
+      final service = client(history: history);
+      await login(service, '10000*207');
+      await _until(() => !service.historyBusy);
+      expect(service.messages, isEmpty);
+      await service.flushHistory();
+      service.disconnect();
+      await login(service, '10000*207');
+      await _until(() => !service.historyBusy);
+      await service.loadOlder();
+      expect(service.messages.single.status, ChatMessageStatus.read);
+      expect(service.messages.single.body, 'sent');
+      expect(readMarkers(), isEmpty);
+      expect(
+        server.received.where(
+          (s) =>
+              s.getElement('received', namespace: 'urn:xmpp:receipts') != null,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'activity preferences persist per account and do not migrate to another tenant',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      final service = client(history: history);
+      await login(service, '10000*207');
+      service.setActivitySharing(typing: false, readReceipts: false);
+      service.setPresence(MessagingPresence.busy);
+      await service.flushHistory();
+      service.disconnect();
+      await login(service, '10000*207');
+      expect(service.shareTyping, isFalse);
+      expect(service.shareReadReceipts, isFalse);
+      expect(service.ownPresence, MessagingPresence.busy);
+      await login(service, '20000*207');
+      expect(service.shareTyping, isTrue);
+      expect(service.shareReadReceipts, isTrue);
+      expect(service.ownPresence, MessagingPresence.available);
+    },
+  );
+
+  test(
+    'automatic account waits for readiness then uses the canonical account identity',
+    () async {
+      final alice = client();
+      alice.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          ready: false,
+          jid: '10000*207@ejabberd.voicehost.io',
+          password: 'private-test-password',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+        ),
+      );
+      await alice.reconnect();
+      expect(server.connections, isEmpty);
+      expect(alice.error, contains('being prepared'));
+      alice.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          jid: '10000*207@ejabberd.voicehost.io',
+          password: 'private-test-password',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+        ),
+      );
+      await _until(() => alice.online);
+      final bob = client();
+      await login(bob, '10000*208');
+      alice.sendMessage(recipient: '10000*208', body: 'Full SIP identity');
+      await _until(() => bob.messages.isNotEmpty);
+      expect(bob.messages.single.peer, '10000*207@ejabberd.voicehost.io');
+    },
+  );
 
   const pushOwner = '10000*207@ejabberd.voicehost.io';
   MessagingPushSubscription push(
@@ -132,18 +464,23 @@ void main() {
     },
   );
 
-  test('push permission failure leaves chat online and reconnect retries registration', () async {
-    server.rejectPush = true;
-    final alice = client();
-    configureManagedForPush(alice);
-    alice.configurePush(push('a'));
-    await _until(() => alice.notificationStatus.contains('failed'));
-    expect(alice.online, isTrue);
-    server.rejectPush = false;
-    await alice.reconnect();
-    await _until(() => alice.notificationStatus == 'Notifications registered');
-    expect(pushRequests('enable').length, 2);
-  });
+  test(
+    'push permission failure leaves chat online and reconnect retries registration',
+    () async {
+      server.rejectPush = true;
+      final alice = client();
+      configureManagedForPush(alice);
+      alice.configurePush(push('a'));
+      await _until(() => alice.notificationStatus.contains('failed'));
+      expect(alice.online, isTrue);
+      server.rejectPush = false;
+      await alice.reconnect();
+      await _until(
+        () => alice.notificationStatus == 'Notifications registered',
+      );
+      expect(pushRequests('enable').length, 2);
+    },
+  );
 
   test('foreign push ownership never produces an enable request', () async {
     final alice = client();
@@ -154,55 +491,61 @@ void main() {
     expect(pushRequests('enable'), isEmpty);
   });
 
-  test('extensions resolve within the account and cross-account traffic is rejected', () async {
-    final alice = client();
-    final bob = client();
-    await login(alice, '10000*207');
-    await login(bob, '10000*208');
-    expect(alice.recipientJid('208'), '10000*208@ejabberd.voicehost.io');
-    expect(alice.extensionFor('10000*208@ejabberd.voicehost.io'), '208');
-    for (final recipient in [
-      '20000*208',
-      '20000*208@ejabberd.voicehost.io',
-      '208@ejabberd.voicehost.io',
-      '10000*208@elsewhere.example',
-    ]) {
-      expect(
-        () => alice.sendMessage(recipient: recipient, body: 'forbidden'),
-        throwsArgumentError,
+  test(
+    'extensions resolve within the account and cross-account traffic is rejected',
+    () async {
+      final alice = client();
+      final bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      expect(alice.recipientJid('208'), '10000*208@ejabberd.voicehost.io');
+      expect(alice.extensionFor('10000*208@ejabberd.voicehost.io'), '208');
+      for (final recipient in [
+        '20000*208',
+        '20000*208@ejabberd.voicehost.io',
+        '208@ejabberd.voicehost.io',
+        '10000*208@elsewhere.example',
+      ]) {
+        expect(
+          () => alice.sendMessage(recipient: recipient, body: 'forbidden'),
+          throwsArgumentError,
+        );
+      }
+      alice.sendMessage(recipient: '208', body: 'Extension only');
+      await _until(() => bob.messages.isNotEmpty);
+      expect(bob.messages.single.body, 'Extension only');
+      _sendFixture(
+        server.users['10000*207']!,
+        '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" '
+        'to="10000*207@ejabberd.voicehost.io" type="chat"><body>cross account</body></message>',
       );
-    }
-    alice.sendMessage(recipient: '208', body: 'Extension only');
-    await _until(() => bob.messages.isNotEmpty);
-    expect(bob.messages.single.body, 'Extension only');
-    _sendFixture(
-      server.users['10000*207']!,
-      '<message xmlns="jabber:client" from="20000*208@ejabberd.voicehost.io" '
-      'to="10000*207@ejabberd.voicehost.io" type="chat"><body>cross account</body></message>',
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(alice.messages.any((m) => m.body == 'cross account'), isFalse);
-  });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(alice.messages.any((m) => m.body == 'cross account'), isFalse);
+    },
+  );
 
-  test('account directory filters foreign contacts, deduplicates and clears on lock', () async {
-    server.roster = [
-      ('10000*208@ejabberd.voicehost.io', 'Reception'),
-      ('10000*208@ejabberd.voicehost.io', 'Reception'),
-      ('20000*208@ejabberd.voicehost.io', 'Other account'),
-      ('10000*207@ejabberd.voicehost.io', 'Self'),
-    ];
-    final service = client();
-    await login(service, '10000*207');
-    await _until(() => !service.directoryBusy);
-    expect(service.directory.single.extension, '208');
-    expect(service.directory.single.name, 'Reception');
-    expect(
-      service.contactLabel('10000*208@ejabberd.voicehost.io'),
-      'Reception · 208',
-    );
-    service.setAccessAllowed(false);
-    expect(service.directory, isEmpty);
-  });
+  test(
+    'account directory filters foreign contacts, deduplicates and clears on lock',
+    () async {
+      server.roster = [
+        ('10000*208@ejabberd.voicehost.io', 'Reception'),
+        ('10000*208@ejabberd.voicehost.io', 'Reception'),
+        ('20000*208@ejabberd.voicehost.io', 'Other account'),
+        ('10000*207@ejabberd.voicehost.io', 'Self'),
+      ];
+      final service = client();
+      await login(service, '10000*207');
+      await _until(() => !service.directoryBusy);
+      expect(service.directory.single.extension, '208');
+      expect(service.directory.single.name, 'Reception');
+      expect(
+        service.contactLabel('10000*208@ejabberd.voicehost.io'),
+        'Reception · 208',
+      );
+      service.setAccessAllowed(false);
+      expect(service.directory, isEmpty);
+    },
+  );
 
   test(
     'provisioned extensions resolve a SIP identity suffix through the roster',
@@ -301,32 +644,35 @@ void main() {
     },
   );
 
-  test('duplicate delayed incoming text is stored once and a ping is answered', () async {
-    final service = client();
-    await login(service, '207');
-    const message =
-        '<message xmlns="jabber:client" type="chat" id="duplicate" '
-        'from="208@ejabberd.voicehost.io/other"><body>archived &amp; text</body>'
-        '<delay xmlns="urn:xmpp:delay" stamp="2026-10-06T12:00:00Z"/></message>';
-    server.connections.single.add('$message$message');
-    await _until(() => service.messages.isNotEmpty);
-    expect(service.messages.length, 1);
-    expect(
-      service.messages.single.timestamp.toUtc(),
-      DateTime.utc(2026, 10, 6, 12),
-    );
-    server.connections.single.add(
-      '<iq xmlns="jabber:client" type="get" '
-      'id="ping-1" from="ejabberd.voicehost.io"><ping xmlns="urn:xmpp:ping"/></iq>',
-    );
-    await _until(
-      () => server.received.any(
-        (iq) =>
-            iq.getAttribute('id') == 'ping-1' &&
-            iq.getAttribute('type') == 'result',
-      ),
-    );
-  });
+  test(
+    'duplicate delayed incoming text is stored once and a ping is answered',
+    () async {
+      final service = client();
+      await login(service, '207');
+      const message =
+          '<message xmlns="jabber:client" type="chat" id="duplicate" '
+          'from="208@ejabberd.voicehost.io/other"><body>archived &amp; text</body>'
+          '<delay xmlns="urn:xmpp:delay" stamp="2026-10-06T12:00:00Z"/></message>';
+      server.connections.single.add('$message$message');
+      await _until(() => service.messages.isNotEmpty);
+      expect(service.messages.length, 1);
+      expect(
+        service.messages.single.timestamp.toUtc(),
+        DateTime.utc(2026, 10, 6, 12),
+      );
+      server.connections.single.add(
+        '<iq xmlns="jabber:client" type="get" '
+        'id="ping-1" from="ejabberd.voicehost.io"><ping xmlns="urn:xmpp:ping"/></iq>',
+      );
+      await _until(
+        () => server.received.any(
+          (iq) =>
+              iq.getAttribute('id') == 'ping-1' &&
+              iq.getAttribute('type') == 'result',
+        ),
+      );
+    },
+  );
 
   test(
     'background pauses and resume reconnects; lock clears and blocks access',
@@ -416,130 +762,146 @@ void main() {
     websocket: 'wss://ejabberd.voicehost.io/websocket',
   );
 
-  test('canonical login merges own endpoint caches once and keeps source files', () async {
-    final history = MemoryChatHistoryRepository();
-    const old =
-        '10000*207t@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
-    const foreign =
-        '20000*207t@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
-    ChatMessage saved(String id, String peer) => ChatMessage(
-      id: id,
-      peer: peer,
-      body: id,
-      outgoing: false,
-      timestamp: DateTime.utc(2026),
-      status: ChatMessageStatus.received,
-    );
-    await history.save(
-      old,
-      ChatHistorySnapshot(
-        cursor: 'old-cursor',
-        messages: [
-          saved('kept', '10000*208d@ejabberd.voicehost.io'),
-          saved('foreign-peer', '20000*208@ejabberd.voicehost.io'),
-        ],
-      ),
-    );
-    await history.save(
-      foreign,
-      ChatHistorySnapshot(
-        messages: [saved('foreign-file', '10000*208@ejabberd.voicehost.io')],
-      ),
-    );
-    await history.save(
-      tenantStorageAccount,
-      ChatHistorySnapshot(
-        messages: [saved('kept', '10000*208@ejabberd.voicehost.io')],
-      ),
-    );
-    final service = client(history: history);
-    service.configureManaged(
-      const MessagingConfiguration(
-        enabled: true,
-        jid: '10000*207@ejabberd.voicehost.io',
-        password: 'private-test-password',
-        websocket: 'wss://ejabberd.voicehost.io/websocket',
-        previousJids: [
-          '10000*207t@ejabberd.voicehost.io',
-          '20000*207t@ejabberd.voicehost.io',
-        ],
-      ),
-    );
-    await _until(() => service.online && !service.historyBusy);
-    await service.flushHistory();
-    expect(service.messages.single.body, 'kept');
-    expect(service.messages.single.peer, '10000*208@ejabberd.voicehost.io');
-    expect((await history.load(old)).messages, hasLength(2));
-    expect((await history.load(tenantStorageAccount)).migratedAccounts, [old]);
-    await service.reconnect();
-    await _until(() => service.online && !service.historyBusy);
-    expect(service.messages, hasLength(1));
-    service.setAccessAllowed(false);
-    await service.forgetHistory();
-    expect((await history.load(old)).messages, isEmpty);
-    expect((await history.load(tenantStorageAccount)).messages, isEmpty);
-    expect((await history.load(foreign)).messages, hasLength(1));
-  });
+  test(
+    'canonical login merges own endpoint caches once and keeps source files',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      const old =
+          '10000*207t@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
+      const foreign =
+          '20000*207t@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
+      ChatMessage saved(String id, String peer) => ChatMessage(
+        id: id,
+        peer: peer,
+        body: id,
+        outgoing: false,
+        timestamp: DateTime.utc(2026),
+        status: ChatMessageStatus.received,
+      );
+      await history.save(
+        old,
+        ChatHistorySnapshot(
+          cursor: 'old-cursor',
+          messages: [
+            saved('kept', '10000*208d@ejabberd.voicehost.io'),
+            saved('foreign-peer', '20000*208@ejabberd.voicehost.io'),
+          ],
+        ),
+      );
+      await history.save(
+        foreign,
+        ChatHistorySnapshot(
+          messages: [saved('foreign-file', '10000*208@ejabberd.voicehost.io')],
+        ),
+      );
+      await history.save(
+        tenantStorageAccount,
+        ChatHistorySnapshot(
+          messages: [saved('kept', '10000*208@ejabberd.voicehost.io')],
+        ),
+      );
+      final service = client(history: history);
+      service.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          jid: '10000*207@ejabberd.voicehost.io',
+          password: 'private-test-password',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+          previousJids: [
+            '10000*207t@ejabberd.voicehost.io',
+            '20000*207t@ejabberd.voicehost.io',
+          ],
+        ),
+      );
+      await _until(() => service.online && !service.historyBusy);
+      await service.flushHistory();
+      expect(service.messages.single.body, 'kept');
+      expect(service.messages.single.peer, '10000*208@ejabberd.voicehost.io');
+      expect((await history.load(old)).messages, hasLength(2));
+      expect((await history.load(tenantStorageAccount)).migratedAccounts, [
+        old,
+      ]);
+      await service.reconnect();
+      await _until(() => service.online && !service.historyBusy);
+      expect(service.messages, hasLength(1));
+      service.setAccessAllowed(false);
+      await service.forgetHistory();
+      expect((await history.load(old)).messages, isEmpty);
+      expect((await history.load(tenantStorageAccount)).messages, isEmpty);
+      expect((await history.load(foreign)).messages, hasLength(1));
+    },
+  );
 
-  test('failed canonical cache save retains endpoint history for retry', () async {
-    final history = _FailingHistoryRepository();
-    history.failWrites = false;
-    const old =
-        '10000*207d@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
-    await history.save(
-      old,
-      ChatHistorySnapshot(
-        messages: [
-          ChatMessage(
-            id: 'retained',
-            peer: '10000*208t@ejabberd.voicehost.io',
-            body: 'retained',
-            outgoing: true,
-            timestamp: DateTime.utc(2026),
-            status: ChatMessageStatus.delivered,
-          ),
-        ],
-      ),
-    );
-    history.failWrites = true;
-    final service = client(history: history);
-    service.configureManaged(
-      const MessagingConfiguration(
-        enabled: true,
-        jid: '10000*207@ejabberd.voicehost.io',
-        password: 'private-test-password',
-        websocket: 'wss://ejabberd.voicehost.io/websocket',
-        previousJids: ['10000*207d@ejabberd.voicehost.io'],
-      ),
-    );
-    await _until(() => service.online && !service.historyBusy);
-    expect(
-      (await history.load(old)).messages.single.status,
-      ChatMessageStatus.delivered,
-    );
-    expect(
-      (await history.load(tenantStorageAccount)).migratedAccounts,
-      isEmpty,
-    );
-    history.failWrites = false;
-    await service.reconnect();
-    await _until(() => service.online && !service.historyBusy);
-    expect(service.messages.single.status, ChatMessageStatus.delivered);
-    expect((await history.load(tenantStorageAccount)).migratedAccounts, [old]);
-  });
+  test(
+    'failed canonical cache save retains endpoint history for retry',
+    () async {
+      final history = _FailingHistoryRepository();
+      history.failWrites = false;
+      const old =
+          '10000*207d@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket';
+      await history.save(
+        old,
+        ChatHistorySnapshot(
+          messages: [
+            ChatMessage(
+              id: 'retained',
+              peer: '10000*208t@ejabberd.voicehost.io',
+              body: 'retained',
+              outgoing: true,
+              timestamp: DateTime.utc(2026),
+              status: ChatMessageStatus.delivered,
+            ),
+          ],
+        ),
+      );
+      history.failWrites = true;
+      final service = client(history: history);
+      service.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          jid: '10000*207@ejabberd.voicehost.io',
+          password: 'private-test-password',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+          previousJids: ['10000*207d@ejabberd.voicehost.io'],
+        ),
+      );
+      await _until(() => service.online && !service.historyBusy);
+      expect(
+        (await history.load(old)).messages.single.status,
+        ChatMessageStatus.delivered,
+      );
+      expect(
+        (await history.load(tenantStorageAccount)).migratedAccounts,
+        isEmpty,
+      );
+      history.failWrites = false;
+      await service.reconnect();
+      await _until(() => service.online && !service.historyBusy);
+      expect(service.messages.single.status, ChatMessageStatus.delivered);
+      expect((await history.load(tenantStorageAccount)).migratedAccounts, [
+        old,
+      ]);
+    },
+  );
 
-  test('canonical managed directory normalizes suffixes and preserves leading zeros', () async {
-    server.roster = [('10000*00208t@ejabberd.voicehost.io', 'Reception')];
-    final service = client();
-    service.configureManaged(managed);
-    await _until(() => service.online && !service.directoryBusy);
-    expect(service.directory.single.jid, '10000*00208@ejabberd.voicehost.io');
-    expect(service.recipientJid('00208'), '10000*00208@ejabberd.voicehost.io');
-    expect(service.recipientJid('208D'), '10000*208@ejabberd.voicehost.io');
-    for (final invalid in ['20', '123456', '20000*208', '208_']) {
-      expect(() => service.recipientJid(invalid), throwsArgumentError);
-    }
-  });
+  test(
+    'canonical managed directory normalizes suffixes and preserves leading zeros',
+    () async {
+      server.roster = [('10000*00208t@ejabberd.voicehost.io', 'Reception')];
+      final service = client();
+      service.configureManaged(managed);
+      await _until(() => service.online && !service.directoryBusy);
+      expect(service.directory.single.jid, '10000*00208@ejabberd.voicehost.io');
+      expect(
+        service.recipientJid('00208'),
+        '10000*00208@ejabberd.voicehost.io',
+      );
+      expect(service.recipientJid('208D'), '10000*208@ejabberd.voicehost.io');
+      for (final invalid in ['20', '123456', '20000*208', '208_']) {
+        expect(() => service.recipientJid(invalid), throwsArgumentError);
+      }
+    },
+  );
 
   test(
     'migration metadata survives configuration and history serialization',
@@ -589,38 +951,41 @@ void main() {
     },
   );
 
-  test('restart and reconnect page missed messages without duplicate outgoing text', () async {
-    final history = MemoryChatHistoryRepository();
-    server.archive.add(_Archived('1', 'first'));
-    final service = client(history: history);
-    await login(service, '207');
-    await _until(() => !service.historyBusy);
-    service.sendMessage(recipient: '208', body: 'sent locally');
-    final sent = service.messages.last;
-    server.archive.add(
-      _Archived('2', sent.body, clientId: sent.id, outgoing: true),
-    );
-    service.pause();
-    server.archive.addAll([
-      for (var i = 3; i <= 6; i++) _Archived('$i', 'missed-$i'),
-    ]);
-    final restarted = client(history: history);
-    await login(restarted, '207');
-    await _until(() => !restarted.historyBusy);
-    expect(
-      restarted.messages.where((m) => m.body == 'sent locally'),
-      hasLength(1),
-    );
-    expect(
-      restarted.messages.where((m) => m.body.startsWith('missed-')),
-      hasLength(4),
-    );
-    expect(
-      server.archiveQueries.where((q) => q.after != null).map((q) => q.after),
-      ['1', '3', '5'],
-    );
-    expect((await history.load(storageAccount)).cursor, '6');
-  });
+  test(
+    'restart and reconnect page missed messages without duplicate outgoing text',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      server.archive.add(_Archived('1', 'first'));
+      final service = client(history: history);
+      await login(service, '207');
+      await _until(() => !service.historyBusy);
+      service.sendMessage(recipient: '208', body: 'sent locally');
+      final sent = service.messages.last;
+      server.archive.add(
+        _Archived('2', sent.body, clientId: sent.id, outgoing: true),
+      );
+      service.pause();
+      server.archive.addAll([
+        for (var i = 3; i <= 6; i++) _Archived('$i', 'missed-$i'),
+      ]);
+      final restarted = client(history: history);
+      await login(restarted, '207');
+      await _until(() => !restarted.historyBusy);
+      expect(
+        restarted.messages.where((m) => m.body == 'sent locally'),
+        hasLength(1),
+      );
+      expect(
+        restarted.messages.where((m) => m.body.startsWith('missed-')),
+        hasLength(4),
+      );
+      expect(
+        server.archiveQueries.where((q) => q.after != null).map((q) => q.after),
+        ['1', '3', '5'],
+      );
+      expect((await history.load(storageAccount)).cursor, '6');
+    },
+  );
 
   test(
     'archive wrappers from another user and uncorrelated queries are ignored',
@@ -732,37 +1097,40 @@ void main() {
     },
   );
 
-  test('changing managed account isolates history and manual login cannot override it', () async {
-    final history = MemoryChatHistoryRepository();
-    final service = client(history: history);
-    service.configureManaged(managed);
-    await _until(() => service.online && !service.historyBusy);
-    service.sendMessage(recipient: '208', body: 'account 207 only');
-    await service.flushHistory();
-    service.configureManaged(
-      const MessagingConfiguration(
-        enabled: true,
-        jid: '10000*209@ejabberd.voicehost.io',
-        password: 'other-secret',
-        websocket: 'wss://ejabberd.voicehost.io/websocket',
-      ),
-    );
-    await _until(
-      () =>
-          service.online &&
-          service.jid!.startsWith('10000*209@') &&
-          !service.historyBusy,
-    );
-    expect(service.messages, isEmpty);
-    await expectLater(
-      service.connect(username: '207', password: 'secret'),
-      throwsStateError,
-    );
-    expect(
-      (await history.load(tenantStorageAccount)).messages.single.body,
-      'account 207 only',
-    );
-  });
+  test(
+    'changing managed account isolates history and manual login cannot override it',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      final service = client(history: history);
+      service.configureManaged(managed);
+      await _until(() => service.online && !service.historyBusy);
+      service.sendMessage(recipient: '208', body: 'account 207 only');
+      await service.flushHistory();
+      service.configureManaged(
+        const MessagingConfiguration(
+          enabled: true,
+          jid: '10000*209@ejabberd.voicehost.io',
+          password: 'other-secret',
+          websocket: 'wss://ejabberd.voicehost.io/websocket',
+        ),
+      );
+      await _until(
+        () =>
+            service.online &&
+            service.jid!.startsWith('10000*209@') &&
+            !service.historyBusy,
+      );
+      expect(service.messages, isEmpty);
+      await expectLater(
+        service.connect(username: '207', password: 'secret'),
+        throwsStateError,
+      );
+      expect(
+        (await history.load(tenantStorageAccount)).messages.single.body,
+        'account 207 only',
+      );
+    },
+  );
 
   test('unsupported archive keeps live messaging usable', () async {
     server.mamSupported = false;
@@ -922,9 +1290,19 @@ class _XmppServer {
               null) {
             _sendFixture(
               socket,
-              '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}">'
+              '<iq xmlns="jabber:client" type="result" from="${stanza.getAttribute('to')}" id="${stanza.getAttribute('id')}">'
               '<query xmlns="http://jabber.org/protocol/disco#info">'
+              '<feature var="http://jabber.org/protocol/chatstates"/>'
               '${mamSupported ? '<feature var="urn:xmpp:mam:2"/>' : ''}</query></iq>',
+            );
+          } else if (stanza.getElement(
+                'enable',
+                namespace: 'urn:xmpp:carbons:2',
+              ) !=
+              null) {
+            _sendFixture(
+              socket,
+              '<iq xmlns="jabber:client" type="result" id="${stanza.getAttribute('id')}"/>',
             );
           } else if (stanza.getElement(
                     'enable',
@@ -1020,11 +1398,20 @@ class _XmppServer {
 }
 
 class _Archived {
-  _Archived(this.id, this.body, {this.clientId, this.outgoing = false});
+  _Archived(
+    this.id,
+    this.body, {
+    this.clientId,
+    this.outgoing = false,
+    this.marker,
+    this.receipt,
+  });
   final String id;
   final String body;
   final String? clientId;
   final bool outgoing;
+  final String? marker;
+  final String? receipt;
   String xml(String query, String user, {String? from}) {
     final account = '$user@ejabberd.voicehost.io';
     final peer = user.contains('*')
@@ -1035,7 +1422,10 @@ class _Archived {
         '<forwarded xmlns="urn:xmpp:forward:0">'
         '<delay xmlns="urn:xmpp:delay" stamp="2026-10-07T10:00:${(int.tryParse(id) ?? 0).toString().padLeft(2, '0')}Z"/>'
         '<message xmlns="jabber:client" from="${outgoing ? account : peer}" to="${outgoing ? peer : account}" '
-        'type="chat" id="${clientId ?? 'message-$id'}"><body>${XmlText(body).toXmlString()}</body>'
+        'type="chat" id="${clientId ?? 'message-$id'}">'
+        '${body.isEmpty ? '' : '<body>${XmlText(body).toXmlString()}</body>'}'
+        '${marker == null ? '' : '<displayed xmlns="urn:xmpp:chat-markers:0" id="$marker"/>'}'
+        '${receipt == null ? '' : '<received xmlns="urn:xmpp:receipts" id="$receipt"/>'}'
         '</message></forwarded></result></message>';
   }
 }

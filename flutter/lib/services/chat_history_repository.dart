@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/chat_message.dart';
+import '../models/messaging_presence.dart';
 
 class ChatHistorySnapshot {
   ChatHistorySnapshot({
@@ -15,12 +16,20 @@ class ChatHistorySnapshot {
     this.oldest,
     this.hasOlder = false,
     this.migratedAccounts = const [],
+    this.shareTyping = true,
+    this.shareReadReceipts = true,
+    this.presence = MessagingPresence.available,
+    this.statusUpdates = const [],
   });
   final List<ChatMessage> messages;
   final String? cursor;
   final String? oldest;
   final bool hasOlder;
   final List<String> migratedAccounts;
+  final bool shareTyping;
+  final bool shareReadReceipts;
+  final MessagingPresence presence;
+  final List<ChatMessageUpdate> statusUpdates;
 
   Map<String, dynamic> toJson() => {
     'version': 1,
@@ -29,6 +38,10 @@ class ChatHistorySnapshot {
     'oldest': oldest,
     'has_older': hasOlder,
     'migrated_accounts': migratedAccounts,
+    'share_typing': shareTyping,
+    'share_read_receipts': shareReadReceipts,
+    'presence': presence.name,
+    'status_updates': statusUpdates.map((update) => update.toJson()).toList(),
   };
 
   factory ChatHistorySnapshot.fromJson(Map<String, dynamic> json) {
@@ -49,6 +62,23 @@ class ChatHistorySnapshot {
       cursor: json['cursor'] as String?,
       oldest: json['oldest'] as String?,
       hasOlder: json['has_older'] == true,
+      shareTyping: json['share_typing'] != false,
+      shareReadReceipts: json['share_read_receipts'] != false,
+      presence: switch (json['presence']) {
+        'away' => MessagingPresence.away,
+        'busy' => MessagingPresence.busy,
+        _ => MessagingPresence.available,
+      },
+      statusUpdates: json['status_updates'] is List
+          ? (json['status_updates'] as List)
+                .take(500)
+                .map(
+                  (item) => ChatMessageUpdate.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList()
+          : const [],
       migratedAccounts: json['migrated_accounts'] is List
           ? (json['migrated_accounts'] as List)
                 .take(128)

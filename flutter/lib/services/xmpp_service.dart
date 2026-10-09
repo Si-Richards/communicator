@@ -8,6 +8,7 @@ import 'package:xml/xml.dart';
 
 import '../models/chat_message.dart';
 import '../models/messaging_contact.dart';
+import '../models/messaging_presence.dart';
 import '../models/provisioning.dart';
 import 'chat_history_repository.dart';
 
@@ -27,7 +28,11 @@ class XmppService extends ChangeNotifier {
   XmppService({
     WebSocketChannel Function(Uri)? channelFactory,
     ChatHistoryRepository? historyRepository,
+    Duration typingPause = const Duration(seconds: 5),
+    Duration typingExpiry = const Duration(seconds: 45),
   }) : _history = historyRepository ?? EncryptedChatHistoryRepository(),
+       _typingPause = typingPause,
+       _typingExpiry = typingExpiry,
        _channelFactory =
            channelFactory ??
            ((uri) => WebSocketChannel.connect(uri, protocols: ['xmpp']));
@@ -39,6 +44,10 @@ class XmppService extends ChangeNotifier {
   static const _client = 'jabber:client';
   static const _bind = 'urn:ietf:params:xml:ns:xmpp-bind';
   static const _receipts = 'urn:xmpp:receipts';
+  static const _markers = 'urn:xmpp:chat-markers:0';
+  static const _chatStates = 'http://jabber.org/protocol/chatstates';
+  static const _carbons = 'urn:xmpp:carbons:2';
+  static const _forward = 'urn:xmpp:forward:0';
   static const _mam = 'urn:xmpp:mam:2';
   static const _rsm = 'http://jabber.org/protocol/rsm';
   static const _sid = 'urn:xmpp:sid:0';
@@ -47,7 +56,316 @@ class XmppService extends ChangeNotifier {
   final ChatHistoryRepository _history;
   Future<void> _storageQueue = Future.value();
   final Map<String, Completer<XmlElement>> _pendingIq = {};
+  final Map<String, String> _pendingIqFrom = {};
   final Map<String, List<ChatMessage>> _archiveResults = {};
+  final Map<String, List<ChatMessageUpdate>> _archiveUpdates = {};
+  final List<ChatMessageUpdate> _recoveredUpdates = [];
+  final Map<String, Map<String, MessagingPresence>> _presence = {};
+  final Set<String> _knownPresence = {};
+  final Set<String> _chatStatePeers = {};
+  final Set<String> _discoveredPeers = {};
+  final Map<String, String> _typingResources = {};
+  final Map<String, Timer> _typingTimers = {};
+  final Map<String, String> _sentChatStates = {};
+  final Duration _typingPause;
+  final Duration _typingExpiry;
+  Timer? _typingIdle;
+  String? _typingPeer;
+  bool _foreground = true;
+  bool _shareTyping = true;
+  bool _shareReadReceipts = true;
+  MessagingPresence _ownPresence = MessagingPresence.available;
+  bool get shareTyping => _shareTyping;
+  bool get shareReadReceipts => _shareReadReceipts;
+  MessagingPresence get ownPresence => _ownPresence;
+
+  MessagingPresence presenceFor(String jid) {
+    final peer = _canonicalPeer(jid);
+    if (!online ||
+        (!_knownPresence.contains(peer) &&
+            !_directory.any((c) => c.jid == peer))) {
+      return MessagingPresence.unknown;
+    }
+    return aggregatePresence(_presence[peer]?.values ?? const []);
+  }
+
+  bool isTyping(String jid) =>
+      online && _typingResources.containsValue(_canonicalPeer(jid));
+
+  void setActivitySharing({bool? typing, bool? readReceipts}) {
+    if (!_accessAllowed || _disposed) return;
+    if (typing == false && _typingPeer != null) {
+      stopTyping(_typingPeer!);
+    }
+    _shareTyping = typing ?? _shareTyping;
+    _shareReadReceipts = readReceipts ?? _shareReadReceipts;
+    unawaited(_persist());
+    notifyListeners();
+  }
+
+  void setPresence(MessagingPresence presence) {
+    if (!_accessAllowed ||
+        _disposed ||
+        ![
+          MessagingPresence.available,
+          MessagingPresence.away,
+          MessagingPresence.busy,
+        ].contains(presence)) {
+      return;
+    }
+    _ownPresence = presence;
+    if (online) _sendPresence();
+    unawaited(_persist());
+    notifyListeners();
+  }
+
+  void _sendPresence({bool unavailable = false}) => _send(
+    _element(
+      'presence',
+      _client,
+      attributes: unavailable ? {'type': 'unavailable'} : const {},
+      children: [
+        if (!unavailable && _ownPresence != MessagingPresence.available)
+          _element(
+            'show',
+            _client,
+            text: _ownPresence == MessagingPresence.busy ? 'dnd' : 'away',
+          ),
+      ],
+    ),
+  );
+
+  void _presenceMessage(XmlElement stanza) {
+    final from = stanza.getAttribute('from');
+    if (from == null) return;
+    final peer = _canonicalPeer(from);
+    try {
+      recipientJid(peer);
+    } on ArgumentError {
+      return;
+    }
+    if (peer == _account) return;
+    final type = stanza.getAttribute('type');
+    if (type != null && type != 'unavailable') return;
+    if (!_knownPresence.contains(peer) && _knownPresence.length >= 2000) return;
+    _knownPresence.add(peer);
+    final resources = _presence.putIfAbsent(peer, () => {});
+    if (type == 'unavailable') {
+      if (from.contains('/')) {
+        resources.remove(from);
+        _clearTypingResource(from);
+      } else {
+        resources.clear();
+        for (final resource
+            in _typingResources.entries
+                .where((e) => e.value == peer)
+                .map((e) => e.key)
+                .toList()) {
+          _clearTypingResource(resource);
+        }
+      }
+    } else {
+      if (resources.length >= 32 && !resources.containsKey(from)) return;
+      resources[from] = switch (stanza
+          .getElement('show', namespace: _client)
+          ?.innerText) {
+        'away' || 'xa' => MessagingPresence.away,
+        'dnd' => MessagingPresence.busy,
+        _ => MessagingPresence.available,
+      };
+    }
+    notifyListeners();
+  }
+
+  /// Stop exposing activity as soon as the app loses foreground focus, even
+  /// during the inactive interval before iOS suspends the socket.
+  void setForeground(bool foreground) {
+    _foreground = foreground;
+    if (!foreground && _typingPeer != null) stopTyping(_typingPeer!);
+  }
+
+  void prepareConversation(String value) {
+    if (!online || !_accessAllowed) return;
+    final peer = recipientJid(value);
+    if (peer == _account || !_discoveredPeers.add(peer)) return;
+    unawaited(_discoverPeer(peer));
+  }
+
+  Future<void> _discoverPeer(String peer) async {
+    final generation = _generation;
+    try {
+      final id = _id();
+      final response = await _query(
+        id,
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'get', 'to': peer},
+          children: [_element('query', _disco)],
+        ),
+        expectedFrom: peer,
+      );
+      if (generation != _generation ||
+          response.getAttribute('type') != 'result') {
+        return;
+      }
+      if (response
+              .getElement('query', namespace: _disco)
+              ?.findElements('feature', namespace: _disco)
+              .any((f) => f.getAttribute('var') == _chatStates) ??
+          false) {
+        _chatStatePeers.add(peer);
+      }
+    } catch (_) {
+      /* Old clients can continue plain text conversations. */
+    }
+  }
+
+  void updateTyping(String value, {required bool composing}) {
+    if (!online || !_foreground || !_shareTyping || !_accessAllowed) return;
+    final peer = recipientJid(value);
+    if (!_chatStatePeers.contains(peer)) {
+      prepareConversation(peer);
+      return;
+    }
+    if (_typingPeer != null && _typingPeer != peer) stopTyping(_typingPeer!);
+    _typingIdle?.cancel();
+    _typingPeer = peer;
+    _sendChatState(peer, composing ? 'composing' : 'active');
+    if (composing) {
+      _typingIdle = Timer(_typingPause, () {
+        if (online && _typingPeer == peer) _sendChatState(peer, 'paused');
+      });
+    }
+  }
+
+  void stopTyping(String value) {
+    final peer = _canonicalPeer(value);
+    if (_typingPeer == peer) {
+      _typingIdle?.cancel();
+      _typingPeer = null;
+      if (online && _shareTyping) _sendChatState(peer, 'inactive');
+    }
+  }
+
+  void _sendChatState(String peer, String state) {
+    if (_sentChatStates[peer] == state) return;
+    _sentChatStates[peer] = state;
+    _send(
+      _element(
+        'message',
+        _client,
+        attributes: {'to': peer, 'type': 'chat'},
+        children: [_element(state, _chatStates)],
+      ),
+    );
+  }
+
+  void _clearTypingResource(String resource) {
+    _typingTimers.remove(resource)?.cancel();
+    _typingResources.remove(resource);
+  }
+
+  void _receiveChatState(XmlElement message, String peer) {
+    final resource = message.getAttribute('from')!;
+    final states = message.childElements.where(
+      (e) => e.namespaceUri == _chatStates,
+    );
+    final state = states.length == 1 ? states.single.name.local : null;
+    if (['active', 'composing', 'paused', 'inactive', 'gone'].contains(state)) {
+      _chatStatePeers.add(peer);
+      _clearTypingResource(resource);
+      if (state == 'composing' && _typingResources.length < 2000) {
+        _typingResources[resource] = peer;
+        _typingTimers[resource] = Timer(_typingExpiry, () {
+          _clearTypingResource(resource);
+          if (!_disposed) notifyListeners();
+        });
+      }
+      notifyListeners();
+    } else if (message.getElement('body', namespace: _client) != null) {
+      _clearTypingResource(resource);
+    }
+  }
+
+  /// The UI supplies the latest message actually visible on the current route.
+  /// Push receipt, archive loading and background activity never call this.
+  void markConversationDisplayed(String value, String id) {
+    if (!online || !_foreground || !_accessAllowed) return;
+    final peer = recipientJid(value);
+    final message = _messages
+        .where((m) => !m.outgoing && m.peer == peer && m.id == id)
+        .firstOrNull;
+    if (message == null || message.displayed) return;
+    _applyDisplayed(peer, id, outgoing: false);
+    _rememberUpdate(
+      ChatMessageUpdate(peer, id, outgoing: false, displayed: true),
+    );
+    if (_shareReadReceipts && message.markable) {
+      _send(
+        _element(
+          'message',
+          _client,
+          attributes: {'to': peer, 'type': 'chat'},
+          children: [
+            _element('displayed', _markers, attributes: {'id': id}),
+            _element('store', 'urn:xmpp:hints'),
+          ],
+        ),
+      );
+    }
+    unawaited(_persist());
+    notifyListeners();
+  }
+
+  bool _applyDisplayed(String peer, String id, {required bool outgoing}) {
+    final anchor = _messages.indexWhere(
+      (m) => m.peer == peer && m.id == id && m.outgoing == outgoing,
+    );
+    if (anchor < 0) return false;
+    for (var i = 0; i <= anchor; i++) {
+      final message = _messages[i];
+      if (message.peer != peer || message.outgoing != outgoing) continue;
+      if (outgoing) {
+        message.advanceStatus(ChatMessageStatus.read);
+      } else {
+        message.displayed = true;
+      }
+    }
+    return true;
+  }
+
+  void _rememberUpdate(ChatMessageUpdate update) {
+    if (_recoveredUpdates.any(
+      (u) =>
+          u.peer == update.peer &&
+          u.id == update.id &&
+          u.outgoing == update.outgoing &&
+          u.displayed == update.displayed,
+    )) {
+      return;
+    }
+    _recoveredUpdates.add(update);
+    if (_recoveredUpdates.length > 500) _recoveredUpdates.removeAt(0);
+  }
+
+  void _reapplyUpdates() {
+    _recoveredUpdates.removeWhere((update) {
+      if (update.displayed) {
+        _applyDisplayed(update.peer, update.id, outgoing: update.outgoing);
+        return false; // Retain the watermark for older pages and reconnect.
+      }
+      final message = _messages
+          .where(
+            (m) => m.outgoing && m.peer == update.peer && m.id == update.id,
+          )
+          .firstOrNull;
+      if (message == null) return false;
+      message.advanceStatus(ChatMessageStatus.delivered);
+      return true;
+    });
+  }
+
   String _domain = domain;
   Uri _endpoint = endpoint;
   String? _lastStorageAccount;
@@ -101,7 +419,8 @@ class XmppService extends ChangeNotifier {
     }
     if (!configuration.ready) {
       disconnect(clearMessages: true);
-      _error = 'Your messaging account is being prepared. Refresh provisioning shortly.';
+      _error =
+          'Your messaging account is being prepared. Refresh provisioning shortly.';
       _setState(XmppState.disconnected);
       return;
     }
@@ -217,6 +536,10 @@ class XmppService extends ChangeNotifier {
     _cursor = null;
     _oldest = null;
     _hasOlder = false;
+    _recoveredUpdates.clear();
+    _shareTyping = true;
+    _shareReadReceipts = true;
+    _ownPresence = MessagingPresence.available;
     _account = account;
     _domain = account.split('@').last;
     _endpoint = endpoint;
@@ -252,6 +575,17 @@ class XmppService extends ChangeNotifier {
       }
 
       mergeHistory(snapshot);
+      _shareTyping = snapshot.shareTyping;
+      _shareReadReceipts = snapshot.shareReadReceipts;
+      _ownPresence = snapshot.presence;
+      for (final update in snapshot.statusUpdates) {
+        try {
+          recipientJid(update.peer);
+          _rememberUpdate(update);
+        } on ArgumentError {
+          /* Ignore metadata outside this account. */
+        }
+      }
       _migratedHistoryAccounts.addAll(snapshot.migratedAccounts);
       _cursor = snapshot.cursor;
       _oldest = snapshot.oldest;
@@ -272,10 +606,12 @@ class XmppService extends ChangeNotifier {
           _migratedHistoryAccounts.add(previousStorage);
           migrated = true;
         } catch (_) {
-          _historyError = 'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
+          _historyError =
+              'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
         }
       }
       _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      _reapplyUpdates();
       if (migrated) {
         // Cursors belonged to separate archives; recover the canonical archive.
         _cursor = null;
@@ -287,7 +623,8 @@ class XmppService extends ChangeNotifier {
     } catch (_) {
       if (_disposed || accountGeneration != _accountGeneration) return;
       // Do not overwrite an unreadable cache with an empty history.
-      _historyError = 'Saved history could not be opened. Archive recovery will still be attempted.';
+      _historyError =
+          'Saved history could not be opened. Archive recovery will still be attempted.';
     }
     if (!_accessAllowed ||
         _disposed ||
@@ -335,6 +672,10 @@ class XmppService extends ChangeNotifier {
             : _oldest,
         hasOlder: _hasOlder || clipped,
         migratedAccounts: _migratedHistoryAccounts.toList(),
+        shareTyping: _shareTyping,
+        shareReadReceipts: _shareReadReceipts,
+        presence: _ownPresence,
+        statusUpdates: _recoveredUpdates.toList(),
       ).toJson(),
     );
     final operation = _storageQueue.then(
@@ -445,8 +786,9 @@ class XmppService extends ChangeNotifier {
         return;
       }
       // RFC 7395 allows several complete XML elements in one text frame.
-      final elements = XmlDocumentFragment.parse(data).children
-          .whereType<XmlElement>();
+      final elements = XmlDocumentFragment.parse(
+        data,
+      ).children.whereType<XmlElement>();
       for (final element in elements) {
         if (_channel == null) break;
         final name = element.name.local;
@@ -468,6 +810,8 @@ class XmppService extends ChangeNotifier {
           _iq(element);
         } else if (name == 'message' && ns == _client && online) {
           _message(element);
+        } else if (name == 'presence' && ns == _client && online) {
+          _presenceMessage(element);
         } else if (name == 'close' && ns == _framing) {
           _networkLost();
         } else if (name == 'error' &&
@@ -539,7 +883,12 @@ class XmppService extends ChangeNotifier {
     final type = iq.getAttribute('type');
     final from = iq.getAttribute('from');
     if (id != null && _pendingIq.containsKey(id)) {
-      if (from != null && _bare(from) != _account && from != _domain) return;
+      final expected = _pendingIqFrom[id];
+      if (expected != null) {
+        if (from == null || _bare(from) != expected) return;
+      } else if (from != null && _bare(from) != _account && from != _domain) {
+        return;
+      }
       if (type == 'result' || type == 'error') {
         _pendingIq.remove(id)!.complete(iq);
       }
@@ -582,6 +931,33 @@ class XmppService extends ChangeNotifier {
       } else {
         _fail('XMPP session establishment was rejected.');
       }
+    } else if (type == 'get' &&
+        online &&
+        id != null &&
+        iq.getElement('query', namespace: _disco) != null &&
+        from != null) {
+      try {
+        recipientJid(_bare(from));
+      } on ArgumentError {
+        return;
+      }
+      _send(
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'result', 'to': from},
+          children: [
+            _element(
+              'query',
+              _disco,
+              children: [
+                for (final feature in [_chatStates, _markers, _receipts])
+                  _element('feature', _disco, attributes: {'var': feature}),
+              ],
+            ),
+          ],
+        ),
+      );
     } else if (type == 'get' &&
         online &&
         iq.getElement('ping', namespace: 'urn:xmpp:ping') != null &&
@@ -712,11 +1088,36 @@ class XmppService extends ChangeNotifier {
   void _becomeOnline() {
     _deadline?.cancel();
     _attempts = 0;
-    _send(_element('presence', _client));
+    _sendPresence();
     _setState(XmppState.online);
+    unawaited(_enableCarbons());
     unawaited(_recoverHistory());
     if (accountNumber != null) unawaited(refreshDirectory());
     unawaited(_syncPush());
+  }
+
+  Future<void> _enableCarbons() async {
+    final generation = _generation;
+    try {
+      final id = _id();
+      final response = await _query(
+        id,
+        _element(
+          'iq',
+          _client,
+          attributes: {'id': id, 'type': 'set', 'to': _account!},
+          children: [_element('enable', _carbons)],
+        ),
+      );
+      if (generation == _generation &&
+          response.getAttribute('type') != 'result') {
+        _event('Live device synchronization unavailable');
+      }
+    } catch (_) {
+      if (generation == _generation) {
+        _event('Live device synchronization unavailable');
+      }
+    }
   }
 
   String recipientJid(String value) {
@@ -763,8 +1164,9 @@ class XmppService extends ChangeNotifier {
     if (!_isCanonicalAccount) return bare;
     final parts = bare.split('@');
     if (parts.length != 2 || parts.last != _domain) return bare;
-    final match = RegExp(r'^([0-9]+)\*([0-9]{3,5})[a-z]*$')
-        .firstMatch(parts.first);
+    final match = RegExp(
+      r'^([0-9]+)\*([0-9]{3,5})[a-z]*$',
+    ).firstMatch(parts.first);
     if (match == null || match.group(1) != accountNumber) return bare;
     return '${match.group(1)}*${match.group(2)}@$_domain';
   }
@@ -850,6 +1252,8 @@ class XmppService extends ChangeNotifier {
         children: [
           _element('body', _client, text: body),
           _element('request', _receipts),
+          _element('markable', _markers),
+          if (_shareTyping) _element('active', _chatStates),
           _element('origin-id', _sid, attributes: {'id': id}),
         ],
       ),
@@ -864,6 +1268,11 @@ class XmppService extends ChangeNotifier {
         status: ChatMessageStatus.sent,
       ),
     );
+    if (_shareTyping) _sentChatStates[peer] = 'active';
+    if (_typingPeer == peer) {
+      _typingIdle?.cancel();
+      _typingPeer = null;
+    }
     _trimMessages();
     unawaited(_persist());
     _event('Text message sent');
@@ -876,26 +1285,98 @@ class XmppService extends ChangeNotifier {
       _archiveMessage(message, result);
       return;
     }
+    final carbon = message.childElements
+        .where(
+          (e) =>
+              e.namespaceUri == _carbons &&
+              ['sent', 'received'].contains(e.name.local),
+        )
+        .toList();
+    if (carbon.isNotEmpty) {
+      // Only the server-generated wrapper from our exact bare JID is trusted.
+      // A contact cannot forge a forwarded message or read another peer's chat.
+      if (message.getAttribute('from') != _account || carbon.length != 1) {
+        return;
+      }
+      final forwarded = carbon.single.getElement(
+        'forwarded',
+        namespace: _forward,
+      );
+      final inner = forwarded?.getElement('message', namespace: _client);
+      if (inner == null ||
+          inner.childElements.any((e) => e.namespaceUri == _carbons)) {
+        return;
+      }
+      final outgoing = carbon.single.name.local == 'sent';
+      if (_bare(inner.getAttribute(outgoing ? 'from' : 'to') ?? '') !=
+          _account) {
+        return;
+      }
+      _liveMessage(inner, outgoing: outgoing, carbon: true);
+      return;
+    }
+    _liveMessage(message);
+  }
+
+  void _liveMessage(
+    XmlElement message, {
+    bool outgoing = false,
+    bool carbon = false,
+  }) {
+    if (![
+      'chat',
+      'normal',
+      null,
+      'error',
+    ].contains(message.getAttribute('type'))) {
+      return;
+    }
     final from = message.getAttribute('from');
     if (from == null) return;
-    final peer = _canonicalPeer(from);
+    final peer = _canonicalPeer(
+      outgoing ? message.getAttribute('to') ?? '' : from,
+    );
     try {
       recipientJid(peer);
     } catch (_) {
       return;
     }
-    final id = message.getAttribute('id');
+    final id = outgoing
+        ? message
+                  .getElement('origin-id', namespace: _sid)
+                  ?.getAttribute('id') ??
+              message.getAttribute('id')
+        : message.getAttribute('id');
     if (message.getAttribute('type') == 'error') {
       _updateStatus(id, peer, ChatMessageStatus.failed);
       return;
     }
     final receipt = message.getElement('received', namespace: _receipts);
-    if (receipt != null) {
+    if (receipt != null && !outgoing) {
       _updateStatus(
         receipt.getAttribute('id'),
         peer,
         ChatMessageStatus.delivered,
       );
+    }
+    final displayed = message
+        .getElement('displayed', namespace: _markers)
+        ?.getAttribute('id');
+    if (displayed != null &&
+        _applyDisplayed(peer, displayed, outgoing: !outgoing)) {
+      _rememberUpdate(
+        ChatMessageUpdate(
+          peer,
+          displayed,
+          outgoing: !outgoing,
+          displayed: true,
+        ),
+      );
+      unawaited(_persist());
+      notifyListeners();
+    }
+    if (!outgoing && message.getAttribute('type') != 'error') {
+      _receiveChatState(message, peer);
     }
     final body = message.getElement('body', namespace: _client)?.innerText;
     if (body == null ||
@@ -904,7 +1385,9 @@ class XmppService extends ChangeNotifier {
         !['chat', 'normal', null].contains(message.getAttribute('type'))) {
       return;
     }
-    if (id != null &&
+    if (!outgoing &&
+        !carbon &&
+        id != null &&
         message.getElement('request', namespace: _receipts) != null) {
       _send(
         _element(
@@ -913,13 +1396,18 @@ class XmppService extends ChangeNotifier {
           attributes: {'to': from, 'type': 'chat'},
           children: [
             _element('received', _receipts, attributes: {'id': id}),
+            _element('store', 'urn:xmpp:hints'),
           ],
         ),
       );
     }
     if (id != null &&
         _messages.any(
-          (m) => !m.outgoing && m.id == id && m.peer == peer && m.body == body,
+          (m) =>
+              m.outgoing == outgoing &&
+              m.id == id &&
+              m.peer == peer &&
+              m.body == body,
         )) {
       return;
     }
@@ -929,17 +1417,25 @@ class XmppService extends ChangeNotifier {
         id: id ?? _id(),
         peer: peer,
         body: body,
-        outgoing: false,
+        outgoing: outgoing,
         timestamp:
             DateTime.tryParse(delay?.getAttribute('stamp') ?? '')?.toLocal() ??
             DateTime.now(),
-        status: ChatMessageStatus.received,
+        status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: _trustedArchiveId(message),
+        markable:
+            !outgoing &&
+            id != null &&
+            message.getElement('markable', namespace: _markers) != null,
       ),
     );
     _trimMessages();
     unawaited(_persist());
-    _event('Text message received');
+    _event(
+      outgoing
+          ? 'Message synchronized from another device'
+          : 'Text message received',
+    );
     notifyListeners();
   }
 
@@ -947,7 +1443,7 @@ class XmppService extends ChangeNotifier {
     if (id == null) return;
     for (final message in _messages) {
       if (message.outgoing && message.id == id && message.peer == peer) {
-        message.status = status;
+        if (!message.advanceStatus(status)) return;
         unawaited(_persist());
         notifyListeners();
         break;
@@ -978,14 +1474,20 @@ class XmppService extends ChangeNotifier {
     return null;
   }
 
-  Future<XmlElement> _query(String id, XmlElement stanza) async {
+  Future<XmlElement> _query(
+    String id,
+    XmlElement stanza, {
+    String? expectedFrom,
+  }) async {
     final completer = Completer<XmlElement>();
     _pendingIq[id] = completer;
+    if (expectedFrom != null) _pendingIqFrom[id] = expectedFrom;
     _send(stanza);
     try {
       return await completer.future.timeout(const Duration(seconds: 15));
     } finally {
       _pendingIq.remove(id);
+      _pendingIqFrom.remove(id);
     }
   }
 
@@ -1028,7 +1530,8 @@ class XmppService extends ChangeNotifier {
           // discarding the local cache. Old gaps may no longer exist on server.
           _cursor = null;
           await _archivePage(before: '');
-          _historyError = 'The archive cursor expired. Recent available history was recovered.';
+          _historyError =
+              'The archive cursor expired. Recent available history was recovered.';
         }
       }
     } catch (_) {
@@ -1086,7 +1589,9 @@ class XmppService extends ChangeNotifier {
     final id = _id();
     final queryId = _id();
     final results = <ChatMessage>[];
+    final updates = <ChatMessageUpdate>[];
     _archiveResults[queryId] = results;
+    _archiveUpdates[queryId] = updates;
     try {
       final response = await _query(
         id,
@@ -1148,7 +1653,7 @@ class XmppService extends ChangeNotifier {
       final set = fin.getElement('set', namespace: _rsm);
       final first = set?.getElement('first', namespace: _rsm)?.innerText;
       final last = set?.getElement('last', namespace: _rsm)?.innerText;
-      if ((!complete || results.isNotEmpty) &&
+      if ((!complete || results.isNotEmpty || updates.isNotEmpty) &&
           (first == null || first.isEmpty || last == null || last.isEmpty)) {
         throw StateError('Missing archive cursors.');
       }
@@ -1170,8 +1675,14 @@ class XmppService extends ChangeNotifier {
           _messages.add(message);
         } else {
           existing.archiveId = message.archiveId;
+          existing.markable = existing.markable || message.markable;
         }
       }
+      _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      for (final update in updates) {
+        _rememberUpdate(update);
+      }
+      _reapplyUpdates();
       final oldCursor = _cursor;
       final oldOldest = _oldest;
       final oldHasOlder = _hasOlder;
@@ -1200,6 +1711,7 @@ class XmppService extends ChangeNotifier {
       return complete;
     } finally {
       _archiveResults.remove(queryId);
+      _archiveUpdates.remove(queryId);
     }
   }
 
@@ -1207,17 +1719,16 @@ class XmppService extends ChangeNotifier {
     final from = wrapper.getAttribute('from');
     if (from != null && _bare(from) != _account) return;
     final results = _archiveResults[result.getAttribute('queryid')];
+    final updates = _archiveUpdates[result.getAttribute('queryid')];
     final archiveId = result.getAttribute('id');
     if (results == null ||
-        results.length >= 100 ||
+        updates == null ||
+        results.length + updates.length >= 100 ||
         archiveId == null ||
         archiveId.isEmpty) {
       return;
     }
-    final forwarded = result.getElement(
-      'forwarded',
-      namespace: 'urn:xmpp:forward:0',
-    );
+    final forwarded = result.getElement('forwarded', namespace: _forward);
     final message = forwarded?.getElement('message', namespace: _client);
     final stamp = forwarded
         ?.getElement('delay', namespace: 'urn:xmpp:delay')
@@ -1238,6 +1749,25 @@ class XmppService extends ChangeNotifier {
     } catch (_) {
       return;
     }
+    final displayed = message
+        .getElement('displayed', namespace: _markers)
+        ?.getAttribute('id');
+    if (displayed != null && displayed.isNotEmpty) {
+      updates.add(
+        ChatMessageUpdate(
+          peer,
+          displayed,
+          outgoing: !outgoing,
+          displayed: true,
+        ),
+      );
+    }
+    final receipt = message
+        .getElement('received', namespace: _receipts)
+        ?.getAttribute('id');
+    if (!outgoing && receipt != null && receipt.isNotEmpty) {
+      updates.add(ChatMessageUpdate(peer, receipt, outgoing: true));
+    }
     final body = message.getElement('body', namespace: _client)?.innerText;
     if (body == null || body.isEmpty || body.length > 10000) return;
     final origin = outgoing
@@ -1252,6 +1782,10 @@ class XmppService extends ChangeNotifier {
         timestamp: timestamp.toLocal(),
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: archiveId,
+        markable:
+            !outgoing &&
+            message.getAttribute('id') != null &&
+            message.getElement('markable', namespace: _markers) != null,
       ),
     );
   }
@@ -1316,6 +1850,8 @@ class XmppService extends ChangeNotifier {
   }
 
   void pause() {
+    setForeground(false);
+    if (online) _sendPresence(unavailable: true);
     _paused = true;
     _closeTransport();
     _boundJid = null;
@@ -1323,11 +1859,24 @@ class XmppService extends ChangeNotifier {
   }
 
   void resume() {
+    setForeground(true);
     _paused = false;
     if (_wanted && state == XmppState.paused) unawaited(_open());
   }
 
   void _closeTransport() {
+    _typingIdle?.cancel();
+    _typingPeer = null;
+    for (final timer in _typingTimers.values) {
+      timer.cancel();
+    }
+    _typingTimers.clear();
+    _typingResources.clear();
+    _sentChatStates.clear();
+    _chatStatePeers.clear();
+    _discoveredPeers.clear();
+    _presence.clear();
+    _knownPresence.clear();
     _enabledPushNode = null;
     _generation++;
     _directoryBusy = false;
@@ -1336,7 +1885,9 @@ class XmppService extends ChangeNotifier {
       pending.completeError(StateError('Connection closed.'));
     }
     _pendingIq.clear();
+    _pendingIqFrom.clear();
     _archiveResults.clear();
+    _archiveUpdates.clear();
     _deadline?.cancel();
     _retry?.cancel();
     final subscription = _subscription;
