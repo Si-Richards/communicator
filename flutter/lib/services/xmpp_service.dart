@@ -73,6 +73,11 @@ class XmppService extends ChangeNotifier {
   String? _roomsError;
   String? get roomsError => _roomsError;
   bool get roomsBusy => _roomsBusy;
+
+  // Room extension methods cannot invoke ChangeNotifier's protected method.
+  void _notifyRoomListeners() {
+    if (!_disposed) notifyListeners();
+  }
   final ChatHistoryRepository _history;
   Future<void> _storageQueue = Future.value();
   final Map<String, Completer<XmlElement>> _pendingIq = {};
