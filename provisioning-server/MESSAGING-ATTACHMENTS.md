@@ -92,6 +92,11 @@ curl -sS -i --max-time 10 'https://provisioning.softphone.voicehost.io/api/v1/de
 
 On the Mac, from the repository's `flutter` directory:
 
+Use Flutter 3.38 or newer (Dart 3.10 or newer). The file picker is pinned to
+13.1.0, which supports the Win32 6 dependency required by secure storage.
+The iOS deployment target must be at least 14.0 in both the Podfile and the
+Runner target's deployment settings. Preserve a higher target if already set.
+
 ```bash
 git pull --ff-only origin feature/ejabberd-messaging && flutter pub get && ./tool/configure_ios_pushkit.sh && flutter analyze && flutter test
 ```

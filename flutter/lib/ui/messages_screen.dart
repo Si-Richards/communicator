@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -547,20 +546,15 @@ class _ChatScreenState extends State<MessagingChatScreen>
     try {
       String name;
       Stream<List<int>> stream;
-      int size;
+      int? size;
       if (source == 'file') {
-        final picked = await FilePicker.platform.pickFiles(
-          allowMultiple: false,
-          withData: false,
-          withReadStream: true,
-        );
-        if (picked == null || picked.files.isEmpty) return;
-        final file = picked.files.single;
-        size = file.size;
+        final file = await FilePicker.pickFile();
+        if (file == null) {
+          return;
+        }
+        size = file.lengthSync() ?? await file.length();
         name = file.name;
-        final selectedStream = file.readStream;
-        if (selectedStream == null) throw StateError('File could not be read.');
-        stream = selectedStream;
+        stream = file.readAsByteStream();
       } else {
         final image = await ImagePicker().pickImage(
           source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
@@ -574,7 +568,7 @@ class _ChatScreenState extends State<MessagingChatScreen>
         name = image.name;
         stream = image.openRead();
       }
-      if (size > ChatAttachment.maxBytes) {
+      if (size != null && size > ChatAttachment.maxBytes) {
         throw ArgumentError('Attachments must be no larger than 10 MB.');
       }
       final bytes = await readAttachmentBytes(stream);
@@ -657,14 +651,12 @@ class _ChatScreenState extends State<MessagingChatScreen>
     ChatAttachment attachment,
     Uint8List bytes,
   ) async {
-    final path = await FilePicker.platform.saveFile(
+    await FilePicker.saveFile(
       dialogTitle: 'Save attachment',
       fileName: attachment.name,
       bytes: bytes,
+      mimeType: attachment.mediaType,
     );
-    if (path != null && !Platform.isIOS && !Platform.isAndroid) {
-      await File(path).writeAsBytes(bytes, flush: true);
-    }
   }
 
   Future<void> _openAttachment(ChatAttachment attachment) async {
