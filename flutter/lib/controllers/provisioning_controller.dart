@@ -12,19 +12,23 @@ import '../repositories/settings_repository.dart';
 import '../services/mobile_call_coordinator.dart';
 import '../services/provisioning_service.dart';
 
-class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver {
+class ProvisioningController extends ChangeNotifier
+    with WidgetsBindingObserver {
   ProvisioningController({
     required this.phone,
     required this.mobileCalls,
     ProvisioningRepository? repository,
     ProvisioningService Function(String)? serviceFactory,
+    Duration cachedStateTimeout = const Duration(seconds: 5),
   }) : _repository = repository ?? ProvisioningRepository(),
-       _serviceFactory = serviceFactory ??
-           ((url) => ProvisioningService(baseUrl: url));
+       _cachedStateTimeout = cachedStateTimeout,
+       _serviceFactory =
+           serviceFactory ?? ((url) => ProvisioningService(baseUrl: url));
 
   final PhoneController phone;
   final MobileCallCoordinator mobileCalls;
   final ProvisioningRepository _repository;
+  final Duration _cachedStateTimeout;
   final ProvisioningService Function(String) _serviceFactory;
 
   ProvisionedDeviceState? _state;
@@ -35,9 +39,16 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   String? _error;
   bool _credentialsInvalid = false;
   bool _cachedStatePreloaded = false;
+  Future<void>? _cachedStateLoad;
+  Future<void>? _initialization;
+  String? _startupError;
+  bool _observingLifecycle = false;
+  bool _startupDependenciesReady = false;
+  bool _disposed = false;
 
   bool get initialized => _initialized;
   bool get startupReady => _initialized || _cachedStatePreloaded;
+  String? get startupError => _startupError;
   bool get busy => _busy;
   bool get isEnrolled => _state != null;
   String get status => _status;
@@ -51,6 +62,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     final value = _state?.configuration?.brandingName?.trim() ?? '';
     return value.isEmpty ? 'VoiceHost' : value;
   }
+
   bool get isLocked => deviceState == 'locked';
   bool get isRevoked => deviceState == 'revoked';
   bool get isRetired => deviceState == 'retired';
@@ -61,24 +73,75 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       !isRevoked &&
       !isRetired;
 
-  Future<void> preloadCachedBranding() async {
-    if (_cachedStatePreloaded || _initialized) return;
-    _state = await _repository.load();
-    _cachedStatePreloaded = true;
-    // Cached managed state is sufficient to release the Flutter startup gate.
-    // Full phone/gateway/provisioning reconciliation continues in the
-    // background and must never block an answered CallKit call from opening
-    // the application UI.
-    notifyListeners();
+  Future<void> preloadCachedBranding() {
+    if (startupReady || _disposed) return Future<void>.value();
+    final pending = _cachedStateLoad;
+    if (pending != null) return pending;
+    // Observe resume before touching Keychain: a background CallKit wake can
+    // fail here before the remaining services have finished initializing.
+    if (!_observingLifecycle) {
+      WidgetsBinding.instance.addObserver(this);
+      _observingLifecycle = true;
+    }
+    _cachedStateLoad = _loadCachedState().whenComplete(() {
+      _cachedStateLoad = null;
+    });
+    return _cachedStateLoad!;
   }
 
-  Future<void> initialize() async {
-    if (_initialized) return;
-    WidgetsBinding.instance.addObserver(this);
-    if (!_cachedStatePreloaded) {
-      _state = await _repository.load();
+  Future<void> _loadCachedState() async {
+    _startupError = null;
+    notifyListeners();
+    try {
+      // Do not treat a failed read as an unprovisioned device. A timed-out
+      // read also cannot overwrite a later successful retry when it completes.
+      final state = await _repository.load().timeout(_cachedStateTimeout);
+      if (_disposed) return;
+      _state = state;
       _cachedStatePreloaded = true;
+      notifyListeners();
+    } catch (error) {
+      if (!_disposed) {
+        _startupError =
+            'Unable to read saved device provisioning. Please retry.';
+        debugPrint(
+          '[VoiceHost Provisioning] cached state unavailable '
+          '(${error.runtimeType})',
+        );
+        notifyListeners();
+      }
+      rethrow;
     }
+  }
+
+  Future<void> retryStartup() async {
+    if (startupReady || _disposed) return;
+    try {
+      if (_startupDependenciesReady) {
+        await initialize();
+      } else {
+        await preloadCachedBranding();
+      }
+    } catch (_) {
+      // Keep the recovery screen and cached credentials; never reset or end
+      // a live call just because protected storage is temporarily unavailable.
+    }
+  }
+
+  Future<void> initialize() {
+    _startupDependenciesReady = true;
+    if (_initialized || _disposed) return Future<void>.value();
+    final pending = _initialization;
+    if (pending != null) return pending;
+    _initialization = _initialize().whenComplete(() {
+      _initialization = null;
+    });
+    return _initialization!;
+  }
+
+  Future<void> _initialize() async {
+    await preloadCachedBranding();
+    if (_disposed) return;
     _initialized = true;
 
     if (_state == null) {
@@ -565,6 +628,10 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !startupReady) {
+      unawaited(_retryStartupAfterResume());
+      return;
+    }
     if (state == AppLifecycleState.resumed &&
         isEnrolled &&
         !_credentialsInvalid &&
@@ -573,8 +640,21 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     }
   }
 
+  Future<void> _retryStartupAfterResume() async {
+    // A resume can arrive while the background read is still pending. Wait
+    // for its bounded result, then make a fresh read if it failed.
+    final pending = _initialization ?? _cachedStateLoad;
+    if (pending != null) {
+      try {
+        await pending;
+      } catch (_) {}
+    }
+    await retryStartup();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     _checkInTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();

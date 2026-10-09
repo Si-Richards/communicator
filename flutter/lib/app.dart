@@ -353,9 +353,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       animation: Listenable.merge([controller, widget.provisioning]),
       builder: (context, _) {
         if (!widget.provisioning.startupReady) {
-          return _ProvisioningLoadingScreen(
-            brandingName: widget.provisioning.brandingName,
-          );
+          return _ProvisioningLoadingScreen(provisioning: widget.provisioning);
         }
 
         if (!widget.provisioning.isEnrolled ||
@@ -411,9 +409,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 }
 
 class _ProvisioningLoadingScreen extends StatelessWidget {
-  const _ProvisioningLoadingScreen({required this.brandingName});
+  const _ProvisioningLoadingScreen({required this.provisioning});
 
-  final String brandingName;
+  final ProvisioningController provisioning;
 
   @override
   Widget build(BuildContext context) {
@@ -430,14 +428,27 @@ class _ProvisioningLoadingScreen extends StatelessWidget {
                 const Icon(Icons.phone_in_talk, size: 64, color: orange),
                 const SizedBox(height: 24),
                 Text(
-                  brandingName,
-                  style: Theme.of(context).textTheme.headlineMedium
-                      ?.copyWith(color: navy, fontWeight: FontWeight.w700),
+                  provisioning.brandingName,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: navy,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 24),
-                const CircularProgressIndicator(),
+                if (provisioning.startupError == null)
+                  const CircularProgressIndicator(),
                 const SizedBox(height: 14),
-                const Text('Checking device provisioning…'),
+                Text(
+                  provisioning.startupError ?? 'Checking device provisioning…',
+                  textAlign: TextAlign.center,
+                ),
+                if (provisioning.startupError != null) ...[
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () => unawaited(provisioning.retryStartup()),
+                    child: const Text('Retry'),
+                  ),
+                ],
               ],
             ),
           ),
@@ -523,3 +534,4 @@ class _ProvisioningLockedScreen extends StatelessWidget {
     );
   }
 }
+
