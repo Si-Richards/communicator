@@ -50,8 +50,9 @@ class ProvisioningService {
                   ))
             .timeout(const Duration(seconds: 25));
     final json = _decode(response);
-    if (response.statusCode != 200 && response.statusCode != 201)
+    if (response.statusCode != 200 && response.statusCode != 201) {
       throw _exception(response, json);
+    }
     return MessagingRoom.parseList(json, owner);
   }
 
