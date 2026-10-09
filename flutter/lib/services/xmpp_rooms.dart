@@ -44,7 +44,7 @@ extension MessagingRooms on XmppService {
     } finally {
       if (generation == _generation) {
         _roomsBusy = false;
-        if (!_disposed) notifyListeners();
+        if (!_disposed) _notifyRoomListeners();
       }
     }
   }
@@ -98,7 +98,7 @@ extension MessagingRooms on XmppService {
       }
     }
     unawaited(_persist());
-    notifyListeners();
+    _notifyRoomListeners();
   }
 
   void _joinRoom(String peer, {bool unavailable = false}) {
@@ -211,7 +211,7 @@ extension MessagingRooms on XmppService {
       _applyRoomReaders(peer);
       if (timestamp == null) {
         unawaited(_persist());
-        notifyListeners();
+        _notifyRoomListeners();
       }
     }
     final body = message
@@ -273,7 +273,7 @@ extension MessagingRooms on XmppService {
     if (timestamp == null) {
       _trimMessages();
       unawaited(_persist());
-      notifyListeners();
+      _notifyRoomListeners();
     }
   }
 
@@ -317,7 +317,7 @@ extension MessagingRooms on XmppService {
       );
     }
     unawaited(_persist());
-    notifyListeners();
+    _notifyRoomListeners();
   }
 
   void _roomArchive(XmlElement wrapper, XmlElement result, String peer) {
@@ -359,7 +359,7 @@ extension MessagingRooms on XmppService {
     }
     final generation = _generation;
     _roomHistoryErrors.remove(peer);
-    notifyListeners();
+    _notifyRoomListeners();
     try {
       // On reconnect, page forward from the last completed query. First load and
       // explicit older loads page backwards. Cursors commit only after success.
@@ -493,7 +493,7 @@ extension MessagingRooms on XmppService {
     } finally {
       if (generation == _generation) {
         _roomHistoryBusy.remove(peer);
-        if (!_disposed) notifyListeners();
+        if (!_disposed) _notifyRoomListeners();
       }
     }
   }
