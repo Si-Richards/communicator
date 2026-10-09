@@ -646,6 +646,61 @@ void main() {
   );
 
   test(
+    'directory refresh probes only account contacts and updates live presence',
+    () async {
+      server.roster = [
+        ('10000*208@ejabberd.voicehost.io', 'Reception'),
+        ('20000*208@ejabberd.voicehost.io', 'Other account'),
+        ('10000*207@ejabberd.voicehost.io', 'Self'),
+      ];
+      final service = client();
+      await login(service, '10000*207');
+      await _until(() => !service.directoryBusy);
+      await _until(
+        () => server.received.any(
+          (stanza) =>
+              stanza.name.local == 'presence' &&
+              stanza.getAttribute('type') == 'probe',
+        ),
+      );
+      final probes = server.received
+          .where(
+            (stanza) =>
+                stanza.name.local == 'presence' &&
+                stanza.getAttribute('type') == 'probe',
+          )
+          .toList();
+      expect(probes.map((p) => p.getAttribute('to')).toList(), [peer]);
+      receive(
+        service,
+        '<presence xmlns="jabber:client" from="$peer/phone"><show>away</show></presence>',
+      );
+      await _until(() => service.presenceFor(peer) == MessagingPresence.away);
+      expect(service.contactLabel(peer), 'Reception · 208');
+      receive(
+        service,
+        '<presence xmlns="jabber:client" from="$peer/phone" type="unavailable"/>',
+      );
+      await _until(
+        () => service.presenceFor(peer) == MessagingPresence.offline,
+      );
+      final before = probes.length;
+      await service.refreshDirectory();
+      await _until(
+        () =>
+            server.received
+                .where(
+                  (stanza) =>
+                      stanza.name.local == 'presence' &&
+                      stanza.getAttribute('type') == 'probe',
+                )
+                .length >
+            before,
+      );
+    },
+  );
+
+  test(
     'provisioned extensions resolve a SIP identity suffix through the roster',
     () async {
       server.roster = [('10000*213t@ejabberd.voicehost.io', 'Simon')];
@@ -990,6 +1045,10 @@ void main() {
       service.configureManaged(managed);
       await _until(() => service.online && !service.directoryBusy);
       expect(service.directory.single.jid, '10000*00208@ejabberd.voicehost.io');
+      expect(
+        service.contactLabel('10000*00208T@ejabberd.voicehost.io/phone'),
+        'Reception · 00208',
+      );
       expect(
         service.recipientJid('00208'),
         '10000*00208@ejabberd.voicehost.io',

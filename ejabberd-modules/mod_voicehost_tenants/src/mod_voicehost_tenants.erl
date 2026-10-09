@@ -5,11 +5,10 @@
 
 -include_lib("xmpp/include/xmpp.hrl").
 -include("ejabberd_commands.hrl").
--include("mod_roster.hrl").
 -include("mod_mam.hrl").
 
 -export([start/2, stop/1, reload/3, depends/2, mod_options/1, mod_doc/0,
-         filter_packet/1, user_send/1, user_receive/1, roster_get/3,
+         filter_packet/1, user_send/1, user_receive/1, roster_get/2,
          roster_info/4, set_identity/7, valid_identity/3, contacts/2,
          migrate_history/3, canonical_user/1, push_send/2, push_events/2, ack_push/2]).
 
@@ -419,12 +418,13 @@ contacts(User, Host) ->
         _ -> []
     end.
 
-roster_get(_StoredRoster, User, Host) ->
+roster_get(_StoredRoster, {User, Host}) ->
     %% A read-only shared roster, authoritative even if an old personal roster
     %% contains another tenant's JID. Each shared identity appears only once.
-    [#roster{usj = {User, Host, {U, Host, <<>>}}, us = {User, Host},
-             jid = {U, Host, <<>>}, name = Name, subscription = both,
-             groups = [<<"Account users">>, <<"VoiceHost extension:", Address/binary>>]}
+    %% ejabberd passes {User, Host} as one hook argument and consumes XMPP
+    %% roster_item records both for IQ results and for presence broadcasts.
+    [#roster_item{jid = jid:make(U, Host), name = Name, subscription = both,
+                  groups = [<<"Account users">>, <<"VoiceHost extension:", Address/binary>>]}
      || #voicehost_identity{key = {_, U}, name = Name, address = Address} <- contacts(User, Host)].
 
 roster_info(_Acc, User, Host, JID) ->

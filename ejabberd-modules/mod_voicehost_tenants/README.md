@@ -1,5 +1,40 @@
 # VoiceHost account isolation and extension directory
 
+## Directory and presence repair
+
+The roster hook now follows ejabberd 26.09's callback contract:
+`roster_get(Items, {User, Host})` returns XMPP `roster_item` records. The old
+three-argument callback failed, leaving the directory empty and preventing
+presence broadcasts. Entries include the provisioned friendly name and mutual
+presence subscriptions; other tenants and disabled users remain excluded.
+
+On the ejabberd server, upgrade the installed module and restart the node:
+
+```bash
+cd /opt/voicehost-messaging && git pull --ff-only origin feature/ejabberd-messaging && bash ejabberd-modules/mod_voicehost_tenants/install.sh /opt/ejabberd-26.09/bin/ejabberdctl --upgrade && /opt/ejabberd-26.09/bin/ejabberdctl restart
+```
+
+This briefly disconnects messaging. Once the node has restarted, run
+`/opt/ejabberd-26.09/bin/ejabberdctl status`. Update/rebuild the app from its
+`flutter` directory:
+
+```bash
+git pull --ff-only origin feature/ejabberd-messaging && flutter pub get && flutter analyze && flutter test
+```
+
+No provisioning container, Nginx, API permission or identity migration change is
+required for this repair. Existing enrolled devices and passwords remain valid.
+The app probes account contacts on Directory refresh, displays local message
+dates and times, and shows connection status as a compact header icon.
+
+Test two enabled extensions in the same account: search the Directory by name
+and extension, check names in conversation titles, and change Available/Away/Busy
+in Messaging preferences. Disconnect one client and check Offline; another
+connected device on the same extension keeps that user available. A different
+tenant and a disabled identity must remain absent. Check dates in old history
+and new messages. If the directory remains empty, inspect `messaging-worker`
+errors and confirm both identities are published as enabled messaging users.
+
 For standard iOS chat alerts, follow the [APNs notification rollout guide](../../provisioning-server/MESSAGING-NOTIFICATIONS.md).
 
 For ejabberd 26.09. Install this module on **149.19.177.17 before updating the

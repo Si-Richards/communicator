@@ -91,6 +91,25 @@ class MessagesScreen extends StatelessWidget {
               ],
             ),
             actions: [
+              Tooltip(
+                message: messaging.online
+                    ? 'Messaging connected'
+                    : 'Messaging ${messaging.state.name}',
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(
+                    messaging.online
+                        ? Icons.cloud_done_outlined
+                        : Icons.cloud_off_outlined,
+                    color: messaging.online
+                        ? Colors.lightGreenAccent
+                        : Colors.white70,
+                    semanticLabel: messaging.online
+                        ? 'Messaging connected'
+                        : 'Messaging ${messaging.state.name}',
+                  ),
+                ),
+              ),
               IconButton(
                 tooltip: 'Messaging preferences',
                 icon: const Icon(Icons.tune),
@@ -123,19 +142,12 @@ class MessagesScreen extends StatelessWidget {
             children: [
               Column(
                 children: [
-                  ListTile(
-                    leading: Icon(
-                      messaging.online ? Icons.chat : Icons.chat_outlined,
+                  if (messaging.error != null || messaging.historyError != null)
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(messaging.error ?? messaging.historyError!),
                     ),
-                    title: Text('Messaging ${messaging.state.name}'),
-                    subtitle: Text(
-                      messaging.error ??
-                          messaging.historyError ??
-                          (messaging.historyBusy
-                              ? 'Recovering conversation history…'
-                              : 'Encrypted history saved on this device'),
-                    ),
-                  ),
+                  if (messaging.historyBusy) const LinearProgressIndicator(),
                   if (messaging.managedEnabled && !messaging.online)
                     TextButton(
                       onPressed: messaging.reconnect,
@@ -185,10 +197,26 @@ class MessagesScreen extends StatelessWidget {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                trailing: Text(
-                                  TimeOfDay.fromDateTime(
-                                    message.timestamp,
-                                  ).format(context),
+                                trailing: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      MaterialLocalizations.of(
+                                        context,
+                                      ).formatShortDate(
+                                        message.timestamp.toLocal(),
+                                      ),
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.labelSmall,
+                                    ),
+                                    Text(
+                                      TimeOfDay.fromDateTime(
+                                        message.timestamp.toLocal(),
+                                      ).format(context),
+                                    ),
+                                  ],
                                 ),
                                 onTap: () => _openChat(context, message.peer),
                               );
@@ -1038,13 +1066,13 @@ class _ChatScreenState extends State<MessagingChatScreen>
                                 ),
                               ),
                             const SizedBox(height: 5),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 6,
                               children: [
                                 Text(
-                                  TimeOfDay.fromDateTime(
-                                    message.timestamp,
-                                  ).format(context),
+                                  '${MaterialLocalizations.of(context).formatShortDate(message.timestamp.toLocal())} · '
+                                  '${TimeOfDay.fromDateTime(message.timestamp.toLocal()).format(context)}',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: message.outgoing
@@ -1054,10 +1082,8 @@ class _ChatScreenState extends State<MessagingChatScreen>
                                         : colors.onSurfaceVariant,
                                   ),
                                 ),
-                                if (message.outgoing) ...[
-                                  const SizedBox(width: 6),
+                                if (message.outgoing)
                                   _MessageStatusIcon(status: message.status),
-                                ],
                               ],
                             ),
                           ],

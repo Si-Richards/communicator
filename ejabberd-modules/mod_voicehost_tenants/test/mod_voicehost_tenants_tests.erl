@@ -1,13 +1,40 @@
 -module(mod_voicehost_tenants_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("xmpp/include/xmpp.hrl").
--include("mod_roster.hrl").
 -include("mod_mam.hrl").
 
 -define(HOST, <<"ejabberd.voicehost.io">>).
 
 isolation_test_() ->
     {setup, fun setup/0, fun cleanup/1, fun(_) -> cases() end}.
+
+roster_hook_contract_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        [?_test(begin
+            %% Invoke the exact hook shape used by mod_roster and ejabberd_c2s.
+            %% An old/foreign personal roster must not bypass tenant isolation.
+            Foreign = #roster_item{jid=jid(<<"20000*207">>),subscription=both},
+            Items = apply(mod_voicehost_tenants,roster_get,
+                          [[Foreign],{<<"10000*207">>,?HOST}]),
+            [#roster_item{jid=Peer,name=Name,subscription=both}] = Items,
+            ?assertEqual(jid:make(<<"10000*208">>,?HOST),Peer),
+            ?assertEqual(<<"Reception">>,Name),
+            %% Both the serialized roster and c2s presence fan-out consume
+            %% roster_item, rather than mod_roster's internal storage record.
+            XML = xmpp:encode(#roster_query{items=Items}),
+            [ItemXML] = fxml:get_subtags(XML,<<"item">>),
+            ?assertEqual(<<"10000*208@ejabberd.voicehost.io">>,
+                         fxml:get_tag_attr_s(<<"jid">>,ItemXML)),
+            ?assertEqual(<<"Reception">>,fxml:get_tag_attr_s(<<"name">>,ItemXML)),
+            Recipients = [J || #roster_item{jid=J,subscription=S} <- Items,
+                                S =:= both orelse S =:= from],
+            ?assertEqual([Peer],Recipients),
+            Pres = #presence{from=jid(<<"10000*207">>),to=Peer,show=away},
+            ?assertEqual(Pres,mod_voicehost_tenants:filter_packet(Pres)),
+            Probe = Pres#presence{type=probe,show=undefined},
+            ?assertEqual(Probe,mod_voicehost_tenants:filter_packet(Probe))
+        end)]
+    end}.
 
 history_migration_test_() ->
     {setup, fun history_setup/0, fun cleanup/1, fun(_) -> history_cases() end}.
@@ -179,7 +206,7 @@ cases() ->
     SameMsg = #message{type=chat, from=A, to=B},
     CrossMsg = #message{type=chat, from=A, to=C},
     State = #{jid => A},
-    Roster = mod_voicehost_tenants:roster_get([], <<"10000*207">>, ?HOST),
+    Roster = mod_voicehost_tenants:roster_get([], {<<"10000*207">>, ?HOST}),
     [?_assertEqual(SameMsg, mod_voicehost_tenants:filter_packet(SameMsg)),
      ?_assertEqual(drop, mod_voicehost_tenants:filter_packet(CrossMsg)),
      ?_assertEqual(drop, mod_voicehost_tenants:filter_packet(CrossMsg#message{from=C,to=A})),
@@ -203,21 +230,21 @@ cases() ->
      ?_assertEqual({stop,{drop,State}}, mod_voicehost_tenants:user_receive({CrossMsg#message{from=C,to=A},State})),
      ?_assertEqual({SameMsg,State}, mod_voicehost_tenants:user_receive({SameMsg,State})),
      ?_assertEqual(1, length(Roster)),
-     ?_assertEqual({<<"10000*208">>,?HOST,<<>>}, (hd(Roster))#roster.jid),
-     ?_assertEqual(<<"Reception">>, (hd(Roster))#roster.name),
-     ?_assertEqual([], mod_voicehost_tenants:roster_get(Roster,<<"10000*999">>,?HOST)),
+     ?_assertEqual({<<"10000*208">>,?HOST,<<>>}, jid:tolower((hd(Roster))#roster_item.jid)),
+     ?_assertEqual(<<"Reception">>, (hd(Roster))#roster_item.name),
+     ?_assertEqual([], mod_voicehost_tenants:roster_get(Roster,{<<"10000*999">>,?HOST})),
      ?_assertEqual({both,none,[<<"Account users">>]},mod_voicehost_tenants:roster_info({none,none,[]},<<"10000*207">>,?HOST,B)),
      ?_assertEqual({none,none,[]},mod_voicehost_tenants:roster_info({both,none,[]},<<"10000*207">>,?HOST,C)),
      ?_assertEqual(1,publish(<<"10000*207">>,<<"20000">>,<<"207">>,<<"Forgery">>,1)),
      ?_assertEqual(1,mod_voicehost_tenants:set_identity(<<"10000*208t">>,?HOST,<<"10000">>,<<"208t">>,<<"Duplicate">>,<<"208">>,1)),
      ?_assertEqual(0,mod_voicehost_tenants:set_identity(<<"10000*213t">>,?HOST,<<"10000">>,<<"213t">>,<<"Simon">>,<<"213">>,1)),
-     ?_assertEqual(true,lists:any(fun(R) -> lists:member(<<"VoiceHost extension:213">>,R#roster.groups) end,
-                                mod_voicehost_tenants:roster_get([],<<"10000*207">>,?HOST))),
+     ?_assertEqual(true,lists:any(fun(R) -> lists:member(<<"VoiceHost extension:213">>,R#roster_item.groups) end,
+                                mod_voicehost_tenants:roster_get([],{<<"10000*207">>,?HOST}))),
      ?_assertEqual(0,mod_voicehost_tenants:set_identity(<<"10000*213t">>,?HOST,<<"10000">>,<<"213t">>,<<"Simon">>,<<"213">>,0)),
      ?_assertEqual(false,mod_voicehost_tenants:valid_identity(<<"10000*207*other">>,<<"10000">>,<<"207*other">>)),
      ?_assertEqual(false,mod_voicehost_tenants:valid_identity(<<"207">>,<<>>,<<"207">>)),
      ?_assertEqual(0,publish(<<"10000*208">>,<<"10000">>,<<"208">>,<<"Reception">>,1)),
-     ?_assertEqual(1,length(mod_voicehost_tenants:roster_get([],<<"10000*207">>,?HOST))),
+     ?_assertEqual(1,length(mod_voicehost_tenants:roster_get([],{<<"10000*207">>,?HOST}))),
      ?_assertEqual(0,publish(<<"10000*208">>,<<"10000">>,<<"208">>,<<"Reception">>,0)),
      ?_assertEqual(drop,mod_voicehost_tenants:filter_packet(SameMsg)),
-     ?_assertEqual([],mod_voicehost_tenants:roster_get([],<<"10000*207">>,?HOST))].
+     ?_assertEqual([],mod_voicehost_tenants:roster_get([],{<<"10000*207">>,?HOST}))].

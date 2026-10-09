@@ -394,14 +394,19 @@ class XmppService extends ChangeNotifier {
   }
 
   String extensionFor(String jid) {
-    final contact = _directory.where((c) => c.jid == _bare(jid)).firstOrNull;
+    final contact = _directory
+        .where((c) => c.jid == _canonicalPeer(jid))
+        .firstOrNull;
     if (contact != null) return contact.extension;
     final local = _bare(jid).split('@').first;
     return local.contains('*') ? local.split('*').last : local;
   }
 
   String contactLabel(String jid) =>
-      _directory.where((c) => c.jid == _bare(jid)).firstOrNull?.label ??
+      _directory
+          .where((c) => c.jid == _canonicalPeer(jid))
+          .firstOrNull
+          ?.label ??
       extensionFor(jid);
 
   bool get managedEnabled => _managedEnabled;
@@ -1229,6 +1234,18 @@ class XmppService extends ChangeNotifier {
         ..clear()
         ..addAll(contacts.values);
       _directory.sort((a, b) => a.extension.compareTo(b.extension));
+      // A membership update can arrive after our initial presence broadcast.
+      // Refresh each permitted contact's current resources without requiring
+      // either phone to reconnect. The server still enforces tenant policy.
+      for (final contact in _directory) {
+        _send(
+          _element(
+            'presence',
+            _client,
+            attributes: {'type': 'probe', 'to': contact.jid},
+          ),
+        );
+      }
     } catch (_) {
       if (generation == _generation) {
         _directory.clear();
