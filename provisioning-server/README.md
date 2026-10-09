@@ -1,5 +1,9 @@
 # VoiceHost Provisioning Server
 
+For private account rooms, follow the [room rollout guide](MESSAGING-ROOMS.md).
+
+For standard iOS chat alerts, follow the [APNs notification rollout guide](MESSAGING-NOTIFICATIONS.md).
+
 Standalone reference/staging implementation of the VoiceHost endpoint provisioning API. Configuration is **VoiceHost managed only**; the Flutter settings screen no longer offers manual SIP or Janus editing.
 
 This service is intentionally separate from RANDY. It owns activation, device identity, device state and managed endpoint configuration. RANDY remains the mobile telephony runtime.
@@ -336,3 +340,23 @@ session revocation or reseller tenancy. Keep it restricted to the internal
 management/VPN network. The separate staging administration API under
 `/api/v1/admin/` still accepts the existing `X-Admin-Key` and is similarly
 restricted by NGINX. Do not expose either administrative surface publicly.
+
+## Managed messaging
+
+The activation form and device editor support `messaging_enabled`, `messaging_managed`,
+`messaging_jid`, `messaging_password` and `messaging_websocket`. Messaging is disabled by default.
+Automatic mode creates one account per numeric account number and 3–5 digit extension.
+SIP logins `10000*213`, `10000*213T` and `10000*213D` share `10000*213@ejabberd.voicehost.io`
+and a separate generated password; SIP credentials remain unchanged. Last-device
+disablement bans the account while preserving its password/history; unlocking restores it.
+See [automatic ejabberd deployment and acceptance](EJABBERD-MANAGEMENT.md) for the
+private API setup, environment variables and `messaging-worker` service.
+
+Manual mode uses an existing ejabberd account with its dedicated password. A blank password
+on edit retains the current secret only when the JID and endpoint are unchanged.
+The portal never returns the messaging password. The device receives a `messaging`
+section inside its authenticated configuration and stores it in secure storage.
+
+Rebuild both `provisioning` and `provisioning-admin` for this schema/UI change.
+See [the messaging deployment and acceptance guide](../flutter/MESSAGING.md)
+for the ejabberd archive policy, iOS rebuild and account configuration steps.

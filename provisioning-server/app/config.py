@@ -30,6 +30,21 @@ class Settings:
     activation_ttl_seconds: int = int(
         os.getenv("ACTIVATION_TTL_SECONDS", "900"),
     )
+    ejabberd_management_enabled: bool = os.getenv("EJABBERD_MANAGEMENT_ENABLED", "false").lower() == "true"
+    ejabberd_host: str = os.getenv("EJABBERD_HOST", "ejabberd.voicehost.io")
+    ejabberd_websocket: str = os.getenv("EJABBERD_WEBSOCKET", "wss://ejabberd.voicehost.io/websocket")
+    ejabberd_api_url: str = os.getenv("EJABBERD_API_URL", "")
+    ejabberd_api_username: str = os.getenv("EJABBERD_API_USERNAME", "")
+    ejabberd_api_password: str = os.getenv("EJABBERD_API_PASSWORD", "")
+
+    messaging_push_enabled: bool = os.getenv("MESSAGING_PUSH_ENABLED", "false").lower() == "true"
+    messaging_attachment_directory: str = os.getenv("MESSAGING_ATTACHMENT_DIRECTORY", "/data/messaging-attachments")
+    messaging_attachment_quota_bytes: int = int(os.getenv("MESSAGING_ATTACHMENT_QUOTA_BYTES", str(1024 * 1024 * 1024)))
+    messaging_attachment_retention_days: int = int(os.getenv("MESSAGING_ATTACHMENT_RETENTION_DAYS", "30"))
+    apns_team_id: str = os.getenv("MESSAGING_APNS_TEAM_ID", "")
+    apns_key_id: str = os.getenv("MESSAGING_APNS_KEY_ID", "")
+    apns_bundle_id: str = os.getenv("MESSAGING_APNS_BUNDLE_ID", "")
+    apns_key_path: str = os.getenv("MESSAGING_APNS_KEY_PATH", "/run/secrets/messaging-apns.p8")
 
 
 settings = Settings()

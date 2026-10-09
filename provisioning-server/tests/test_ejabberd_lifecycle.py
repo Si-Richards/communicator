@@ -1,0 +1,664 @@
+import json
+import os
+import tempfile
+import threading
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import patch
+
+import httpx
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+_database = tempfile.TemporaryDirectory()
+os.environ.setdefault("PROVISIONING_DATABASE", str(Path(_database.name) / "routes.db"))
+from app import main
+from app.ejabberd import EjabberdClient, EjabberdError
+from app.messaging_worker import reconcile_accounts
+from app.models import AdminActivationRequest, AdminDeviceConfigurationRequest, LogoutRequest
+from app.store import Store
+from app.messaging_identity import canonical_identity
+
+
+class FakeEjabberd:
+    def __init__(self):
+        self.users = {}
+        self.bans = {}
+        self.identities = {}
+        self.calls = []
+        self.fail = None
+        self.lose = None
+        self.ban_details_as_object = False
+        self.history = {}
+        self.history_pending = False
+
+    def handle(self, request):
+        command = request.url.path.split("/")[-1]
+        body = json.loads(request.content)
+        jid = body["user"] + "@" + body["host"]
+        self.calls.append((command, jid))
+        if self.fail == command:
+            return httpx.Response(403, json={"message": "remote-sensitive-content"})
+        if command == "check_account":
+            result = 0 if jid in self.users else 1
+        elif command == "check_password":
+            result = 0 if self.users.get(jid) == body["password"] else 1
+        elif command == "register":
+            if jid in self.users:
+                return httpx.Response(409, json={"message": "conflict"})
+            self.users[jid] = body["password"]
+            result = "Success"
+        elif command == "get_ban_details":
+            if self.ban_details_as_object:
+                result = {"reason": self.bans[jid]} if jid in self.bans else {}
+            else:
+                result = [{"name": "reason", "value": self.bans[jid]}] if jid in self.bans else []
+        elif command == "ban_account":
+            self.bans[jid] = body["reason"]
+            result = 0
+        elif command == "unban_account":
+            self.bans.pop(jid, None)
+            result = 0
+        elif command == "voicehost_set_identity":
+            self.identities[jid] = {key: body[key] for key in ("account", "extension", "address", "name", "enabled")}
+            result = 0
+        elif command == "voicehost_migrate_history":
+            old = body["old_user"] + "@" + body["host"]
+            self.history.setdefault(jid, set()).update(self.history.get(old, set()))
+            result = 2 if self.history_pending else 0
+        else:
+            raise AssertionError("Unexpected API command")
+        if self.lose == command:
+            self.lose = None
+            raise httpx.ReadTimeout("remote-sensitive-content", request=request)
+        return httpx.Response(200, json=result)
+
+
+class LifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = Store(str(Path(self.tmp.name) / "accounts.db"))
+        self.addCleanup(patch.stopall)
+        patch.object(main, "store", self.store).start()
+        patch.object(main, "settings", replace(main.settings, ejabberd_management_enabled=True)).start()
+        self.fake = FakeEjabberd()
+        self.api = EjabberdClient("https://private.example/api/v2", "provisioner@example", "api-secret",
+                                  httpx.MockTransport(self.fake.handle))
+        self.addCleanup(self.api.close)
+        self.n = 0
+
+    def create(self, username="10000*207"):
+        self.n += 1
+        request = AdminActivationRequest(extension=canonical_identity(username)[1], sip_username=username,
+                                        messaging_enabled=True, messaging_managed=True)
+        _, code, _ = self.store.create_activation(request.model_dump(), 900)
+        result, failure = self.store.activate_device(code, {
+            "installation_id": "installation-" + str(self.n), "platform": "ios",
+            "device_type": "mobile", "app_version": "test", "app_build": 37,
+        }, main.build_configuration, None, 900)
+        self.assertIsNone(failure)
+        return self.store.get_device(result[0])
+
+    def sync(self):
+        reconcile_accounts(self.store, self.api)
+
+    def retry(self):
+        with self.store._connect() as conn:
+            conn.execute("UPDATE messaging_accounts SET next_retry_at=NULL")
+        self.sync()
+
+    def seed_legacy(self, username, password):
+        device = self.create(username)
+        canonical = device["config"]["messaging"]["jid"]
+        old = username.lower() + "@ejabberd.voicehost.io"
+        config = device["config"]
+        config["messaging"].update(jid=old, password=password, ready=True, extension=username.split("*", 1)[1].lower())
+        config["messaging"].pop("previous_jids", None)
+        with self.store._connect() as conn:
+            conn.execute("UPDATE devices SET config_json=? WHERE id=?", (json.dumps(config), device["id"]))
+            conn.execute("""INSERT INTO messaging_accounts (jid,password,owned,applied_enabled,status,created_at,
+                account_number,extension,applied_directory_signature,directory_synced_at)
+                VALUES (?,?,1,1,'enabled',?,?,?,?,?)""",
+                (old,password,device["created_at"],username.split("*")[0],username.split("*")[1].lower(),"old-signature",device["created_at"]))
+            if not any((json.loads(row[0]).get("messaging") or {}).get("jid") == canonical
+                       for row in conn.execute("SELECT config_json FROM devices")):
+                conn.execute("DELETE FROM messaging_accounts WHERE jid=?", (canonical,))
+        self.fake.users[old] = password
+        self.fake.history[old] = {username + "-message"}
+        return device, old
+
+    def reopen(self):
+        self.store = Store(self.store.path)
+        main.store = self.store
+
+    def test_numeric_extension_groups_all_endpoint_suffixes_and_preserves_sip(self):
+        devices = [self.create(u) for u in ("10000*213", "10000*213T", "10000*213D")]
+        self.assertEqual({d["config"]["messaging"]["jid"] for d in devices}, {"10000*213@ejabberd.voicehost.io"})
+        self.assertEqual(len({d["config"]["messaging"]["password"] for d in devices}), 1)
+        self.assertEqual([d["config"]["telephony"]["sip"]["username"] for d in devices], ["10000*213", "10000*213T", "10000*213D"])
+        self.sync()
+        self.assertEqual(len(self.fake.identities), 1)
+        self.store.set_device_state(devices[0]["id"], "locked")
+        self.store.set_device_state(devices[1]["id"], "locked")
+        self.sync()
+        self.assertEqual(self.fake.bans, {})
+        self.store.set_device_state(devices[2]["id"], "locked")
+        self.sync()
+        self.assertIn("10000*213@ejabberd.voicehost.io", self.fake.bans)
+
+    def test_three_four_five_digit_extensions_and_leading_zeros(self):
+        for extension in ("001", "0123", "01234"):
+            first = self.create("00100*" + extension + "T")
+            second = self.create("00100*" + extension + "D")
+            other = self.create("00200*" + extension)
+            self.assertEqual(first["config"]["messaging"]["jid"], f"00100*{extension}@ejabberd.voicehost.io")
+            self.assertEqual(first["config"]["messaging"]["password"], second["config"]["messaging"]["password"])
+            self.assertNotEqual(first["config"]["messaging"]["password"], other["config"]["messaging"]["password"])
+
+    def test_invalid_person_format_and_mismatched_extension_are_rejected(self):
+        for username in ("tenant*213", "10000*21", "10000*123456", "10000*213t2", "10000*213*d", "10000*213-t"):
+            with self.subTest(username=username), self.assertRaises(ValidationError):
+                AdminActivationRequest(extension="213", sip_username=username, messaging_enabled=True, messaging_managed=True)
+        with self.assertRaises(Exception) as caught:
+            main.build_configuration({"extension":"214", "sip_username":"10000*213T", "messaging_enabled":True, "messaging_managed":True})
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(main.build_configuration({"extension":"10000*213T", "sip_username":"10000*213T", "messaging_enabled":True, "messaging_managed":True})["messaging"]["jid"], "10000*213@ejabberd.voicehost.io")
+
+    def test_existing_suffix_accounts_merge_password_history_and_keep_sources(self):
+        first, t = self.seed_legacy("10000*213T", "legacy-t-secret")
+        second, d = self.seed_legacy("10000*213D", "legacy-d-secret")
+        self.reopen()
+        target = "10000*213@ejabberd.voicehost.io"
+        version = self.store.get_device(first["id"])["configuration_version"]
+        self.reopen()
+        self.assertEqual(self.store.get_device(first["id"])["configuration_version"], version)
+        self.sync()
+        configs = [self.store.get_device(x["id"])["config"] for x in (first, second)]
+        self.assertEqual({c["messaging"]["jid"] for c in configs}, {target})
+        self.assertEqual({c["messaging"]["password"] for c in configs}, {"legacy-t-secret"})
+        self.assertTrue(all(c["messaging"]["ready"] for c in configs))
+        self.assertEqual(set(configs[0]["messaging"]["previous_jids"]), {t, d})
+        self.assertEqual(self.fake.history[target], self.fake.history[t] | self.fake.history[d])
+        self.assertTrue({t, d} <= self.fake.bans.keys())
+        self.assertEqual(self.fake.users[t], "legacy-t-secret")
+        self.assertEqual(self.fake.users[d], "legacy-d-secret")
+        before = len([c for c in self.fake.calls if c[0] == "voicehost_migrate_history"])
+        self.reopen()
+        self.sync()
+        self.assertEqual(len([c for c in self.fake.calls if c[0] == "voicehost_migrate_history"]), before)
+
+    def test_existing_canonical_password_is_retained_during_merge(self):
+        base = self.create("10000*213")
+        self.sync()
+        password = base["config"]["messaging"]["password"]
+        device, old = self.seed_legacy("10000*213T", "different-legacy-secret")
+        self.reopen()
+        self.sync()
+        self.assertEqual(self.store.get_device(device["id"])["config"]["messaging"]["password"], password)
+        self.assertEqual(self.fake.users[base["config"]["messaging"]["jid"]], password)
+        self.assertIn(old, self.fake.bans)
+
+    def test_archive_failure_keeps_account_unready_and_sources_recoverable(self):
+        device, old = self.seed_legacy("10000*213T", "legacy-secret")
+        self.reopen()
+        self.fake.fail = "voicehost_migrate_history"
+        self.sync()
+        config = self.store.get_device(device["id"])["config"]["messaging"]
+        self.assertFalse(config["ready"])
+        self.assertEqual(self.fake.identities[config["jid"]]["enabled"], 0)
+        self.assertIn(old, self.fake.history)
+        self.fake.fail = None
+        self.reopen()
+        self.retry()
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+
+    def test_archive_batches_keep_readiness_false_until_the_last_batch(self):
+        device, old = self.seed_legacy("10000*213T", "legacy-secret")
+        self.reopen()
+        self.fake.history_pending = True
+        self.sync()
+        messaging = self.store.get_device(device["id"])["config"]["messaging"]
+        self.assertFalse(messaging["ready"])
+        self.assertEqual(self.store.messaging_account_status(messaging["jid"])["status"], "migrating")
+        self.assertEqual(self.fake.identities[messaging["jid"]]["enabled"], 0)
+        with self.store._connect() as conn:
+            self.assertEqual(conn.execute("SELECT history_done FROM messaging_aliases WHERE old_jid=?", (old,)).fetchone()[0], 0)
+        self.fake.history_pending = False
+        self.reopen()
+        self.retry()
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+
+    def test_lost_archive_response_recovers_without_duplicate_history(self):
+        device, old = self.seed_legacy("10000*213T", "legacy-secret")
+        self.reopen()
+        self.fake.lose = "voicehost_migrate_history"
+        self.sync()
+        self.assertFalse(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.reopen()
+        self.retry()
+        jid = self.store.get_device(device["id"])["config"]["messaging"]["jid"]
+        self.assertEqual(self.fake.history[jid], self.fake.history[old])
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+
+    def test_failed_retirement_blocks_archive_merge(self):
+        device, _ = self.seed_legacy("10000*213T", "legacy-secret")
+        self.reopen()
+        self.fake.fail = "ban_account"
+        self.sync()
+        self.assertFalse(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.assertFalse(any(c[0] == "voicehost_migrate_history" for c in self.fake.calls))
+        self.fake.fail = None
+        self.retry()
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+
+    def test_external_canonical_account_is_not_adopted(self):
+        device, _ = self.seed_legacy("10000*213T", "legacy-secret")
+        self.fake.users["10000*213@ejabberd.voicehost.io"] = "external-secret"
+        self.reopen()
+        self.sync()
+        self.assertEqual(self.fake.users["10000*213@ejabberd.voicehost.io"], "external-secret")
+        self.assertFalse(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.assertFalse(any(c[0] == "voicehost_migrate_history" for c in self.fake.calls))
+
+    def test_manual_canonical_device_blocks_migration_without_partial_changes(self):
+        device, old = self.seed_legacy("10000*213T", "legacy-secret")
+        manual = main.build_configuration({"extension":"213", "messaging_enabled":True,
+            "messaging_jid":"10000*213@ejabberd.voicehost.io", "messaging_password":"manual-secret"})
+        self.store.create_device({"installation_id":"manual", "platform":"ios", "device_type":"mobile", "app_version":"test", "app_build":37}, manual, None)
+        with self.assertRaisesRegex(ValueError, "already assigned manually"):
+            Store(self.store.path)
+        self.assertEqual(self.store.get_device(device["id"])["config"]["messaging"]["jid"], old)
+        with self.store._connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM messaging_aliases").fetchone()[0], 0)
+
+    def test_account_created_on_enrolment_with_dedicated_password_and_readiness(self):
+        request = AdminActivationRequest(extension="207", sip_username="10000*207",
+            sip_password="sip-secret", messaging_enabled=True, messaging_managed=True)
+        self.store.create_activation(request.model_dump(), 900)
+        self.sync()
+        self.assertEqual(self.fake.users, {})  # Issuing a code creates no account.
+        device = self.create()
+        messaging = device["config"]["messaging"]
+        self.assertEqual(messaging["jid"], "10000*207@ejabberd.voicehost.io")
+        self.assertFalse(messaging["ready"])
+        self.assertGreaterEqual(len(messaging["password"]), 48)
+        self.assertNotEqual(messaging["password"], "sip-secret")
+        self.sync()
+        updated = self.store.get_device(device["id"])
+        self.assertTrue(updated["config"]["messaging"]["ready"])
+        self.assertEqual(updated["configuration_version"], 2)
+        self.assertEqual(self.fake.users[messaging["jid"]], messaging["password"])
+        self.sync()
+        self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+
+    def test_identity_registry_has_one_contact_per_shared_extension_and_no_secrets(self):
+        first = self.create("10000*207")
+        self.create("10000*207")
+        self.create("10000*208")
+        self.create("20000*207")
+        self.sync()
+        self.assertEqual(len(self.fake.identities), 3)
+        self.assertEqual(self.fake.identities[first["config"]["messaging"]["jid"]],
+                         {"account": "10000", "extension": "207", "address": "207", "name": "207", "enabled": 1})
+        config = self.store.get_device(first["id"])["config"]["messaging"]
+        self.assertEqual((config["account_number"], config["extension"]), ("10000", "207"))
+
+    def test_directory_api_failure_never_publishes_readiness(self):
+        device = self.create()
+        self.fake.fail = "voicehost_set_identity"
+        self.sync()
+        self.assertIn(device["config"]["messaging"]["jid"], self.fake.users)
+        self.assertFalse(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.fake.fail = None
+        self.retry()
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+
+    def test_sip_login_suffix_uses_canonical_jid_and_preserves_sip_login(self):
+        device = self.create("10000*213t")
+        main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+            extension="213", display_name="Simon"))
+        self.sync()
+        entry = self.fake.identities["10000*213@ejabberd.voicehost.io"]
+        self.assertEqual((entry["account"], entry["extension"], entry["address"], entry["name"]),
+                         ("10000", "213", "213", "Simon"))
+        self.assertEqual(self.store.get_device(device["id"])["config"]["telephony"]["sip"]["username"], "10000*213t")
+
+    def test_directory_removal_precedes_ban_even_when_ban_fails(self):
+        device = self.create()
+        self.sync()
+        self.store.set_device_state(device["id"], "locked")
+        self.fake.fail = "ban_account"
+        self.sync()
+        self.assertEqual(self.fake.identities[device["config"]["messaging"]["jid"]]["enabled"], 0)
+
+    def test_metadata_change_and_periodic_repair_update_directory(self):
+        device = self.create()
+        self.sync()
+        main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+            extension="207", display_name="Simon"))
+        self.sync()
+        jid = device["config"]["messaging"]["jid"]
+        self.assertEqual(self.fake.identities[jid]["name"], "Simon")
+        self.fake.identities.clear()
+        with self.store._connect() as conn:
+            conn.execute("UPDATE messaging_accounts SET directory_synced_at='2000-01-01T00:00:00Z'")
+        self.sync()
+        self.assertIn(jid, self.fake.identities)
+
+    def test_existing_identity_migration_keeps_password_and_requires_policy_sync(self):
+        device = self.create("00100*213t")
+        self.sync()
+        previous = self.store.get_device(device["id"])
+        password = previous["config"]["messaging"]["password"]
+        with self.store._connect() as conn:
+            config = previous["config"]
+            config["messaging"].pop("account_number")
+            config["messaging"].pop("extension")
+            conn.execute("UPDATE devices SET config_json=? WHERE id=?", (json.dumps(config), device["id"]))
+            for column in ("account_number", "extension", "applied_directory_signature", "directory_synced_at"):
+                conn.execute(f"ALTER TABLE messaging_accounts DROP COLUMN {column}")
+        reopened = Store(self.store.path)
+        migrated = reopened.get_device(device["id"])
+        self.assertEqual(migrated["config"]["messaging"]["account_number"], "00100")
+        self.assertEqual(migrated["config"]["messaging"]["password"], password)
+        self.assertFalse(migrated["config"]["messaging"]["ready"])
+        version = migrated["configuration_version"]
+        reopened_again = Store(self.store.path)
+        self.assertEqual(reopened_again.get_device(device["id"])["configuration_version"], version)
+        reconcile_accounts(reopened_again, self.api)
+        self.assertTrue(reopened_again.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.assertEqual(self.fake.users[device["config"]["messaging"]["jid"]], password)
+
+    def test_managed_identity_requires_an_unambiguous_account_prefix(self):
+        for username in ("207", "*207", "10000*", "10000*207*other"):
+            with self.subTest(username=username), self.assertRaises(ValidationError):
+                AdminActivationRequest(extension="207", sip_username=username,
+                                       messaging_enabled=True, messaging_managed=True)
+
+    def test_shared_account_locks_only_when_last_active_phone_is_disabled(self):
+        first, second = self.create(), self.create()
+        self.assertEqual(first["config"]["messaging"]["password"], second["config"]["messaging"]["password"])
+        jid = first["config"]["messaging"]["jid"]
+        self.sync()
+        self.store.set_device_state(first["id"], "locked")
+        self.sync()
+        self.assertNotIn(jid, self.fake.bans)
+        self.store.set_device_state(second["id"], "locked")
+        self.sync()
+        self.assertIn(jid, self.fake.bans)
+        password = self.fake.users[jid]
+        self.store.set_device_state(first["id"], "active")
+        self.sync()
+        self.assertNotIn(jid, self.fake.bans)
+        self.assertEqual(self.fake.users[jid], password)
+
+    def test_disable_revocation_retirement_and_logout_have_same_account_effect(self):
+        for mode in ["disabled", "revoked", "retired", "logout"]:
+            with self.subTest(mode=mode):
+                device = self.create("10000*" + str(300 + ["disabled", "revoked", "retired", "logout"].index(mode)))
+                jid = device["config"]["messaging"]["jid"]
+                self.sync()
+                if mode == "disabled":
+                    updated = main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+                        extension="207", messaging_enabled=False))
+                    self.assertNotIn("password", updated["config"]["messaging"])
+                    self.assertEqual(updated["config"]["messaging"]["jid"], jid)
+                elif mode == "logout":
+                    main.logout(LogoutRequest(), device)
+                else:
+                    self.store.set_device_state(device["id"], mode)
+                self.sync()
+                self.assertIn(jid, self.fake.bans)
+                self.assertIn(jid, self.fake.users)  # Never delete accounts or archives.
+
+    def test_identity_change_moves_one_phone_and_reuses_existing_account_on_return(self):
+        device = self.create()
+        old = device["config"]["messaging"]
+        self.sync()
+        updated = main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+            extension="208", sip_username="10000*208"))
+        new = updated["config"]["messaging"]
+        self.assertNotEqual(old["password"], new["password"])
+        self.sync()
+        self.assertIn(old["jid"], self.fake.bans)
+        self.assertNotIn(new["jid"], self.fake.bans)
+        restored = main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+            extension="207", sip_username="10000*207"))
+        self.assertEqual(restored["config"]["messaging"]["password"], old["password"])
+        self.sync()
+        self.assertNotIn(old["jid"], self.fake.bans)
+        self.assertIn(new["jid"], self.fake.bans)
+
+    def test_lost_register_response_is_recovered_without_duplicate_or_secret_rotation(self):
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        self.fake.lose = "register"
+        self.sync()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "error")
+        self.assertNotIn("remote-sensitive-content", self.store.messaging_account_status(jid)["error"])
+        self.retry()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "enabled")
+        self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+
+    def test_object_ban_details_recovers_creation_and_preserves_ban_ownership(self):
+        self.fake.ban_details_as_object = True
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        password = device["config"]["messaging"]["password"]
+        self.fake.lose = "register"
+        self.sync()
+        self.retry()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "enabled")
+        self.assertTrue(self.store.get_device(device["id"])["config"]["messaging"]["ready"])
+        self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()
+        self.assertIn(jid, self.fake.bans)
+        self.store.set_device_state(device["id"], "active")
+        self.sync()
+        self.assertNotIn(jid, self.fake.bans)
+        self.assertEqual(self.fake.users[jid], password)
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()
+        self.fake.bans[jid] = "Independent administrator ban"
+        self.store.set_device_state(device["id"], "active")
+        self.sync()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "error")
+        self.assertEqual(self.fake.bans[jid], "Independent administrator ban")
+
+    def test_lost_register_then_immediate_lock_still_disables_remote_account(self):
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        self.fake.lose = "register"
+        self.sync()
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()  # Target changed: do not wait for the creation retry backoff.
+        self.assertIn(jid, self.fake.bans)
+
+    def test_lost_ban_and_unban_responses_are_retryable(self):
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        self.sync()
+        self.store.set_device_state(device["id"], "locked")
+        self.fake.lose = "ban_account"
+        self.sync()
+        self.retry()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "disabled")
+        self.store.set_device_state(device["id"], "active")
+        self.fake.lose = "unban_account"
+        self.sync()
+        self.retry()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "enabled")
+
+    def test_preexisting_unmanaged_account_is_never_overwritten_or_banned(self):
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        self.fake.users[jid] = "outside-password"
+        self.sync()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "error")
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()
+        self.assertEqual(self.fake.users[jid], "outside-password")
+        self.assertNotIn(jid, self.fake.bans)
+        self.assertFalse(any(cmd in {"register", "ban_account", "unban_account"} for cmd, _ in self.fake.calls))
+
+    def test_external_ban_is_not_removed(self):
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        self.sync()
+        self.store.set_device_state(device["id"], "locked")
+        self.sync()
+        self.fake.bans[jid] = "Independent administrator ban"
+        self.store.set_device_state(device["id"], "active")
+        self.sync()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "error")
+        self.assertEqual(self.fake.bans[jid], "Independent administrator ban")
+
+    def test_api_failure_leaves_pending_and_retries_after_store_reopen(self):
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        self.fake.fail = "register"
+        self.sync()
+        self.store = Store(self.store.path)
+        self.fake.fail = None
+        self.retry()
+        self.assertEqual(self.store.messaging_account_status(jid)["status"], "enabled")
+
+    def test_separate_workers_serialize_without_duplicate_creation(self):
+        self.create()
+        stores = [Store(self.store.path), Store(self.store.path)]
+        errors = []
+        def run(store):
+            try:
+                reconcile_accounts(store, self.api)
+            except Exception as exc:
+                errors.append(exc)
+        threads = [threading.Thread(target=run, args=(store,)) for store in stores]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(sum(cmd == "register" for cmd, _ in self.fake.calls), 1)
+
+    def test_public_checkin_delivers_readiness_without_disrupting_device_credentials(self):
+        source = AdminActivationRequest(extension="207", sip_username="10000*207",
+            messaging_enabled=True, messaging_managed=True).model_dump()
+        _, code, _ = self.store.create_activation(source, 900)
+        with TestClient(main.app) as client:
+            response = client.post("/api/v1/device/activate", json={"code": code, "device": {
+                "installation_id": "route-installation", "platform": "ios",
+                "device_type": "mobile", "app_version": "test", "app_build": 37}})
+            self.assertEqual(response.status_code, 201)
+            activation = response.json()
+            self.assertFalse(activation["configuration"]["messaging"]["ready"])
+            headers = {"Authorization": "Bearer " + activation["access_token"]}
+            self.sync()
+            checkin = client.post("/api/v1/device/check-in", headers=headers, json={
+                "configuration_version": 1, "app_version": "test", "app_build": 37})
+            self.assertTrue(checkin.json()["configuration_changed"])
+            downloaded = client.get("/api/v1/device/configuration", headers=headers)
+            self.assertEqual(downloaded.status_code, 200)
+            self.assertTrue(downloaded.json()["messaging"]["ready"])
+            self.assertEqual(downloaded.json()["messaging"]["password"], activation["configuration"]["messaging"]["password"])
+            self.assertEqual(downloaded.headers["cache-control"], "no-store")
+
+    def test_manual_identity_cannot_be_adopted_and_failed_activation_preserves_code(self):
+        manual = main.build_configuration({"extension": "207", "messaging_enabled": True,
+            "messaging_jid": "10000*207@ejabberd.voicehost.io", "messaging_password": "manual-secret"})
+        self.store.create_device({"installation_id": "manual", "platform": "ios",
+            "device_type": "mobile", "app_version": "test", "app_build": 37}, manual, None)
+        source = AdminActivationRequest(extension="207", sip_username="10000*207",
+            messaging_enabled=True, messaging_managed=True).model_dump()
+        _, code, _ = self.store.create_activation(source, 900)
+        descriptor = {"installation_id": "automatic", "platform": "ios",
+            "device_type": "mobile", "app_version": "test", "app_build": 37}
+        with self.assertRaises(ValueError):
+            self.store.activate_device(code, descriptor, main.build_configuration, None, 900)
+        self.assertIsNotNone(self.store.consume_activation(code))
+        with self.store._connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM messaging_accounts").fetchone()[0], 0)
+
+    def test_account_stays_active_when_another_device_moves_to_new_identity(self):
+        first = self.create()
+        self.create()
+        jid = first["config"]["messaging"]["jid"]
+        self.sync()
+        main.update_managed_configuration(first["id"], AdminDeviceConfigurationRequest(
+            extension="208", sip_username="10000*208"))
+        self.sync()
+        self.assertNotIn(jid, self.fake.bans)
+        self.assertEqual(self.store.messaging_account_status(jid)["active_devices"], 1)
+
+    def test_revoked_identity_can_only_return_via_a_new_activation(self):
+        device = self.create()
+        self.sync()
+        self.store.set_device_state(device["id"], "revoked")
+        self.sync()
+        self.assertFalse(self.store.set_device_state(device["id"], "active"))
+        replacement = self.create()
+        self.assertEqual(device["config"]["messaging"]["password"], replacement["config"]["messaging"]["password"])
+        self.sync()
+        self.assertNotIn(device["config"]["messaging"]["jid"], self.fake.bans)
+
+    def test_manual_configuration_conflicts_and_bad_identity_are_rejected(self):
+        for username in [None, "user@domain", "user/resource", "user name"]:
+            with self.assertRaises(ValidationError):
+                AdminActivationRequest(extension="207", sip_username=username,
+                    messaging_enabled=True, messaging_managed=True)
+        device = self.create()
+        jid = device["config"]["messaging"]["jid"]
+        with self.assertRaises(Exception) as caught:
+            main.update_managed_configuration(device["id"], AdminDeviceConfigurationRequest(
+                extension="207", messaging_managed=False, messaging_jid=jid, messaging_password="manual"))
+        self.assertEqual(caught.exception.status_code, 409)
+
+    def test_configuration_and_portal_readiness_do_not_expose_registry(self):
+        device = self.create()
+        body = main.configuration(device)
+        self.assertIn("password", body["messaging"])
+        self.assertFalse(body["messaging"]["ready"])
+        self.assertNotIn("messaging_accounts", body)
+        status = self.store.messaging_account_status(body["messaging"]["jid"])
+        self.assertNotIn("password", status)
+        self.assertEqual(status["active_devices"], 1)
+
+    def test_api_rejects_insecure_urls_and_unexpected_success_bodies(self):
+        for url in ["http://server/api/v2", "https://server/api", "https://user:pass@server/api/v2"]:
+            with self.assertRaises(ValueError):
+                EjabberdClient(url, "api", "secret")
+        api = EjabberdClient("https://server/api/v2", "api", "secret",
+            httpx.MockTransport(lambda request: httpx.Response(200, json={"status": "error"})))
+        self.addCleanup(api.close)
+        # A successful HTTP status is insufficient to claim command success.
+        with self.assertRaises(EjabberdError):
+            api.call("register", user="bob", host="server", password="secret")
+
+    def test_error_and_malformed_ban_objects_are_not_accepted_as_unbanned(self):
+        for body in [{"status": "error"}, {"reason": None}, {"reason": False}, {"ban_details": {}}]:
+            with self.subTest(body=body):
+                api = EjabberdClient("https://server/api/v2", "api", "secret",
+                    httpx.MockTransport(lambda request: httpx.Response(200, json=body)))
+                self.addCleanup(api.close)
+                with self.assertRaises(EjabberdError):
+                    api.call("get_ban_details", user="bob", host="server")
+
+    def test_worker_error_logs_show_http_status_without_remote_payloads_or_secrets(self):
+        device = self.create()
+        self.fake.fail = "get_ban_details"
+        with self.assertLogs("app.messaging_worker", level="WARNING") as logs:
+            self.sync()
+        jid = device["config"]["messaging"]["jid"]
+        error = self.store.messaging_account_status(jid)["error"]
+        self.assertIn("get_ban_details failed (HTTP 403)", error)
+        self.assertIn(error, logs.output[0])
+        self.assertNotIn("remote-sensitive-content", error + logs.output[0])
+        self.assertNotIn(device["config"]["messaging"]["password"], error + logs.output[0])
+        self.assertNotIn("api-secret", error + logs.output[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

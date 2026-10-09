@@ -374,60 +374,51 @@ class _ContactsScreenState extends State<ContactsScreen>
             if (_ldapConfigured)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('All'),
-                          selected: _scope == _ContactScope.all,
-                          onSelected: (_) => _setScope(_ContactScope.all),
-                        ),
-                        ChoiceChip(
-                          label: const Text('Personal'),
-                          selected: _scope == _ContactScope.personal,
-                          onSelected: (_) => _setScope(_ContactScope.personal),
-                        ),
-                        ChoiceChip(
-                          label: const Text('Company'),
-                          selected: _scope == _ContactScope.company,
-                          onSelected: (_) => _setScope(_ContactScope.company),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest
-                            .withValues(alpha: .55),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.corporate_fare_outlined, size: 20),
-                          SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Company Directory',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                SizedBox(height: 2),
-                                Text(
-                                  'Connected · Search names, extensions or numbers',
-                                  style: TextStyle(fontSize: 12),
-                                ),
-                              ],
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            ChoiceChip(
+                              label: const Text('All'),
+                              selected: _scope == _ContactScope.all,
+                              onSelected: (_) => _setScope(_ContactScope.all),
                             ),
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: const Text('Personal'),
+                              selected: _scope == _ContactScope.personal,
+                              onSelected: (_) =>
+                                  _setScope(_ContactScope.personal),
+                            ),
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: const Text('Company'),
+                              selected: _scope == _ContactScope.company,
+                              onSelected: (_) =>
+                                  _setScope(_ContactScope.company),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Tooltip(
+                      message: 'LDAP directory connection',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.check_circle_outline,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.secondary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Connected',
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
                       ),

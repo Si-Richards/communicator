@@ -24,7 +24,8 @@ with plist_path.open('rb') as fh:
 plist['CFBundleDisplayName'] = 'Softphone'
 plist['CFBundleName'] = 'Softphone'
 plist['NSMicrophoneUsageDescription'] = 'VoiceHost needs microphone access for telephone calls.'
-plist['NSCameraUsageDescription'] = 'VoiceHost uses the camera for video calling features when enabled.'
+plist['NSCameraUsageDescription'] = 'VoiceHost uses the camera for video calls and photos you choose to send in messages.'
+plist['NSPhotoLibraryUsageDescription'] = 'VoiceHost lets you choose photos to send in messages.'
 plist['NSContactsUsageDescription'] = 'VoiceHost uses your contacts so you can find and dial telephone numbers from the app.'
 modes = list(plist.get('UIBackgroundModes', []))
 for mode in ('audio', 'voip', 'remote-notification'):

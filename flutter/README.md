@@ -4,6 +4,9 @@ Cross-platform VoiceHost softphone for iOS and Android using **Flutter**, **WebR
 
 This branch is the Flutter successor to the native Swift proof-of-concept under `../ios/`. The native client remains in the repository as a useful protocol/reference implementation.
 
+For managed ejabberd messaging, encrypted conversations and archive recovery, including iPhone test steps,
+security boundaries and current limitations, see [MESSAGING.md](MESSAGING.md).
+
 ## Current milestone
 
 Implemented in the shared Dart codebase:

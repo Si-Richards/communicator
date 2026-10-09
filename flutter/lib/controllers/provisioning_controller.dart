@@ -2,25 +2,36 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 
 import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
 import '../models/provisioning.dart';
+import '../models/chat_attachment.dart';
+import '../models/messaging_room.dart';
 import '../repositories/provisioning_repository.dart';
 import '../repositories/settings_repository.dart';
 import '../services/mobile_call_coordinator.dart';
 import '../services/provisioning_service.dart';
 
-class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver {
+class ProvisioningController extends ChangeNotifier
+    with WidgetsBindingObserver {
   ProvisioningController({
     required this.phone,
     required this.mobileCalls,
     ProvisioningRepository? repository,
-  }) : _repository = repository ?? ProvisioningRepository();
+    ProvisioningService Function(String)? serviceFactory,
+    Duration cachedStateTimeout = const Duration(seconds: 5),
+  }) : _repository = repository ?? ProvisioningRepository(),
+       _cachedStateTimeout = cachedStateTimeout,
+       _serviceFactory =
+           serviceFactory ?? ((url) => ProvisioningService(baseUrl: url));
 
   final PhoneController phone;
   final MobileCallCoordinator mobileCalls;
   final ProvisioningRepository _repository;
+  final Duration _cachedStateTimeout;
+  final ProvisioningService Function(String) _serviceFactory;
 
   ProvisionedDeviceState? _state;
   bool _initialized = false;
@@ -30,9 +41,16 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   String? _error;
   bool _credentialsInvalid = false;
   bool _cachedStatePreloaded = false;
+  Future<void>? _cachedStateLoad;
+  Future<void>? _initialization;
+  String? _startupError;
+  bool _observingLifecycle = false;
+  bool _startupDependenciesReady = false;
+  bool _disposed = false;
 
   bool get initialized => _initialized;
   bool get startupReady => _initialized || _cachedStatePreloaded;
+  String? get startupError => _startupError;
   bool get busy => _busy;
   bool get isEnrolled => _state != null;
   String get status => _status;
@@ -46,6 +64,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     final value = _state?.configuration?.brandingName?.trim() ?? '';
     return value.isEmpty ? 'VoiceHost' : value;
   }
+
   bool get isLocked => deviceState == 'locked';
   bool get isRevoked => deviceState == 'revoked';
   bool get isRetired => deviceState == 'retired';
@@ -56,24 +75,75 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       !isRevoked &&
       !isRetired;
 
-  Future<void> preloadCachedBranding() async {
-    if (_cachedStatePreloaded || _initialized) return;
-    _state = await _repository.load();
-    _cachedStatePreloaded = true;
-    // Cached managed state is sufficient to release the Flutter startup gate.
-    // Full phone/gateway/provisioning reconciliation continues in the
-    // background and must never block an answered CallKit call from opening
-    // the application UI.
-    notifyListeners();
+  Future<void> preloadCachedBranding() {
+    if (startupReady || _disposed) return Future<void>.value();
+    final pending = _cachedStateLoad;
+    if (pending != null) return pending;
+    // Observe resume before touching Keychain: a background CallKit wake can
+    // fail here before the remaining services have finished initializing.
+    if (!_observingLifecycle) {
+      WidgetsBinding.instance.addObserver(this);
+      _observingLifecycle = true;
+    }
+    _cachedStateLoad = _loadCachedState().whenComplete(() {
+      _cachedStateLoad = null;
+    });
+    return _cachedStateLoad!;
   }
 
-  Future<void> initialize() async {
-    if (_initialized) return;
-    WidgetsBinding.instance.addObserver(this);
-    if (!_cachedStatePreloaded) {
-      _state = await _repository.load();
+  Future<void> _loadCachedState() async {
+    _startupError = null;
+    notifyListeners();
+    try {
+      // Do not treat a failed read as an unprovisioned device. A timed-out
+      // read also cannot overwrite a later successful retry when it completes.
+      final state = await _repository.load().timeout(_cachedStateTimeout);
+      if (_disposed) return;
+      _state = state;
       _cachedStatePreloaded = true;
+      notifyListeners();
+    } catch (error) {
+      if (!_disposed) {
+        _startupError =
+            'Unable to read saved device provisioning. Please retry.';
+        debugPrint(
+          '[VoiceHost Provisioning] cached state unavailable '
+          '(${error.runtimeType})',
+        );
+        notifyListeners();
+      }
+      rethrow;
     }
+  }
+
+  Future<void> retryStartup() async {
+    if (startupReady || _disposed) return;
+    try {
+      if (_startupDependenciesReady) {
+        await initialize();
+      } else {
+        await preloadCachedBranding();
+      }
+    } catch (_) {
+      // Keep the recovery screen and cached credentials; never reset or end
+      // a live call just because protected storage is temporarily unavailable.
+    }
+  }
+
+  Future<void> initialize() {
+    _startupDependenciesReady = true;
+    if (_initialized || _disposed) return Future<void>.value();
+    final pending = _initialization;
+    if (pending != null) return pending;
+    _initialization = _initialize().whenComplete(() {
+      _initialization = null;
+    });
+    return _initialization!;
+  }
+
+  Future<void> _initialize() async {
+    await preloadCachedBranding();
+    if (_disposed) return;
     _initialized = true;
 
     if (_state == null) {
@@ -154,7 +224,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _setBusy(true, status: 'Activating device…');
     try {
       final installationId = await _repository.getOrCreateInstallationId();
-      final service = ProvisioningService(baseUrl: cleanUrl);
+      final service = _serviceFactory(cleanUrl);
       try {
         final pushToken = mobileCalls.voipPushToken;
         final result = await service.activate(
@@ -185,8 +255,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         }
 
         final expiresAt = DateTime.now().toUtc().add(
-              Duration(seconds: result.expiresIn),
-            );
+          Duration(seconds: result.expiresIn),
+        );
         _state = ProvisionedDeviceState(
           deviceId: result.deviceId,
           accessToken: result.accessToken,
@@ -227,7 +297,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     if (url.isEmpty) return;
 
     _setBusy(true, status: 'Checking provisioning…');
-    final service = ProvisioningService(baseUrl: url);
+    final service = _serviceFactory(url);
     try {
       var state = _state!;
       DeviceCheckInResult result;
@@ -258,10 +328,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         'changed=${result.configurationChanged}',
       );
 
-      var updated = _state!.copyWith(
-        deviceState: result.state,
-        configurationVersion: result.configurationVersion,
-      );
+      var updated = _state!.copyWith(deviceState: result.state);
 
       // Device state is authoritative and must be applied immediately.
       // In particular, a transition from locked -> active must not depend on
@@ -282,7 +349,12 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       notifyListeners();
 
       if (result.configurationChanged ||
-          result.actions.contains('refresh_configuration')) {
+          result.actions.contains('refresh_configuration') ||
+          updated.configuration?.version != result.configurationVersion ||
+          updated.configuration?.messaging == null) {
+        // A check-in advertises the server version; it does not install it.
+        // Retry failed downloads and repair caches written by older clients
+        // that discarded messaging fields, even when versions already match.
         try {
           final config = await service.getConfiguration(
             accessToken: updated.accessToken,
@@ -292,8 +364,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
             configuration: config,
             deviceState: config.deviceState ?? result.state,
           );
-          _state = updated;
           await _repository.save(updated);
+          _state = updated;
           phone.applyProvisionedConfiguration(config);
           mobileCalls.applyProvisionedConfiguration(config);
           _syncPolling();
@@ -340,7 +412,7 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     if (url.isEmpty) return;
 
     _setBusy(true, status: 'Refreshing configuration…');
-    final service = ProvisioningService(baseUrl: url);
+    final service = _serviceFactory(url);
     try {
       await _ensureFreshToken(service);
       final config = await service.getConfiguration(
@@ -351,8 +423,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
         configuration: config,
         deviceState: config.deviceState ?? _state!.deviceState,
       );
-      _state = updated;
       await _repository.save(updated);
+      _state = updated;
       _syncPolling();
       await mobileCalls.setProvisioningAccess(canUseApp);
       unawaited(mobileCalls.setAdministrativeLocked(isLocked));
@@ -378,16 +450,14 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     }
   }
 
-  Future<void> removeManagedConfiguration({
-    bool notifyServer = true,
-  }) async {
+  Future<void> removeManagedConfiguration({bool notifyServer = true}) async {
     if (_busy) return;
     _setBusy(true, status: 'Removing managed configuration…');
     final state = _state;
     final url = phone.provisioningUrl.trim();
 
     if (notifyServer && state != null && url.isNotEmpty) {
-      final service = ProvisioningService(baseUrl: url);
+      final service = _serviceFactory(url);
       try {
         await _ensureFreshToken(service);
         await service.logout(accessToken: _state!.accessToken);
@@ -411,6 +481,147 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     _error = null;
     _status = 'Not provisioned';
     _setBusy(false);
+  }
+
+  bool get attachmentsAvailable =>
+      canUseApp &&
+      configuration?.messaging?.enabled == true &&
+      configuration?.messaging?.ready == true &&
+      configuration?.features['messaging'] != false;
+
+  Future<T> _attachmentRequest<T>(
+    Future<T> Function(ProvisioningService service, String token) operation,
+  ) async {
+    if (_busy || !attachmentsAvailable || _disposed) {
+      throw StateError(
+        'Messaging management is temporarily unavailable. Please retry.',
+      );
+    }
+    final device = _state!.deviceId;
+    final jid = configuration!.messaging!.jid;
+    final service = _serviceFactory(phone.provisioningUrl);
+    _setBusy(true);
+    try {
+      await _ensureFreshToken(service);
+      T result;
+      try {
+        result = await operation(service, _state!.accessToken);
+      } on ProvisioningException catch (error) {
+        if (error.statusCode != 401) rethrow;
+        await _refreshToken(service);
+        result = await operation(service, _state!.accessToken);
+      }
+      if (_disposed ||
+          !attachmentsAvailable ||
+          _state?.deviceId != device ||
+          configuration?.messaging?.jid != jid) {
+        throw StateError('This conversation is unavailable for your account.');
+      }
+      return result;
+    } finally {
+      service.close();
+      if (!_disposed) _setBusy(false);
+    }
+  }
+
+  Future<List<MessagingRoom>> loadMessagingRooms() => _attachmentRequest(
+    (service, token) => service.messagingRooms(
+      accessToken: token,
+      owner: configuration!.messaging!.jid,
+    ),
+  );
+
+  Future<List<MessagingRoom>> changeMessagingRoom({
+    String? id,
+    required Map<String, dynamic> change,
+  }) => _attachmentRequest(
+    (service, token) => service.messagingRooms(
+      accessToken: token,
+      owner: configuration!.messaging!.jid,
+      id: id,
+      change: change,
+    ),
+  );
+
+  Future<ChatAttachment> uploadMessagingAttachment({
+    required String peer,
+    required String name,
+    required Uint8List bytes,
+  }) => _attachmentRequest(
+    (service, token) => service.uploadAttachment(
+      accessToken: token,
+      peer: peer,
+      name: name,
+      bytes: bytes,
+    ),
+  );
+
+  Future<Uint8List> downloadMessagingAttachment({
+    required String peer,
+    required ChatAttachment attachment,
+  }) => _attachmentRequest(
+    (service, token) => service.downloadAttachment(
+      accessToken: token,
+      peer: peer,
+      attachment: attachment,
+    ),
+  );
+
+  Future<MessagingPushSubscription?> registerMessagingPush() async {
+    if (_busy || !canUseApp || !Platform.isIOS) {
+      return null;
+    }
+    final device = _state?.deviceId;
+    final configuration = _state?.configuration?.messaging;
+    if (configuration?.enabled != true || configuration?.ready != true) {
+      return null;
+    }
+    _setBusy(true);
+    final service = _serviceFactory(phone.provisioningUrl);
+    try {
+      const native = MethodChannel('voicehost/notifications');
+      final registration = await native.invokeMapMethod<String, dynamic>(
+        'getMessagingRegistration',
+      );
+      final token = registration?['token']?.toString() ?? '';
+      final environment = registration?['environment']?.toString() ?? '';
+      if (token.isEmpty) {
+        await _ensureFreshToken(service);
+        try {
+          await service.removeMessagingPush(accessToken: _state!.accessToken);
+        } on ProvisioningException catch (error) {
+          if (error.statusCode != 401) rethrow;
+          await _refreshToken(service);
+          await service.removeMessagingPush(accessToken: _state!.accessToken);
+        }
+        return null;
+      }
+      MessagingPushSubscription? result;
+      try {
+        result = await service.registerMessagingPush(
+          accessToken: _state!.accessToken,
+          token: token,
+          environment: environment,
+        );
+      } on ProvisioningException catch (error) {
+        if (error.statusCode != 401) rethrow;
+        await _refreshToken(service);
+        result = await service.registerMessagingPush(
+          accessToken: _state!.accessToken,
+          token: token,
+          environment: environment,
+        );
+      }
+      if (_state?.deviceId != device ||
+          !canUseApp ||
+          result?.ownerJid != configuration?.jid) {
+        return null;
+      }
+      return result;
+    } finally {
+      service.close();
+      _setBusy(false);
+    }
   }
 
   Future<void> _ensureFreshToken(ProvisioningService service) async {
@@ -442,8 +653,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       accessTokenExpiresAt: DateTime.now().toUtc().add(
-            Duration(seconds: result.expiresIn),
-          ),
+        Duration(seconds: result.expiresIn),
+      ),
     );
     _state = updated;
     await _repository.save(updated);
@@ -452,7 +663,8 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
   Map<String, dynamic> _checkInPayload(ProvisionedDeviceState state) {
     final pushToken = mobileCalls.voipPushToken;
     return {
-      'configuration_version': state.configurationVersion,
+      // Only acknowledge the configuration actually cached on this device.
+      'configuration_version': state.configuration?.version ?? 0,
       'app_version': AppConfig.appVersion,
       'app_build': AppConfig.appBuild,
       'os_version': Platform.operatingSystemVersion,
@@ -498,6 +710,10 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !startupReady) {
+      unawaited(_retryStartupAfterResume());
+      return;
+    }
     if (state == AppLifecycleState.resumed &&
         isEnrolled &&
         !_credentialsInvalid &&
@@ -506,8 +722,21 @@ class ProvisioningController extends ChangeNotifier with WidgetsBindingObserver 
     }
   }
 
+  Future<void> _retryStartupAfterResume() async {
+    // A resume can arrive while the background read is still pending. Wait
+    // for its bounded result, then make a fresh read if it failed.
+    final pending = _initialization ?? _cachedStateLoad;
+    if (pending != null) {
+      try {
+        await pending;
+      } catch (_) {}
+    }
+    await retryStartup();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     _checkInTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();

@@ -17,6 +17,7 @@ class ProvisioningConfiguration {
     this.sipRealm,
     this.sipProxy,
     this.ldapDirectory,
+    this.messaging,
   });
 
   final int version;
@@ -34,6 +35,7 @@ class ProvisioningConfiguration {
   final String? sipRealm;
   final String? sipProxy;
   final LdapDirectoryConfiguration? ldapDirectory;
+  final MessagingConfiguration? messaging;
   final Map<String, bool> features;
   final Map<String, dynamic> policy;
 
@@ -59,12 +61,14 @@ class ProvisioningConfiguration {
       connectionStrategy:
           json['connection_strategy']?.toString() ?? 'managed_mobile',
       telephonyMode: telephony['mode']?.toString() ?? 'randy_managed',
-      displayName: device['display_name']?.toString() ??
+      displayName:
+          device['display_name']?.toString() ??
           json['display_name']?.toString(),
       brandingName: branding['name']?.toString(),
       deviceState: device['state']?.toString(),
       randyUrl: services['randy_url']?.toString(),
-      janusUrl: telephony['janus_url']?.toString() ??
+      janusUrl:
+          telephony['janus_url']?.toString() ??
           services['janus_url']?.toString(),
       janusApiSecret: telephony['janus_api_secret']?.toString(),
       extension: telephony['extension']?.toString(),
@@ -75,6 +79,9 @@ class ProvisioningConfiguration {
       ldapDirectory: ldap.isEmpty
           ? null
           : LdapDirectoryConfiguration.fromJson(ldap),
+      messaging: json['messaging'] is Map
+          ? MessagingConfiguration.fromJson(_map(json['messaging']))
+          : null,
       features: {
         for (final entry in rawFeatures.entries)
           if (entry.value is bool) entry.key: entry.value as bool,
@@ -84,39 +91,38 @@ class ProvisioningConfiguration {
   }
 
   Map<String, dynamic> toJson() => {
-        'version': version,
-        'connection_strategy': connectionStrategy,
-        'device': {
-          if (displayName != null) 'display_name': displayName,
-          if (deviceState != null) 'state': deviceState,
+    'version': version,
+    'connection_strategy': connectionStrategy,
+    'device': {
+      if (displayName != null) 'display_name': displayName,
+      if (deviceState != null) 'state': deviceState,
+    },
+    if (brandingName != null) 'branding': {'name': brandingName},
+    'services': {
+      if (randyUrl != null) 'randy_url': randyUrl,
+      if (janusUrl != null) 'janus_url': janusUrl,
+    },
+    'telephony': {
+      'mode': telephonyMode,
+      if (extension != null) 'extension': extension,
+      if (janusUrl != null) 'janus_url': janusUrl,
+      if (janusApiSecret != null) 'janus_api_secret': janusApiSecret,
+      if (sipUsername != null ||
+          sipPassword != null ||
+          sipRealm != null ||
+          sipProxy != null)
+        'sip': {
+          if (sipUsername != null) 'username': sipUsername,
+          if (sipPassword != null) 'password': sipPassword,
+          if (sipRealm != null) 'realm': sipRealm,
+          if (sipProxy != null) 'proxy': sipProxy,
         },
-        if (brandingName != null)
-          'branding': {'name': brandingName},
-        'services': {
-          if (randyUrl != null) 'randy_url': randyUrl,
-          if (janusUrl != null) 'janus_url': janusUrl,
-        },
-        'telephony': {
-          'mode': telephonyMode,
-          if (extension != null) 'extension': extension,
-          if (janusUrl != null) 'janus_url': janusUrl,
-          if (janusApiSecret != null) 'janus_api_secret': janusApiSecret,
-          if (sipUsername != null ||
-              sipPassword != null ||
-              sipRealm != null ||
-              sipProxy != null)
-            'sip': {
-              if (sipUsername != null) 'username': sipUsername,
-              if (sipPassword != null) 'password': sipPassword,
-              if (sipRealm != null) 'realm': sipRealm,
-              if (sipProxy != null) 'proxy': sipProxy,
-            },
-        },
-        if (ldapDirectory != null)
-          'directory': {'ldap': ldapDirectory!.toJson()},
-        'features': features,
-        'policy': policy,
-      };
+    },
+    if (ldapDirectory != null) 'directory': {'ldap': ldapDirectory!.toJson()},
+    if (messaging != null) 'messaging': messaging!.toJson(),
+    'features': features,
+    'policy': policy,
+  };
 
   static Map<String, dynamic> _map(dynamic value) {
     if (value is Map) return Map<String, dynamic>.from(value);
@@ -128,7 +134,6 @@ class ProvisioningConfiguration {
     return int.tryParse(value?.toString() ?? '');
   }
 }
-
 
 class LdapDirectoryConfiguration {
   const LdapDirectoryConfiguration({
@@ -200,25 +205,24 @@ class LdapDirectoryConfiguration {
   }
 
   Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'host': host,
-        'port': port,
-        'tls': tls,
-        'initial_query': initialQuery,
-        'sort_mode': sortMode,
-        'name_filter': nameFilter,
-        'number_filter': numberFilter,
-        'name_attributes': nameAttributes,
-        'number_attributes': numberAttributes,
-        'display_name': displayName,
-        if (ou != null) 'ou': ou,
-        if (uid != null) 'uid': uid,
-        if (baseDn != null) 'base_dn': baseDn,
-        if (bindDn != null) 'bind_dn': bindDn,
-        if (password != null) 'password': password,
-      };
+    'enabled': enabled,
+    'host': host,
+    'port': port,
+    'tls': tls,
+    'initial_query': initialQuery,
+    'sort_mode': sortMode,
+    'name_filter': nameFilter,
+    'number_filter': numberFilter,
+    'name_attributes': nameAttributes,
+    'number_attributes': numberAttributes,
+    'display_name': displayName,
+    if (ou != null) 'ou': ou,
+    if (uid != null) 'uid': uid,
+    if (baseDn != null) 'base_dn': baseDn,
+    if (bindDn != null) 'bind_dn': bindDn,
+    if (password != null) 'password': password,
+  };
 }
-
 
 class PbxFeatureConfiguration {
   const PbxFeatureConfiguration({
@@ -320,10 +324,9 @@ class ProvisionedDeviceState {
   final String deviceState;
   final ProvisioningConfiguration? configuration;
 
-  bool get accessTokenExpiring =>
-      accessTokenExpiresAt.isBefore(DateTime.now().toUtc().add(
-            const Duration(seconds: 30),
-          ));
+  bool get accessTokenExpiring => accessTokenExpiresAt.isBefore(
+    DateTime.now().toUtc().add(const Duration(seconds: 30)),
+  );
 
   ProvisionedDeviceState copyWith({
     String? accessToken,
@@ -332,28 +335,25 @@ class ProvisionedDeviceState {
     int? configurationVersion,
     String? deviceState,
     ProvisioningConfiguration? configuration,
-  }) =>
-      ProvisionedDeviceState(
-        deviceId: deviceId,
-        accessToken: accessToken ?? this.accessToken,
-        refreshToken: refreshToken ?? this.refreshToken,
-        accessTokenExpiresAt:
-            accessTokenExpiresAt ?? this.accessTokenExpiresAt,
-        configurationVersion:
-            configurationVersion ?? this.configurationVersion,
-        deviceState: deviceState ?? this.deviceState,
-        configuration: configuration ?? this.configuration,
-      );
+  }) => ProvisionedDeviceState(
+    deviceId: deviceId,
+    accessToken: accessToken ?? this.accessToken,
+    refreshToken: refreshToken ?? this.refreshToken,
+    accessTokenExpiresAt: accessTokenExpiresAt ?? this.accessTokenExpiresAt,
+    configurationVersion: configurationVersion ?? this.configurationVersion,
+    deviceState: deviceState ?? this.deviceState,
+    configuration: configuration ?? this.configuration,
+  );
 
   Map<String, dynamic> toJson() => {
-        'device_id': deviceId,
-        'access_token': accessToken,
-        'refresh_token': refreshToken,
-        'access_token_expires_at': accessTokenExpiresAt.toIso8601String(),
-        'configuration_version': configurationVersion,
-        'device_state': deviceState,
-        if (configuration != null) 'configuration': configuration!.toJson(),
-      };
+    'device_id': deviceId,
+    'access_token': accessToken,
+    'refresh_token': refreshToken,
+    'access_token_expires_at': accessTokenExpiresAt.toIso8601String(),
+    'configuration_version': configurationVersion,
+    'device_state': deviceState,
+    if (configuration != null) 'configuration': configuration!.toJson(),
+  };
 
   factory ProvisionedDeviceState.fromJson(Map<String, dynamic> json) {
     final configuration = json['configuration'];
@@ -361,7 +361,8 @@ class ProvisionedDeviceState {
       deviceId: json['device_id']?.toString() ?? '',
       accessToken: json['access_token']?.toString() ?? '',
       refreshToken: json['refresh_token']?.toString() ?? '',
-      accessTokenExpiresAt: DateTime.tryParse(
+      accessTokenExpiresAt:
+          DateTime.tryParse(
             json['access_token_expires_at']?.toString() ?? '',
           )?.toUtc() ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
@@ -423,4 +424,122 @@ class DeviceCheckInResult {
   final int? minimumAppBuild;
   final bool forceUpdate;
   final List<String> actions;
+}
+
+class MessagingConfiguration {
+  const MessagingConfiguration({
+    required this.enabled,
+    required this.jid,
+    required this.password,
+    required this.websocket,
+    this.ready = true,
+    this.previousJids = const [],
+  });
+  final bool enabled;
+  final String jid;
+  final String password;
+  final String websocket;
+  final bool ready;
+  final List<String> previousJids;
+
+  bool get configured {
+    final uri = Uri.tryParse(websocket);
+    return enabled &&
+        RegExp(r'^[a-z0-9._+*\-]+@[a-z0-9][a-z0-9.-]*$').hasMatch(jid) &&
+        password.isNotEmpty &&
+        !password.contains('\u0000') &&
+        uri != null &&
+        uri.scheme == 'wss' &&
+        uri.host.isNotEmpty &&
+        uri.userInfo.isEmpty &&
+        !uri.hasQuery &&
+        !uri.hasFragment;
+  }
+
+  factory MessagingConfiguration.fromJson(Map<String, dynamic> json) =>
+      MessagingConfiguration(
+        enabled: json['enabled'] == true,
+        ready: json['ready'] != false,
+        previousJids: json['previous_jids'] is List
+            ? (json['previous_jids'] as List)
+                  .take(128)
+                  .map((value) => value.toString().trim().toLowerCase())
+                  .toList(growable: false)
+            : const [],
+        jid: (json['jid']?.toString() ?? '').trim().toLowerCase(),
+        password: json['password']?.toString() ?? '',
+        websocket:
+            json['websocket']?.toString() ??
+            'wss://ejabberd.voicehost.io/websocket',
+      );
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    if (enabled) 'ready': ready,
+    if (enabled) 'jid': jid,
+    if (enabled) 'password': password,
+    if (enabled) 'websocket': websocket,
+    if (enabled && previousJids.isNotEmpty) 'previous_jids': previousJids,
+  };
+}
+
+class MessagingPushSubscription {
+  const MessagingPushSubscription({
+    required this.ownerJid,
+    required this.jid,
+    required this.node,
+  });
+  final String ownerJid;
+  final String jid;
+  final String node;
+
+  static MessagingPushSubscription? fromJson(Map<String, dynamic> json) {
+    if (json['enabled'] != true) {
+      return null;
+    }
+    final owner = json['owner_jid']?.toString() ?? '';
+    final service = json['jid']?.toString() ?? '';
+    final node = json['node']?.toString() ?? '';
+    if (!RegExp(r'^[0-9]+\*[0-9]{3,5}@[a-z0-9.-]+$').hasMatch(owner) ||
+        service != owner.split('@').last ||
+        !RegExp(r'^vh-[a-f0-9]{64}$').hasMatch(node)) {
+      throw const FormatException('Invalid messaging push subscription.');
+    }
+    return MessagingPushSubscription(ownerJid: owner, jid: service, node: node);
+  }
+}
+
+class MessagingNotification {
+  const MessagingNotification({
+    required this.ownerJid,
+    required this.peerJid,
+    required this.eventId,
+  });
+  final String ownerJid;
+  final String peerJid;
+  final String eventId;
+
+  static MessagingNotification? fromJson(Map<dynamic, dynamic> json) {
+    if (json['type'] != 'messaging') {
+      return null;
+    }
+    final owner = json['owner_jid']?.toString() ?? '';
+    final peer = json['peer_jid']?.toString() ?? '';
+    final id = json['event_id']?.toString() ?? '';
+    final jidPattern = RegExp(r'^([0-9]+)\*[0-9]{3,5}@([a-z0-9.-]+)$');
+    final ownMatch = jidPattern.firstMatch(owner);
+    final peerMatch = jidPattern.firstMatch(peer);
+    if (ownMatch == null ||
+        !(peerMatch != null &&
+                owner != peer &&
+                ownMatch.group(1) == peerMatch.group(1) &&
+                ownMatch.group(2) == peerMatch.group(2) ||
+            RegExp(r'^vh-[a-f0-9]{32}$').hasMatch(peer.split('@').first) &&
+                peer.split('@').length == 2 &&
+                peer.split('@').last == 'rooms.${ownMatch.group(2)}') ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(id)) {
+      return null;
+    }
+    return MessagingNotification(ownerJid: owner, peerJid: peer, eventId: id);
+  }
 }

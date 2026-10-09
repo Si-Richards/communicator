@@ -4,7 +4,8 @@ publish_to: "none"
 version: 0.3.0+37
 
 environment:
-  sdk: ">=3.9.0 <4.0.0"
+  sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.38.0"
 
 dependencies:
   flutter:
@@ -16,6 +17,12 @@ dependencies:
   flutter_secure_storage: 11.1.1
   http: ^1.5.0
   dartdap: ^0.11.4
+  xml: ^6.6.1
+  cryptography: ^2.9.0
+  crypto: ^3.0.6
+  path_provider: ^2.1.5
+  image_picker: 1.2.0
+  file_picker: 13.1.0
 
 dev_dependencies:
   flutter_test:

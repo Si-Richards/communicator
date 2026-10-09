@@ -1,15 +1,15 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/chat_attachment.dart';
+import '../models/messaging_room.dart';
 import '../models/provisioning.dart';
 
 class ProvisioningException implements Exception {
-  const ProvisioningException(
-    this.message, {
-    this.statusCode,
-    this.code,
-  });
+  const ProvisioningException(this.message, {this.statusCode, this.code});
 
   final String message;
   final int? statusCode;
@@ -20,11 +20,9 @@ class ProvisioningException implements Exception {
 }
 
 class ProvisioningService {
-  ProvisioningService({
-    required String baseUrl,
-    http.Client? client,
-  })  : _baseUrl = baseUrl.trim(),
-        _client = client ?? http.Client();
+  ProvisioningService({required String baseUrl, http.Client? client})
+    : _baseUrl = baseUrl.trim(),
+      _client = client ?? http.Client();
 
   final String _baseUrl;
   final http.Client _client;
@@ -33,6 +31,29 @@ class ProvisioningService {
     var root = _baseUrl.replaceFirst(RegExp(r'/+$'), '');
     if (!root.endsWith('/api/v1')) root = '$root/api/v1';
     return Uri.parse('$root$path');
+  }
+
+  Future<List<MessagingRoom>> messagingRooms({
+    required String accessToken,
+    required String owner,
+    String? id,
+    Map<String, dynamic>? change,
+  }) async {
+    final uri = _uri('/device/messaging/rooms${id == null ? '' : '/$id'}');
+    final response =
+        await (change == null
+                ? _client.get(uri, headers: _authHeaders(accessToken))
+                : _client.post(
+                    uri,
+                    headers: _authHeaders(accessToken),
+                    body: jsonEncode(change),
+                  ))
+            .timeout(const Duration(seconds: 25));
+    final json = _decode(response);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw _exception(response, json);
+    }
+    return MessagingRoom.parseList(json, owner);
   }
 
   Future<ActivationResult> activate({
@@ -56,8 +77,7 @@ class ProvisioningService {
       throw _exception(response, json);
     }
 
-    final configurationVersion =
-        _int(json['configuration_version']) ?? 0;
+    final configurationVersion = _int(json['configuration_version']) ?? 0;
     final configJson = _map(json['configuration']);
     return ActivationResult(
       deviceId: json['device_id']?.toString() ?? '',
@@ -119,10 +139,7 @@ class ProvisioningService {
     required String accessToken,
   }) async {
     final response = await _client
-        .get(
-          _uri('/device/configuration'),
-          headers: _authHeaders(accessToken),
-        )
+        .get(_uri('/device/configuration'), headers: _authHeaders(accessToken))
         .timeout(const Duration(seconds: 15));
     final json = _decode(response);
     if (response.statusCode != 200) throw _exception(response, json);
@@ -145,6 +162,131 @@ class ProvisioningService {
     }
   }
 
+  Future<MessagingPushSubscription?> registerMessagingPush({
+    required String accessToken,
+    required String token,
+    required String environment,
+  }) async {
+    final response = await _client
+        .put(
+          _uri('/device/messaging/push'),
+          headers: _authHeaders(accessToken),
+          body: jsonEncode({'token': token, 'environment': environment}),
+        )
+        .timeout(const Duration(seconds: 15));
+    final json = _decode(response);
+    if (response.statusCode != 200) {
+      throw _exception(response, json);
+    }
+    return MessagingPushSubscription.fromJson(json);
+  }
+
+  Future<void> removeMessagingPush({required String accessToken}) async {
+    final response = await _client
+        .delete(
+          _uri('/device/messaging/push'),
+          headers: _authHeaders(accessToken),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 204) {
+      throw _exception(response, _decode(response));
+    }
+  }
+
+  Future<ChatAttachment> uploadAttachment({
+    required String accessToken,
+    required String peer,
+    required String name,
+    required Uint8List bytes,
+  }) async {
+    if (bytes.isEmpty || bytes.length > ChatAttachment.maxBytes) {
+      throw const ProvisioningException(
+        'Attachments must be between 1 byte and 10 MB.',
+      );
+    }
+    final request =
+        http.Request(
+            'POST',
+            _uri(
+              '/device/messaging/attachments',
+            ).replace(queryParameters: {'peer': peer, 'name': name}),
+          )
+          ..followRedirects = false
+          ..headers.addAll({
+            'Authorization': 'Bearer $accessToken',
+            'Content-Type': 'application/octet-stream',
+          })
+          ..bodyBytes = bytes;
+    final response = await http.Response.fromStream(
+      await _client.send(request).timeout(const Duration(seconds: 90)),
+    ).timeout(const Duration(seconds: 90));
+    if (response.statusCode != 201) {
+      throw _exception(response, _decode(response));
+    }
+    final attachment = ChatAttachment.fromJson(_decode(response));
+    if (attachment.size != bytes.length ||
+        attachment.sha256 != sha256.convert(bytes).toString()) {
+      throw const ProvisioningException(
+        'The uploaded attachment could not be verified.',
+      );
+    }
+    return attachment;
+  }
+
+  Future<Uint8List> downloadAttachment({
+    required String accessToken,
+    required String peer,
+    required ChatAttachment attachment,
+  }) async {
+    final request =
+        http.Request(
+            'GET',
+            _uri(
+              '/device/messaging/attachments/${attachment.id}',
+            ).replace(queryParameters: {'peer': peer}),
+          )
+          ..followRedirects = false
+          ..headers['Authorization'] = 'Bearer $accessToken';
+    final response = await _client
+        .send(request)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      final failure = await http.Response.fromStream(
+        response,
+      ).timeout(const Duration(seconds: 30));
+      throw _exception(failure, _decode(failure));
+    }
+    final bytes = BytesBuilder(copy: false);
+    await (() async {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 30),
+      )) {
+        if (bytes.length + chunk.length > attachment.size) {
+          throw const ProvisioningException(
+            'The downloaded attachment is larger than expected.',
+          );
+        }
+        bytes.add(chunk);
+      }
+    })().timeout(
+      const Duration(seconds: 90),
+      onTimeout: () {
+        _client.close();
+        throw const ProvisioningException(
+          'The attachment download timed out. Please retry.',
+        );
+      },
+    );
+    final result = bytes.takeBytes();
+    if (result.length != attachment.size ||
+        sha256.convert(result).toString() != attachment.sha256) {
+      throw const ProvisioningException(
+        'The downloaded attachment could not be verified.',
+      );
+    }
+    return result;
+  }
+
   Future<void> logout({
     required String accessToken,
     String reason = 'user_requested',
@@ -162,15 +304,15 @@ class ProvisioningService {
   }
 
   Map<String, String> get _jsonHeaders => const {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      };
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  };
 
   Map<String, String> _authHeaders(String accessToken) => {
-        ..._jsonHeaders,
-        'Authorization': 'Bearer $accessToken',
-      };
+    ..._jsonHeaders,
+    'Authorization': 'Bearer $accessToken',
+  };
 
   Map<String, dynamic> _decode(http.Response response) {
     if (response.body.trim().isEmpty) return const {};

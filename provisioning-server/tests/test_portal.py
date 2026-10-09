@@ -85,6 +85,8 @@ class PortalTests(unittest.TestCase):
                         "proxy": None,
                     },
                 },
+                "messaging": {"enabled": True, "jid": "207@ejabberd.voicehost.io",
+                    "password": "never-return-messaging-secret", "websocket": "wss://ejabberd.voicehost.io/websocket"},
                 "features": {},
                 "policy": {},
             },
@@ -101,6 +103,25 @@ class PortalTests(unittest.TestCase):
         self.assertTrue(body["sip_password_configured"])
         self.assertNotIn("sip_password", body)
         self.assertNotIn("never-return-this", response.text)
+        self.assertNotIn("never-return-messaging-secret", response.text)
+        self.assertTrue(body["messaging_password_configured"])
+        self.assertEqual(body["messaging_jid"], "207@ejabberd.voicehost.io")
+
+    def test_automatic_account_status_does_not_expose_generated_secret(self):
+        device = self.store.create_device({
+            "installation_id": "automatic-portal-1", "platform": "ios",
+            "device_type": "mobile", "app_version": "test", "app_build": 37,
+        }, {"version": 1, "telephony": {"extension": "207", "sip": {"username": "10000*207"}},
+            "messaging": {"enabled": True, "managed": True,
+                "jid": "10000*207@ejabberd.voicehost.io", "websocket": "wss://ejabberd.voicehost.io/websocket"}}, None)
+        password = device["config"]["messaging"]["password"]
+        self.client.post("/portal/api/login", json={"password": "test-only-password"})
+        response = self.client.get("/portal/api/devices/" + device["id"])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["messaging_managed"])
+        self.assertEqual(response.json()["messaging_account"], {
+            "status": "pending", "error": None, "active_devices": 1})
+        self.assertNotIn(password, response.text)
 
     def test_misconfiguration_fails_closed(self):
         self.settings.portal_secret = ""

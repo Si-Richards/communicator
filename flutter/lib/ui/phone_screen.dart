@@ -8,6 +8,7 @@ import '../controllers/provisioning_controller.dart';
 import '../models/call_state.dart';
 import '../models/provisioning.dart';
 import '../services/mobile_call_coordinator.dart';
+import '../services/xmpp_service.dart';
 import 'settings_screen.dart';
 
 class PhoneScreen extends StatefulWidget {
@@ -16,11 +17,13 @@ class PhoneScreen extends StatefulWidget {
     required this.controller,
     required this.mobileCalls,
     required this.provisioning,
+    required this.messaging,
   });
 
   final PhoneController controller;
   final MobileCallCoordinator mobileCalls;
   final ProvisioningController provisioning;
+  final XmppService messaging;
 
   @override
   State<PhoneScreen> createState() => _PhoneScreenState();
@@ -145,6 +148,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
                         controller: controller,
                         mobileCalls: widget.mobileCalls,
                         provisioning: widget.provisioning,
+                        messaging: widget.messaging,
                       ),
                     ),
                   );

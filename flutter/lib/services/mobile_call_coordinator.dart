@@ -66,6 +66,7 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _pushToken;
   String? _notificationToken;
   String? _pendingNavigationTarget;
+  MessagingNotification? _pendingMessagingNotification;
   String? _lastProvisionSignature;
   bool _provisioning = false;
   bool _gatewayProvisioned = false;
@@ -135,6 +136,30 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _pendingNavigationTarget = null;
     return target;
   }
+  MessagingNotification? consumeMessagingNotification() {
+    final notification = _pendingMessagingNotification;
+    _pendingMessagingNotification = null;
+    return notification;
+  }
+
+  void _acceptMessagingNotification(dynamic value) {
+    try {
+      final decoded = value is String ? jsonDecode(value) : value;
+      if (decoded is! Map) {
+        return;
+      }
+      final notification = MessagingNotification.fromJson(decoded);
+      if (notification == null) {
+        return;
+      }
+      _pendingMessagingNotification = notification;
+      _pendingNavigationTarget = 'messaging';
+      notifyListeners();
+    } catch (_) {
+      // Reject malformed metadata without exposing it in diagnostics.
+    }
+  }
+
   List<String> get diagnosticLogs =>
       List<String>.unmodifiable(_diagnosticLogs.reversed);
 
@@ -356,6 +381,8 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       for (final item in pending ?? const <dynamic>[]) {
         if (item?.toString() == 'voicemail') {
           _pendingNavigationTarget = 'voicemail';
+        } else {
+          _acceptMessagingNotification(item);
         }
       }
     } on MissingPluginException {
@@ -397,6 +424,14 @@ class MobileCallCoordinator extends ChangeNotifier with WidgetsBindingObserver {
         }
         break;
       case 'notificationTapped':
+        if (call.arguments is Map) {
+          _acceptMessagingNotification(call.arguments);
+          unawaited(
+            _nativeNotificationChannel
+                .invokeMethod<List<dynamic>>('drainPendingActions')
+                .catchError((_) => <dynamic>[]),
+          );
+        }
         if (call.arguments?.toString() == 'voicemail') {
           _pendingNavigationTarget = 'voicemail';
           notifyListeners();

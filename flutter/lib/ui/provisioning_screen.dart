@@ -119,6 +119,20 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                           'Configuration version: '
                           '${model.configurationVersion}',
                         ),
+                        const SizedBox(height: 6),
+                        Text(
+                          config?.messaging == null
+                              ? 'Messaging: no settings in cached configuration'
+                              : config!.features['messaging'] == false
+                                  ? 'Messaging: disabled by feature policy'
+                                  : !config.messaging!.enabled
+                                      ? 'Messaging: disabled by administrator'
+                                      : !config.messaging!.configured
+                                          ? 'Messaging: provisioned settings incomplete'
+                                          : !config.messaging!.ready
+                                              ? 'Messaging: account being prepared'
+                                              : 'Messaging: configured (${config.messaging!.jid})',
+                        ),
                       ],
                       if (model.error != null) ...[
                         const SizedBox(height: 10),

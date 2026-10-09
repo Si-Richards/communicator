@@ -1,11 +1,16 @@
 import hmac
+import asyncio
+import hashlib
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.exceptions import RequestValidationError
 
 from .config import settings
 from .models import (
+    automatic_messaging_configuration,
+    messaging_configuration,
     ActivationRequest,
     AdminActivationRequest,
     AdminDeviceConfigurationRequest,
@@ -13,21 +18,40 @@ from .models import (
     AdminHousekeepingRequest,
     CheckInRequest,
     LogoutRequest,
+    MessagingPushRegistration,
     PushTokenUpdateRequest,
     RefreshRequest,
 )
 from .store import Store
+from .messaging_rooms import RoomCreate, RoomChange, Rooms
 
 
 app = FastAPI(
     title="VoiceHost Provisioning Service",
     version="0.3.0",
 )
+@app.middleware("http")
+async def prevent_credential_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 store = Store(
     settings.database_path,
     retry_key=settings.refresh_retry_key,
     retry_grace_seconds=settings.refresh_retry_grace_seconds,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Pydantic's default response includes the submitted input (and secrets).
+    return JSONResponse(status_code=422, content={"error": {
+        "code": "invalid_request", "message": "Check the submitted configuration.",
+        "fields": [list(item["loc"]) for item in exc.errors()],
+    }}, headers={"Cache-Control": "no-store"})
 
 
 def error(code: str, message: str, status_code: int) -> HTTPException:
@@ -106,6 +130,24 @@ LDAP_NUMBER_ATTRIBUTES = [
 def build_configuration(source: dict, state: str = "active") -> dict:
     strategy = source.get("connection_strategy", "managed_mobile")
     telephony_mode = source.get("telephony_mode", "randy_managed")
+    if source.get("messaging_enabled") and source.get("messaging_managed"):
+        if not settings.ejabberd_management_enabled:
+            raise error("messaging_management_unavailable", "Automatic ejabberd management is not enabled on the provisioning server.", 503)
+        try:
+            messaging = automatic_messaging_configuration(source.get("sip_username"), settings.ejabberd_host, settings.ejabberd_websocket)
+            from .messaging_identity import provisioned_extension
+            provisioned_extension(source.get("extension"), source.get("sip_username"))
+        except ValueError as exc:
+            raise error("messaging_configuration_incomplete", str(exc), 422)
+    else:
+        messaging = messaging_configuration(
+            source.get("messaging_enabled", False), source.get("messaging_jid"),
+            source.get("messaging_password"), source.get("messaging_websocket"))
+        if source.get("messaging_managed"):
+            messaging["managed"] = True
+            if source.get("messaging_jid"):
+                # Retain only the non-secret identity for disabled-account status.
+                messaging["jid"] = source["messaging_jid"]
     telephony = {
         "mode": telephony_mode,
         "extension": source["extension"],
@@ -175,6 +217,7 @@ def build_configuration(source: dict, state: str = "active") -> dict:
         },
         "telephony": telephony,
         "directory": directory,
+        "messaging": messaging,
         "features": source.get("features", {}),
         "policy": {**source.get("policy", {}), "allow_manual_fallback": False, "allow_settings_edit": False},
     }
@@ -202,6 +245,31 @@ def update_managed_configuration(
     current_sip = dict(current_telephony.get("sip", {}))
     current_directory = dict(current.get("directory", {}))
     current_ldap = dict(current_directory.get("ldap", {}))
+
+    messaging = dict(current.get("messaging", {}))
+    messaging_enabled = (request.messaging_enabled if request.messaging_enabled is not None
+                         else bool(messaging.get("enabled", False)))
+    messaging_managed = (request.messaging_managed if request.messaging_managed is not None
+                         else bool(messaging.get("managed", False)))
+    if messaging_managed and (request.messaging_jid or request.messaging_password or request.messaging_websocket):
+        raise error("messaging_configuration_incomplete", "Automatic messaging uses server-managed credentials and endpoint.", 422)
+    messaging_jid = (request.messaging_jid if request.messaging_jid is not None
+                     else messaging.get("jid") or "").strip().lower()
+    messaging_websocket = (request.messaging_websocket if request.messaging_websocket is not None
+                           else messaging.get("websocket"))
+    # A new identity or endpoint must never inherit another account's secret.
+    same_identity = (messaging_jid == messaging.get("jid")
+                     and (messaging_websocket or "wss://ejabberd.voicehost.io/websocket")
+                     == (messaging.get("websocket") or "wss://ejabberd.voicehost.io/websocket"))
+    messaging_password = request.messaging_password
+    if not messaging_password and same_identity:
+        messaging_password = messaging.get("password")
+    try:
+        if not messaging_managed:
+            messaging_configuration(messaging_enabled, messaging_jid,
+                                    messaging_password, messaging_websocket)
+    except ValueError as exc:
+        raise error("messaging_configuration_incomplete", str(exc), 422)
 
     password = request.sip_password
     if password is None or password == "":
@@ -280,6 +348,11 @@ def update_managed_configuration(
             if request.sip_proxy and request.sip_proxy.strip()
             else None
         ),
+        "messaging_enabled": messaging_enabled,
+        "messaging_managed": messaging_managed,
+        "messaging_jid": messaging_jid,
+        "messaging_password": messaging_password,
+        "messaging_websocket": messaging_websocket,
         "ldap_enabled": ldap_enabled,
         "ldap_ou": ldap_ou,
         "ldap_uid": ldap_uid,
@@ -288,7 +361,10 @@ def update_managed_configuration(
         "policy": dict(current.get("policy", {})),
     }
     config = build_configuration(source, state=device["state"])
-    updated = store.update_device_configuration(device_id, config)
+    try:
+        updated = store.update_device_configuration(device_id, config)
+    except ValueError as exc:
+        raise error("messaging_identity_conflict", str(exc), 409)
     if updated is None:
         raise error("device_not_found", "Device was not found.", 404)
     store.audit(
@@ -315,6 +391,7 @@ def create_activation(
     payload["randy_url"] = payload.get("randy_url") or settings.randy_url
     payload["janus_url"] = payload.get("janus_url") or settings.janus_url
     payload["version"] = 1
+    build_configuration(payload)
     ttl = request.expires_in or settings.activation_ttl_seconds
     activation_id, code, expires_at = store.create_activation(payload, ttl)
     store.audit("activation_created", detail={"activation_id": activation_id})
@@ -347,6 +424,9 @@ def change_device_state(
     request: AdminDeviceStateRequest,
     _: Annotated[None, Depends(admin_auth)],
 ) -> dict:
+    previous = store.get_device(device_id)
+    if previous and previous["state"] in {"revoked", "retired"} and request.state in {"active", "locked"}:
+        raise error("device_inactive", "Revoked or retired devices must be re-provisioned.", 409)
     if not store.set_device_state(device_id, request.state):
         raise error("device_not_found", "Device was not found.", 404)
     store.audit(
@@ -393,13 +473,16 @@ def admin_get_device(
 
 @app.post("/api/v1/device/activate", status_code=status.HTTP_201_CREATED)
 def activate(request: ActivationRequest, response: Response) -> dict:
-    result, failure = store.activate_device(
-        request.code,
-        request.device.model_dump(),
-        build_configuration,
-        request.push.model_dump(exclude_none=True) if request.push else None,
-        settings.access_token_ttl_seconds,
-    )
+    try:
+        result, failure = store.activate_device(
+            request.code,
+            request.device.model_dump(),
+            build_configuration,
+            request.push.model_dump(exclude_none=True) if request.push else None,
+            settings.access_token_ttl_seconds,
+        )
+    except ValueError as exc:
+        raise error("messaging_identity_conflict", str(exc), 409)
     if failure:
         if failure == "installation_already_registered":
             raise error(
@@ -505,6 +588,95 @@ def update_push_tokens(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@app.put("/api/v1/device/messaging/push")
+def register_messaging_push(
+    request: MessagingPushRegistration,
+    device: Annotated[dict, Depends(bearer_device)],
+) -> dict:
+    if not settings.messaging_push_enabled:
+        return {"enabled": False}
+    from .messaging_push import register_device
+    try:
+        return register_device(store, device["id"], request.token.lower(), request.environment)
+    except ValueError:
+        raise error("messaging_push_unavailable", "Messaging notifications require an active managed messaging account.", 409)
+
+
+@app.delete("/api/v1/device/messaging/push", status_code=status.HTTP_204_NO_CONTENT)
+def remove_messaging_push(device: Annotated[dict, Depends(authenticated_device)]) -> Response:
+    with store._connect() as conn:
+        conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device["id"],))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/api/v1/device/messaging/rooms")
+def list_messaging_rooms(device: Annotated[dict, Depends(bearer_device)]):
+    return Rooms(store, settings).list(device)
+
+
+@app.post("/api/v1/device/messaging/rooms", status_code=201)
+def create_messaging_room(request: RoomCreate, device: Annotated[dict, Depends(bearer_device)]):
+    return Rooms(store, settings).create(device, request)
+
+
+@app.post("/api/v1/device/messaging/rooms/{room_id}")
+def change_messaging_room(room_id: str, request: RoomChange,
+                          device: Annotated[dict, Depends(bearer_device)]):
+    return Rooms(store, settings).change(device, room_id, request)
+
+
+@app.post("/api/v1/device/messaging/attachments", status_code=201)
+async def upload_messaging_attachment(
+    request: Request,
+    device: Annotated[dict, Depends(bearer_device)],
+    peer: Annotated[str, Query(min_length=1, max_length=200)],
+    name: Annotated[str, Query(min_length=1, max_length=200)],
+) -> dict:
+    from .messaging_attachments import Attachments, denied
+    try:
+        size = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        raise denied("attachment_length", 400)
+    attachments = Attachments(store, settings)
+    id = attachments.reserve(device, peer, name, size)
+    finished = False
+    try:
+        digest = hashlib.sha256()
+        received = 0
+        header = b""
+        async with asyncio.timeout(90):
+            with attachments.path(id, True).open("xb") as blob:
+                async for chunk in request.stream():
+                    received += len(chunk)
+                    if received > size:
+                        raise denied("attachment_length", 400)
+                    header = (header + chunk)[:16]
+                    digest.update(chunk)
+                    blob.write(chunk)
+        if received != size:
+            raise denied("attachment_length", 400)
+        result = attachments.finish(id, device, peer, digest.hexdigest(), header)
+        finished = True
+        return result
+    except TimeoutError:
+        raise error("attachment_timeout", "The attachment upload timed out. Please retry.", 408)
+    finally:
+        if not finished:
+            attachments.discard(id)
+
+
+@app.get("/api/v1/device/messaging/attachments/{attachment_id}")
+def download_messaging_attachment(
+    attachment_id: str,
+    device: Annotated[dict, Depends(bearer_device)],
+    peer: Annotated[str, Query(min_length=1, max_length=200)],
+) -> FileResponse:
+    from .messaging_attachments import Attachments
+    path, metadata = Attachments(store, settings).download(attachment_id, device, peer)
+    return FileResponse(path, filename=metadata["name"], media_type=metadata["media_type"],
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
 @app.post("/api/v1/device/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
     request: LogoutRequest,
@@ -523,7 +695,9 @@ admin_app = FastAPI(
     title="VoiceHost Provisioning Administration",
     version="0.3.0",
 )
+admin_app.middleware("http")(prevent_credential_caching)
 admin_app.add_exception_handler(HTTPException, http_exception_handler)
+admin_app.add_exception_handler(RequestValidationError, validation_exception_handler)
 admin_routes = [
     route for route in app.router.routes
     if getattr(route, "path", "").startswith("/api/v1/admin/")
@@ -540,4 +714,4 @@ def admin_health() -> dict:
 
 # The portal exists only in the administration ASGI application.
 from .portal import make_router
-admin_app.include_router(make_router(store, settings, update_managed_configuration))
+admin_app.include_router(make_router(store, settings, update_managed_configuration, build_configuration))

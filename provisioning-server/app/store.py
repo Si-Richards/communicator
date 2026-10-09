@@ -10,6 +10,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .messaging_identity import identity_for_jid, canonical_jid, provisioned_extension
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -105,8 +107,149 @@ class Store:
                     detail_json TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS messaging_accounts (
+                    jid TEXT PRIMARY KEY,
+                    password TEXT NOT NULL,
+                    owned INTEGER NOT NULL DEFAULT 0,
+                    applied_enabled INTEGER,
+                    attempted_enabled INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS messaging_push_devices (
+                    device_id TEXT PRIMARY KEY,
+                    jid TEXT NOT NULL,
+                    node TEXT NOT NULL UNIQUE,
+                    token TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(token, environment)
+                );
+                CREATE TABLE IF NOT EXISTS messaging_push_jobs (
+                    event_id TEXT PRIMARY KEY,
+                    node TEXT NOT NULL,
+                    jid TEXT NOT NULL,
+                    peer TEXT NOT NULL,
+                    created INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_retry INTEGER NOT NULL DEFAULT 0,
+                    error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS messaging_push_due
+                    ON messaging_push_jobs(status,next_retry,created);
+                CREATE TABLE IF NOT EXISTS messaging_aliases (
+                    old_jid TEXT PRIMARY KEY,
+                    canonical_jid TEXT NOT NULL,
+                    history_done INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS messaging_attachments (
+                    id TEXT PRIMARY KEY,
+                    account TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    peer TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    sha256 TEXT,
+                    media_type TEXT,
+                    status TEXT NOT NULL,
+                    created INTEGER NOT NULL,
+                    expires INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS messaging_attachment_expiry
+                    ON messaging_attachments(expires);
+                CREATE INDEX IF NOT EXISTS messaging_attachment_account
+                    ON messaging_attachments(account);
                 """
             )
+            # Additive migration: retain shared passwords, accounts and history.
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(messaging_accounts)")}
+            for column in ("account_number", "extension", "applied_directory_signature", "directory_synced_at"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE messaging_accounts ADD COLUMN {column} TEXT")
+            for account in conn.execute("SELECT * FROM messaging_accounts").fetchall():
+                try:
+                    number, extension = identity_for_jid(account["jid"])
+                except ValueError:
+                    # Legacy identities without an account prefix need an admin
+                    # correction. Never infer a shared/default tenant for them.
+                    conn.execute("UPDATE messaging_accounts SET status='error', error=? WHERE jid=?",
+                                 ("Managed messaging requires an accountnumber*extension SIP username.", account["jid"]))
+                    continue
+                conn.execute("UPDATE messaging_accounts SET account_number=?, extension=? WHERE jid=?",
+                             (number, extension, account["jid"]))
+            self._migrate_endpoint_accounts(conn)
+            for row in conn.execute("SELECT id,config_json,configuration_version FROM devices").fetchall():
+                config = json.loads(row["config_json"])
+                messaging = config.get("messaging") or {}
+                if not messaging.get("managed") or not messaging.get("enabled"):
+                    continue
+                account = conn.execute("SELECT * FROM messaging_accounts WHERE jid=?", (messaging.get("jid"),)).fetchone()
+                if not account:
+                    continue
+                updated = {**messaging, "account_number": account["account_number"], "extension": account["extension"]}
+                if not account["applied_directory_signature"]:
+                    updated["ready"] = False
+                if updated != messaging:
+                    config["messaging"] = updated
+                    config["version"] = row["configuration_version"] + 1
+                    conn.execute("UPDATE devices SET config_json=?,configuration_version=?,updated_at=? WHERE id=?",
+                                 (json.dumps(config), config["version"], iso(utcnow()), row["id"]))
+
+    def _migrate_endpoint_accounts(self, conn):
+        """Idempotent local reservation; the worker proves remote ownership later."""
+        devices = conn.execute("SELECT * FROM devices ORDER BY created_at,id").fetchall()
+        manual = {m.get("jid") for row in devices
+                  if (m := (json.loads(row["config_json"]).get("messaging") or {})).get("enabled")
+                  and not m.get("managed")}
+        # Keep every source account/password. Never adopt an existing manual JID.
+        for old in conn.execute("SELECT * FROM messaging_accounts ORDER BY created_at,jid").fetchall():
+            try:
+                target = canonical_jid(old["jid"])
+            except ValueError:
+                continue
+            if target == old["jid"]:
+                continue
+            if target in manual:
+                raise ValueError("Canonical messaging identity is already assigned manually; administrator action is required.")
+            previous = conn.execute("SELECT canonical_jid FROM messaging_aliases WHERE old_jid=?", (old["jid"],)).fetchone()
+            if previous and previous[0] != target:
+                raise ValueError("Messaging endpoint migration conflicts with existing ownership.")
+            number, extension = identity_for_jid(target)
+            conn.execute("""INSERT OR IGNORE INTO messaging_accounts
+                (jid,password,created_at,account_number,extension) VALUES (?,?,?,?,?)""",
+                (target, old["password"], old["created_at"], number, extension))
+            inserted = conn.execute("INSERT OR IGNORE INTO messaging_aliases (old_jid,canonical_jid) VALUES (?,?)",
+                                    (old["jid"], target)).rowcount
+            if inserted:
+                conn.execute("""UPDATE messaging_accounts SET status='pending', error=NULL,
+                    applied_directory_signature=NULL, next_retry_at=NULL, attempts=0 WHERE jid=?""", (target,))
+        for row in devices:
+            config = json.loads(row["config_json"])
+            messaging = config.get("messaging") or {}
+            old_jid = messaging.get("jid")
+            if not messaging.get("managed") or not old_jid:
+                continue
+            alias = conn.execute("SELECT canonical_jid FROM messaging_aliases WHERE old_jid=?", (old_jid,)).fetchone()
+            target = alias[0] if alias else old_jid
+            account = conn.execute("SELECT * FROM messaging_accounts WHERE jid=?", (target,)).fetchone()
+            if not account:
+                continue
+            previous_jids = [r[0] for r in conn.execute("SELECT old_jid FROM messaging_aliases WHERE canonical_jid=? ORDER BY old_jid", (target,))]
+            updated = {**messaging, "jid": target, "previous_jids": previous_jids}
+            if messaging.get("enabled"):
+                updated.update(password=account["password"], account_number=account["account_number"], extension=account["extension"])
+                if target != old_jid or account["status"] != "enabled":
+                    updated["ready"] = False
+            if updated != messaging:
+                config["messaging"] = updated
+                config["version"] = row["configuration_version"] + 1
+                conn.execute("UPDATE devices SET config_json=?,configuration_version=?,updated_at=? WHERE id=?",
+                             (json.dumps(config), config["version"], iso(utcnow()), row["id"]))
 
     def activate_device(self, code: str, descriptor: dict, config_factory, push: dict | None,
                         access_ttl: int, refresh_ttl: int = 60 * 60 * 24 * 30):
@@ -138,6 +281,7 @@ class Store:
                 return None, "installation_already_registered"
             source = json.loads(activation["config_json"])
             config = config_factory(source)
+            config = self._prepare_messaging(conn, config)
             conn.execute(
                 """INSERT INTO devices (
                     id, installation_id, platform, device_type, device_name,
@@ -274,6 +418,8 @@ class Store:
         state = "active"
         version = int(config.get("version", 1))
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            config = self._prepare_messaging(conn, config)
             conn.execute(
                 """
                 INSERT INTO devices (
@@ -337,7 +483,7 @@ class Store:
             if row is None:
                 return None
             version = int(row["configuration_version"]) + 1
-            updated = dict(config)
+            updated = self._prepare_messaging(conn, config)
             updated["version"] = version
             updated["device"] = dict(updated.get("device", {}))
             updated["device"]["state"] = row["state"]
@@ -349,8 +495,76 @@ class Store:
                 """,
                 (version, json.dumps(updated), iso(now), device_id),
             )
+            messaging = updated.get("messaging") or {}
+            if (not messaging.get("enabled") or not messaging.get("managed") or not messaging.get("ready")
+                    or updated.get("features", {}).get("messaging") is False):
+                conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device_id,))
+            else:
+                conn.execute("DELETE FROM messaging_push_devices WHERE device_id=? AND jid!=?",
+                             (device_id, messaging.get("jid", "")))
             conn.commit()
         return self.get_device(device_id)
+
+    def _prepare_messaging(self, conn, config: dict) -> dict:
+        """Reserve a stable shared secret in the device mutation transaction."""
+        config = dict(config)
+        messaging = dict(config.get("messaging") or {})
+        if not messaging.get("enabled"):
+            return config
+        jid = messaging.get("jid")
+        account = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
+        if not messaging.get("managed"):
+            if account:
+                raise ValueError("This messaging identity is managed automatically; use automatic messaging.")
+            return config
+        if canonical_jid(jid) != jid:
+            raise ValueError("Managed messaging must use the canonical numeric extension JID.")
+        telephony = config.get("telephony") or {}
+        if (telephony.get("sip") or {}).get("username"):
+            provisioned_extension(telephony.get("extension"), telephony["sip"]["username"])
+        # Do not silently take control of an identity already assigned manually.
+        for row in conn.execute("SELECT config_json FROM devices"):
+            other = json.loads(row["config_json"]).get("messaging") or {}
+            if other.get("enabled") and other.get("jid") == jid and not other.get("managed"):
+                raise ValueError("This messaging identity is already assigned manually.")
+        if account is None:
+            number, extension = identity_for_jid(jid)
+            conn.execute(
+                "INSERT INTO messaging_accounts (jid, password, created_at, account_number, extension) VALUES (?, ?, ?, ?, ?)",
+                (jid, secrets.token_urlsafe(48), iso(utcnow()), number, extension),
+            )
+            account = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
+        messaging["password"] = account["password"]
+        messaging["account_number"] = account["account_number"]
+        messaging["extension"] = account["extension"]
+        messaging["previous_jids"] = [r[0] for r in conn.execute(
+            "SELECT old_jid FROM messaging_aliases WHERE canonical_jid=? ORDER BY old_jid", (jid,))]
+        messaging["ready"] = (account["status"] == "enabled" and account["applied_enabled"] == 1
+                              and bool(account["applied_directory_signature"]))
+        config["messaging"] = messaging
+        return config
+
+    @staticmethod
+    def messaging_active_references(conn, jid: str) -> int:
+        count = 0
+        for row in conn.execute("SELECT state, config_json FROM devices"):
+            config = json.loads(row["config_json"])
+            messaging = config.get("messaging") or {}
+            if (row["state"] == "active" and messaging.get("managed")
+                    and messaging.get("enabled") and messaging.get("jid") == jid
+                    and config.get("features", {}).get("messaging") is not False):
+                count += 1
+        return count
+
+    def messaging_account_status(self, jid: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM messaging_accounts WHERE jid = ?", (jid,)).fetchone()
+            if row is None:
+                return None
+            active = self.messaging_active_references(conn, jid)
+            pending = row["applied_enabled"] != bool(active)
+            return {"status": "pending" if pending and row["status"] not in {"error", "migrating"} else row["status"],
+                    "error": row["error"], "active_devices": active}
 
     def update_checkin(
         self,
@@ -397,6 +611,10 @@ class Store:
     def set_device_state(self, device_id: str, state: str) -> bool:
         now = utcnow()
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute("SELECT state FROM devices WHERE id=?", (device_id,)).fetchone()
+            if previous and previous["state"] in {"revoked", "retired"} and state in {"active", "locked"}:
+                return False
             cur = conn.execute(
                 """
                 UPDATE devices
@@ -405,6 +623,10 @@ class Store:
                 """,
                 (state, iso(now), device_id),
             )
+            if state != "active":
+                # A later unlock must obtain a fresh opaque node, so old queued
+                # events cannot become eligible again after a brief lock.
+                conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device_id,))
             if state in {"revoked", "retired"}:
                 conn.execute(
                     """
@@ -599,6 +821,7 @@ class Store:
     def revoke_device_tokens(self, device_id: str) -> None:
         now = iso(utcnow())
         with self._connect() as conn:
+            conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device_id,))
             conn.execute(
                 """
                 UPDATE access_tokens SET revoked_at = ?

@@ -46,7 +46,7 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-def make_router(store, settings, configuration_updater=None) -> APIRouter:
+def make_router(store, settings, configuration_updater=None, activation_validator=None) -> APIRouter:
     router = APIRouter()
     signer = URLSafeTimedSerializer(settings.portal_secret, salt="voicehost-portal-v1") if settings.portal_secret else None
     failures = defaultdict(list)
@@ -201,6 +201,7 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
         services = dict(config.get("services") or {})
         telephony = dict(config.get("telephony") or {})
         sip = dict(telephony.get("sip") or {})
+        messaging = dict(config.get("messaging") or {})
         directory = dict(config.get("directory") or {})
         ldap = dict(directory.get("ldap") or {})
         return protect(JSONResponse({
@@ -218,6 +219,12 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
             "sip_realm": sip.get("realm") or "",
             "sip_proxy": sip.get("proxy") or "",
             "sip_password_configured": bool(sip.get("password")),
+            "messaging_enabled": bool(messaging.get("enabled", False)),
+            "messaging_managed": bool(messaging.get("managed", False)),
+            "messaging_account": store.messaging_account_status(messaging.get("jid")) if messaging.get("managed") else None,
+            "messaging_jid": messaging.get("jid") or "",
+            "messaging_websocket": messaging.get("websocket") or "wss://ejabberd.voicehost.io/websocket",
+            "messaging_password_configured": bool(messaging.get("password")),
             "ldap_enabled": bool(ldap.get("enabled", False)),
             "ldap_ou": ldap.get("ou") or "",
             "ldap_uid": ldap.get("uid") or "",
@@ -271,6 +278,8 @@ def make_router(store, settings, configuration_updater=None) -> APIRouter:
         payload["randy_url"] = payload.get("randy_url") or settings.randy_url
         payload["janus_url"] = payload.get("janus_url") or settings.janus_url
         payload["version"] = 1
+        if activation_validator is not None:
+            activation_validator(payload)
         ident, code, expires = store.create_activation(payload, body.expires_in or settings.activation_ttl_seconds)
         store.audit("portal_activation_created", detail={"activation_id": ident})
         return protect(JSONResponse({
