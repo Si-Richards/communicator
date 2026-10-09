@@ -23,6 +23,7 @@ from .models import (
     RefreshRequest,
 )
 from .store import Store
+from .messaging_rooms import RoomCreate, RoomChange, Rooms
 
 
 app = FastAPI(
@@ -606,6 +607,22 @@ def remove_messaging_push(device: Annotated[dict, Depends(authenticated_device)]
     with store._connect() as conn:
         conn.execute("DELETE FROM messaging_push_devices WHERE device_id=?", (device["id"],))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/api/v1/device/messaging/rooms")
+def list_messaging_rooms(device: Annotated[dict, Depends(bearer_device)]):
+    return Rooms(store, settings).list(device)
+
+
+@app.post("/api/v1/device/messaging/rooms", status_code=201)
+def create_messaging_room(request: RoomCreate, device: Annotated[dict, Depends(bearer_device)]):
+    return Rooms(store, settings).create(device, request)
+
+
+@app.post("/api/v1/device/messaging/rooms/{room_id}")
+def change_messaging_room(room_id: str, request: RoomChange,
+                          device: Annotated[dict, Depends(bearer_device)]):
+    return Rooms(store, settings).change(device, room_id, request)
 
 
 @app.post("/api/v1/device/messaging/attachments", status_code=201)

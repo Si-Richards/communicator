@@ -41,9 +41,14 @@ class ChatMessage {
     this.markable = false,
     this.displayed = false,
     this.attachment,
-  });
+    this.senderJid,
+    Set<String>? readBy,
+  }) : readBy = readBy ?? <String>{};
 
+  final String? senderJid;
+  final Set<String> readBy;
   final String id;
+  String get key => senderJid == null ? id : "$senderJid|$id";
   final String peer;
   final String body;
   final bool outgoing;
@@ -72,6 +77,8 @@ class ChatMessage {
   Map<String, dynamic> toJson() => {
     'id': id,
     'peer': peer,
+    if (senderJid != null) 'sender_jid': senderJid,
+    if (readBy.isNotEmpty) 'read_by': readBy.toList(),
     'body': body,
     'outgoing': outgoing,
     'timestamp': timestamp.toUtc().toIso8601String(),
@@ -93,5 +100,7 @@ class ChatMessage {
     markable: json['markable'] == true,
     displayed: json['displayed'] == true,
     attachment: ChatAttachment.tryFromJson(json['attachment']),
+    senderJid: json['sender_jid'] as String?,
+    readBy: (json['read_by'] as List?)?.whereType<String>().toSet(),
   );
 }

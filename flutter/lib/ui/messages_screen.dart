@@ -1,9 +1,12 @@
+import 'dart:math';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/chat_message.dart';
+import '../models/messaging_room.dart';
 import '../models/chat_attachment.dart';
 import '../controllers/provisioning_controller.dart';
 import '../services/attachment_bytes.dart';
@@ -77,7 +80,7 @@ class MessagesScreen extends StatelessWidget {
       final conversations = latest.values.toList()
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       return DefaultTabController(
-        length: 2,
+        length: 3,
         child: Scaffold(
           appBar: AppBar(
             title: const Text('Messages'),
@@ -88,6 +91,7 @@ class MessagesScreen extends StatelessWidget {
               tabs: [
                 Tab(text: 'Conversations'),
                 Tab(text: 'Directory'),
+                Tab(text: 'Rooms'),
               ],
             ),
             actions: [
@@ -184,9 +188,15 @@ class MessagesScreen extends StatelessWidget {
                             itemBuilder: (context, index) {
                               final message = conversations[index];
                               return ListTile(
-                                leading: _PresenceAvatar(
-                                  presence: messaging.presenceFor(message.peer),
-                                ),
+                                leading: messaging.isRoom(message.peer)
+                                    ? const CircleAvatar(
+                                        child: Icon(Icons.groups_outlined),
+                                      )
+                                    : _PresenceAvatar(
+                                        presence: messaging.presenceFor(
+                                          message.peer,
+                                        ),
+                                      ),
                                 title: Text(
                                   messaging.contactLabel(message.peer),
                                 ),
@@ -201,6 +211,10 @@ class MessagesScreen extends StatelessWidget {
                                   mainAxisSize: MainAxisSize.min,
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
+                                    if (messaging.unreadFor(message.peer) > 0)
+                                      Text(
+                                        '${messaging.unreadFor(message.peer)} unread',
+                                      ),
                                     Text(
                                       MaterialLocalizations.of(
                                         context,
@@ -227,6 +241,11 @@ class MessagesScreen extends StatelessWidget {
               ),
               _AccountDirectory(
                 messaging: messaging,
+                onSelect: (jid) => _openChat(context, jid),
+              ),
+              _RoomsPanel(
+                messaging: messaging,
+                provisioning: provisioning,
                 onSelect: (jid) => _openChat(context, jid),
               ),
             ],
@@ -878,14 +897,14 @@ class _ChatScreenState extends State<MessagingChatScreen>
             message.displayed) {
           continue;
         }
-        final box = _messageKeys[message.id]?.currentContext
+        final box = _messageKeys[message.key]?.currentContext
             ?.findRenderObject();
         if (box is! RenderBox || !box.hasSize || !box.attached) continue;
         final rect = box.localToGlobal(Offset.zero) & box.size;
         final visible = bounds.intersect(rect);
         if (visible.width > 0 &&
             visible.height >= (rect.height < 24 ? rect.height : 24)) {
-          widget.messaging.markConversationDisplayed(widget.peer, message.id);
+          widget.messaging.markConversationDisplayed(widget.peer, message.key);
           break;
         }
       }
@@ -955,7 +974,7 @@ class _ChatScreenState extends State<MessagingChatScreen>
           .where((m) => m.peer == widget.peer)
           .toList();
       _scheduleRead();
-      final ids = messages.map((m) => m.id).toSet();
+      final ids = messages.map((m) => m.key).toSet();
       _messageKeys.removeWhere((id, _) => !ids.contains(id));
       return Scaffold(
         appBar: AppBar(
@@ -965,12 +984,34 @@ class _ChatScreenState extends State<MessagingChatScreen>
               Text(widget.messaging.contactLabel(widget.peer)),
               Text(
                 widget.messaging.isTyping(widget.peer)
-                    ? '${widget.messaging.contactLabel(widget.peer)} is typing…'
-                    : widget.messaging.presenceFor(widget.peer).label,
+                    ? (widget.messaging.isRoom(widget.peer)
+                          ? widget.messaging.roomTypingLabel(widget.peer)
+                          : '${widget.messaging.contactLabel(widget.peer)} is typing…')
+                    : (widget.messaging.isRoom(widget.peer)
+                          ? widget.messaging.roomTypingLabel(widget.peer)
+                          : widget.messaging.presenceFor(widget.peer).label),
                 style: const TextStyle(fontSize: 12, color: Colors.white),
               ),
             ],
           ),
+          actions: [
+            if (widget.messaging.isRoom(widget.peer))
+              IconButton(
+                tooltip: 'Room members and settings',
+                icon: const Icon(Icons.group_outlined),
+                onPressed: widget.provisioning == null
+                    ? null
+                    : () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => _RoomSettings(
+                            messaging: widget.messaging,
+                            provisioning: widget.provisioning!,
+                            peer: widget.peer,
+                          ),
+                        ),
+                      ),
+              ),
+          ],
         ),
         body: SafeArea(
           child: Column(
@@ -980,11 +1021,34 @@ class _ChatScreenState extends State<MessagingChatScreen>
                   padding: const EdgeInsets.all(8),
                   child: Text('Messaging ${widget.messaging.state.name}'),
                 ),
-              if (widget.messaging.hasOlder)
+              if (widget.messaging.isRoom(widget.peer) &&
+                  widget.messaging.roomHistoryBusy(widget.peer))
+                const LinearProgressIndicator(),
+              if (widget.messaging.roomHistoryError(widget.peer) != null)
+                TextButton(
+                  onPressed: () =>
+                      widget.messaging.loadRoomHistory(widget.peer),
+                  child: Text(widget.messaging.roomHistoryError(widget.peer)!),
+                ),
+              if (widget.messaging.isRoom(widget.peer)
+                  ? widget.messaging.roomHasOlder(widget.peer)
+                  : widget.messaging.hasOlder)
                 TextButton(
                   onPressed:
-                      widget.messaging.online && !widget.messaging.historyBusy
-                      ? widget.messaging.loadOlder
+                      widget.messaging.online &&
+                          !(widget.messaging.isRoom(widget.peer)
+                              ? widget.messaging.roomHistoryBusy(widget.peer)
+                              : widget.messaging.historyBusy)
+                      ? () {
+                          if (widget.messaging.isRoom(widget.peer)) {
+                            widget.messaging.loadRoomHistory(
+                              widget.peer,
+                              older: true,
+                            );
+                          } else {
+                            widget.messaging.loadOlder();
+                          }
+                        }
                       : null,
                   child: const Text('Load older messages'),
                 ),
@@ -1000,8 +1064,11 @@ class _ChatScreenState extends State<MessagingChatScreen>
                     final colors = Theme.of(context).colorScheme;
                     return Align(
                       key: message.outgoing
-                          ? ValueKey('out-${message.id}')
-                          : _messageKeys.putIfAbsent(message.id, GlobalKey.new),
+                          ? ValueKey('out-${message.key}')
+                          : _messageKeys.putIfAbsent(
+                              message.key,
+                              GlobalKey.new,
+                            ),
                       alignment: message.outgoing
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
@@ -1020,6 +1087,22 @@ class _ChatScreenState extends State<MessagingChatScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            if (message.senderJid != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  widget.messaging.contactLabel(
+                                    message.senderJid!,
+                                  ),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    color: message.outgoing
+                                        ? colors.onSecondary
+                                        : colors.onSurface,
+                                  ),
+                                ),
+                              ),
                             if (message.attachment != null)
                               TextButton.icon(
                                 style: TextButton.styleFrom(
@@ -1082,8 +1165,32 @@ class _ChatScreenState extends State<MessagingChatScreen>
                                         : colors.onSurfaceVariant,
                                   ),
                                 ),
-                                if (message.outgoing)
+                                if (message.outgoing &&
+                                    widget.messaging.isRoom(widget.peer))
+                                  Text(
+                                    message.status == ChatMessageStatus.sent
+                                        ? 'Sent'
+                                        : message.status ==
+                                              ChatMessageStatus.failed
+                                        ? 'Failed'
+                                        : 'In room',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: colors.onSecondary,
+                                    ),
+                                  ),
+                                if (message.outgoing &&
+                                    !widget.messaging.isRoom(widget.peer))
                                   _MessageStatusIcon(status: message.status),
+                                if (message.outgoing &&
+                                    message.readBy.isNotEmpty)
+                                  Text(
+                                    'Read by ${message.readBy.length}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: colors.onSecondary,
+                                    ),
+                                  ),
                               ],
                             ),
                           ],
@@ -1191,6 +1298,458 @@ class _ChatScreenState extends State<MessagingChatScreen>
               ),
             ],
           ),
+        ),
+      );
+    },
+  );
+}
+
+class _RoomsPanel extends StatelessWidget {
+  const _RoomsPanel({
+    required this.messaging,
+    required this.provisioning,
+    required this.onSelect,
+  });
+  final XmppService messaging;
+  final ProvisioningController? provisioning;
+  final ValueChanged<String> onSelect;
+
+  Future<void> _create(BuildContext context) async {
+    if (provisioning == null) return;
+    final jid = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          _CreateRoomDialog(messaging: messaging, provisioning: provisioning!),
+    );
+    if (jid != null && context.mounted) onSelect(jid);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rooms = messaging.rooms.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Private account rooms',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh rooms',
+                onPressed: messaging.online && !messaging.roomsBusy
+                    ? messaging.refreshRooms
+                    : null,
+                icon: const Icon(Icons.refresh),
+              ),
+              FilledButton.icon(
+                onPressed:
+                    messaging.online &&
+                        provisioning?.attachmentsAvailable == true &&
+                        !provisioning!.busy
+                    ? () => _create(context)
+                    : null,
+                icon: const Icon(Icons.add),
+                label: const Text('Create'),
+              ),
+            ],
+          ),
+        ),
+        if (messaging.roomsBusy) const LinearProgressIndicator(),
+        if (messaging.roomsError != null)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(messaging.roomsError!),
+          ),
+        Expanded(
+          child: rooms.isEmpty
+              ? const Center(
+                  child: Text('Create a room with users from your account.'),
+                )
+              : ListView.builder(
+                  itemCount: rooms.length,
+                  itemBuilder: (context, index) {
+                    final room = rooms[index],
+                        unread = messaging.unreadFor(rooms[index].jid);
+                    return ListTile(
+                      leading: const CircleAvatar(
+                        child: Icon(Icons.groups_outlined),
+                      ),
+                      title: Text(room.name),
+                      subtitle: Text('${room.members.length} members'),
+                      trailing: unread > 0 ? Text('$unread unread') : null,
+                      onTap: () => onSelect(room.jid),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CreateRoomDialog extends StatefulWidget {
+  const _CreateRoomDialog({
+    required this.messaging,
+    required this.provisioning,
+  });
+  final XmppService messaging;
+  final ProvisioningController provisioning;
+  @override
+  State<_CreateRoomDialog> createState() => _CreateRoomDialogState();
+}
+
+class _CreateRoomDialogState extends State<_CreateRoomDialog> {
+  final _name = TextEditingController();
+  final _selected = <String>{};
+  Map<String, dynamic>? _pending;
+  bool _busy = false;
+  String? _error;
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    _pending ??= {
+      'id':
+          'vh-${List.generate(16, (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0')).join()}',
+      'name': _name.text.trim(),
+      'members': _selected.toList(),
+    };
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final rooms = await widget.provisioning.changeMessagingRoom(
+        change: _pending!,
+      );
+      widget.messaging.replaceRooms(rooms);
+      final room = rooms.where((r) => r.id == _pending!['id']).firstOrNull;
+      if (room == null) {
+        throw StateError('Room is still being synchronized. Retry shortly.');
+      }
+      if (mounted) Navigator.pop(context, room.jid);
+    } catch (error) {
+      await widget.messaging.refreshRooms();
+      final room = widget.messaging.rooms
+          .where((r) => r.id == _pending!['id'])
+          .firstOrNull;
+      if (mounted) {
+        if (room != null) {
+          Navigator.pop(context, room.jid);
+        } else {
+          setState(() => _error = error.toString());
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_busy,
+    child: AlertDialog(
+      title: const Text('Create private room'),
+      content: SizedBox(
+        width: 400,
+        height: 420,
+        child: Column(
+          children: [
+            if (_busy) const LinearProgressIndicator(),
+            TextField(
+              controller: _name,
+              maxLength: 60,
+              enabled: _pending == null,
+              decoration: const InputDecoration(labelText: 'Room name'),
+              onChanged: (_) => setState(() {}),
+            ),
+            const Text(
+              'Members can read the full room history, including earlier messages.',
+            ),
+            if (_error != null)
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            Expanded(
+              child: widget.messaging.directory.isEmpty
+                  ? const Center(
+                      child: Text('Refresh the account directory first.'),
+                    )
+                  : ListView(
+                      children: widget.messaging.directory
+                          .map(
+                            (c) => CheckboxListTile(
+                              title: Text(c.label),
+                              value: _selected.contains(c.jid),
+                              onChanged: _pending != null
+                                  ? null
+                                  : (v) => setState(() {
+                                      if (v == true) {
+                                        _selected.add(c.jid);
+                                      } else {
+                                        _selected.remove(c.jid);
+                                      }
+                                    }),
+                            ),
+                          )
+                          .toList(),
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed:
+              _busy ||
+                  _name.text.trim().isEmpty ||
+                  _selected.isEmpty ||
+                  _selected.length > 99
+              ? null
+              : _submit,
+          child: Text(_pending == null ? 'Create' : 'Retry'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _RoomSettings extends StatefulWidget {
+  const _RoomSettings({
+    required this.messaging,
+    required this.provisioning,
+    required this.peer,
+  });
+  final XmppService messaging;
+  final ProvisioningController provisioning;
+  final String peer;
+  @override
+  State<_RoomSettings> createState() => _RoomSettingsState();
+}
+
+class _RoomSettingsState extends State<_RoomSettings> {
+  bool _busy = false;
+  Future<void> _change(
+    String action, {
+    String target = '',
+    String value = '',
+  }) async {
+    final room = widget.messaging.roomFor(widget.peer);
+    if (room == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      final rooms = await widget.provisioning.changeMessagingRoom(
+        id: room.id,
+        change: {
+          'action': action,
+          'target': target,
+          'value': value,
+          'revision': room.revision,
+        },
+      );
+      widget.messaging.replaceRooms(rooms);
+      if (mounted && widget.messaging.roomFor(widget.peer) == null) {
+        Navigator.pop(context);
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      await widget.messaging.refreshRooms();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _rename(MessagingRoom room) async {
+    final text = TextEditingController(text: room.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename room'),
+        content: TextField(controller: text, maxLength: 60, autofocus: true),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, text.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    text.dispose();
+    if (name != null && name.isNotEmpty) await _change('rename', value: name);
+  }
+
+  Future<void> _add(MessagingRoom room) async {
+    final member = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Add account user'),
+        children: widget.messaging.directory
+            .where((c) => !room.members.any((m) => m.jid == c.jid))
+            .map(
+              (c) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, c.jid),
+                child: Text(c.label),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (member != null) await _change('add', target: member);
+  }
+
+  Future<void> _confirm(String action) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(action == 'close' ? 'Close room?' : 'Leave room?'),
+        content: Text(
+          action == 'close'
+              ? 'Members will lose access to this room.'
+              : 'You will lose access to this room. An owner must appoint another owner before leaving.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (yes == true) await _change(action);
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.messaging,
+    builder: (context, _) {
+      final room = widget.messaging.roomFor(widget.peer);
+      if (room == null) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('Room')),
+          body: const Center(child: Text('Room unavailable.')),
+        );
+      }
+      final role = room.roleFor(widget.messaging.account),
+          manage = role == 'owner' || role == 'admin';
+      final enabled =
+          !_busy && widget.messaging.online && !widget.provisioning.busy;
+      return Scaffold(
+        appBar: AppBar(title: Text(room.name)),
+        body: Column(
+          children: [
+            if (_busy) const LinearProgressIndicator(),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Private account room · ${room.members.length} members. Current members can read the full history.',
+              ),
+            ),
+            if (manage)
+              Wrap(
+                children: [
+                  TextButton.icon(
+                    onPressed: enabled ? () => _rename(room) : null,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Rename'),
+                  ),
+                  TextButton.icon(
+                    onPressed: enabled ? () => _add(room) : null,
+                    icon: const Icon(Icons.person_add_outlined),
+                    label: const Text('Add member'),
+                  ),
+                ],
+              ),
+            Expanded(
+              child: ListView(
+                children: room.members
+                    .map(
+                      (m) => ListTile(
+                        title: Text(m.label),
+                        subtitle: Text(m.role),
+                        trailing:
+                            manage && (role == 'owner' || m.role == 'member')
+                            ? PopupMenuButton<String>(
+                                enabled: enabled,
+                                onSelected: (action) {
+                                  if (action == 'remove') {
+                                    _change('remove', target: m.jid);
+                                  } else {
+                                    _change(
+                                      'role',
+                                      target: m.jid,
+                                      value: action,
+                                    );
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  const PopupMenuItem(
+                                    value: 'remove',
+                                    child: Text('Remove'),
+                                  ),
+                                  if (role == 'owner') ...[
+                                    const PopupMenuItem(
+                                      value: 'member',
+                                      child: Text('Make member'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'admin',
+                                      child: Text('Make admin'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'owner',
+                                      child: Text('Make owner'),
+                                    ),
+                                  ],
+                                ],
+                              )
+                            : null,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            Wrap(
+              children: [
+                TextButton(
+                  onPressed: enabled ? () => _confirm('leave') : null,
+                  child: const Text('Leave room'),
+                ),
+                if (role == 'owner')
+                  TextButton(
+                    onPressed: enabled ? () => _confirm('close') : null,
+                    child: const Text('Close room'),
+                  ),
+              ],
+            ),
+          ],
         ),
       );
     },

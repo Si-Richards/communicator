@@ -362,8 +362,9 @@ class ProvisionedDeviceState {
       accessToken: json['access_token']?.toString() ?? '',
       refreshToken: json['refresh_token']?.toString() ?? '',
       accessTokenExpiresAt:
-          DateTime.tryParse(json['access_token_expires_at']?.toString() ?? '')
-              ?.toUtc() ??
+          DateTime.tryParse(
+            json['access_token_expires_at']?.toString() ?? '',
+          )?.toUtc() ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       configurationVersion:
           int.tryParse(json['configuration_version']?.toString() ?? '') ?? 0,
@@ -529,10 +530,13 @@ class MessagingNotification {
     final ownMatch = jidPattern.firstMatch(owner);
     final peerMatch = jidPattern.firstMatch(peer);
     if (ownMatch == null ||
-        peerMatch == null ||
-        owner == peer ||
-        ownMatch.group(1) != peerMatch.group(1) ||
-        ownMatch.group(2) != peerMatch.group(2) ||
+        !(peerMatch != null &&
+                owner != peer &&
+                ownMatch.group(1) == peerMatch.group(1) &&
+                ownMatch.group(2) == peerMatch.group(2) ||
+            RegExp(r'^vh-[a-f0-9]{32}$').hasMatch(peer.split('@').first) &&
+                peer.split('@').length == 2 &&
+                peer.split('@').last == 'rooms.${ownMatch.group(2)}') ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(id)) {
       return null;
     }

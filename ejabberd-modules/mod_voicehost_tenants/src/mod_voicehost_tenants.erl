@@ -42,6 +42,7 @@ start(_Host, _Opts) ->
         PushError -> error({voicehost_push_event_table, PushError})
     end,
     ok = mnesia:wait_for_tables([voicehost_push_event], 30000),
+    ok = voicehost_rooms:init(),
     {ok, [{hook, filter_packet, filter_packet, 10, global},
           {hook, user_send_packet, user_send, 10},
           {hook, user_receive_packet, user_receive, 10},
@@ -52,12 +53,30 @@ start(_Host, _Opts) ->
 
 stop(_Host) -> ok.
 reload(_Host, _NewOpts, _OldOpts) -> ok.
-depends(_Host, _Opts) -> [{mod_roster, hard}, {mod_push, soft}].
+depends(_Host, _Opts) -> [{mod_roster, hard}, {mod_muc, hard}, {mod_muc_admin, hard},
+                        {mod_mam, hard}, {mod_push, soft}].
 mod_options(_Host) -> [].
 mod_doc() -> #{desc => [<<"Account isolation and provisioned account roster for VoiceHost.">>]}.
 
 commands() ->
-    [#ejabberd_commands{name = voicehost_set_identity,
+    [#ejabberd_commands{name=voicehost_room_list,tags=[voicehost],version=2,
+                        desc="List current account room memberships",module=voicehost_rooms,function=list,
+                        args=[{user,binary},{host,binary}],
+                        result={rooms,{list,{room,{tuple,[{jid,binary},{name,binary},{revision,integer},
+                          {members,{list,{member,{tuple,[{jid,binary},{name,binary},
+                                                       {extension,binary},{role,binary}]}}}}]}}}}},
+     #ejabberd_commands{name=voicehost_room_create,tags=[voicehost],version=2,
+                        desc="Create an account members-only room",module=voicehost_rooms,function=create,
+                        args=[{user,binary},{host,binary},{room,binary},{name,binary},{users,binary}],
+                        result={res,integer}},
+     #ejabberd_commands{name=voicehost_room_manage,tags=[voicehost],version=2,
+                        desc="Manage a room with actor and revision checks",module=voicehost_rooms,function=manage,
+                        args=[{user,binary},{host,binary},{room,binary},{action,binary},
+                              {target,binary},{value,binary},{revision,integer}],result={res,integer}},
+     #ejabberd_commands{name=voicehost_room_repair,tags=[voicehost],version=2,
+                        desc="Repair interrupted room membership changes",module=voicehost_rooms,function=repair,
+                        args=[{host,binary}],result={res,integer}},
+     #ejabberd_commands{name = voicehost_set_identity,
                         tags = [voicehost], version = 2,
                         desc = "Publish provisioned tenant membership and directory entry",
                         module = ?MODULE, function = set_identity,
@@ -96,19 +115,20 @@ valid_push_node(Node) when is_binary(Node) ->
     re:run(Node, <<"\\Avh-[a-f0-9]{64}\\z">>, [{capture,none}]) =:= match;
 valid_push_node(_) -> false.
 
-enqueue_push(Node, Host, #message{type=chat,from=From,to=To,body=Body,id=ID,sub_els=Els} = Packet) ->
+enqueue_push(Node, Host, #message{type=Type,from=From,to=To,body=Body,id=ID,sub_els=Els} = Packet)
+  when Type=:=chat; Type=:=groupchat ->
     case allowed(Packet) andalso lists:any(fun(#text{data=D}) -> D =/= <<>> end,Body) andalso
-         From#jid.lserver =:= Host andalso To#jid.lserver =:= Host andalso
-         From#jid.luser =/= To#jid.luser of
+         To#jid.lserver =:= Host andalso push_sender(Type,From,To) of
         true ->
             %% Prefer trusted archive IDs. The client message ID also deduplicates
             %% repeated hook invocations; missing IDs get a fresh server nonce.
-            SIDs = [SID || #stanza_id{id=SID,by=#jid{lserver=H}} <- Els, H =:= Host],
+            SIDs = [SID || #stanza_id{id=SID,by=#jid{lserver=H}} <- Els,
+                           H =:= Host orelse H =:= voicehost_rooms:room_host(Host)],
             Stamp = case {ID,SIDs} of {<<>>,[]} -> crypto:strong_rand_bytes(16); _ -> {ID,SIDs} end,
             Key = hex(crypto:hash(sha256,term_to_binary({Node,jid:remove_resource(From),jid:remove_resource(To),Stamp}))),
             Event = #voicehost_push_event{key=Key,host=Host,node=Node,
                         jid=jid:encode(jid:make(To#jid.luser,Host)),
-                        peer=jid:encode(jid:make(From#jid.luser,Host)),created=erlang:system_time(second)},
+                        peer=jid:encode(jid:remove_resource(From)),created=erlang:system_time(second)},
             case mnesia:transaction(fun() ->
                 mnesia:lock({table,voicehost_push_event},write),
                 case mnesia:read(voicehost_push_event,Key) of
@@ -125,6 +145,14 @@ enqueue_push(Node, Host, #message{type=chat,from=From,to=To,body=Body,id=ID,sub_
         false -> ok
     end;
 enqueue_push(_, _, _) -> ok.
+
+push_sender(chat,#jid{lserver=H,luser=U},#jid{lserver=H,luser=V}) -> U=/=V;
+push_sender(groupchat,#jid{lresource=Nick}=Room,#jid{lserver=H,luser=U}) ->
+    case canonical_user(<<((hd(binary:split(U,<<"*">>))))/binary,"*",Nick/binary>>) of
+        {ok,Author,_} -> Author=/=U andalso voicehost_rooms:member(jid:make(Author,H),Room);
+        _ -> false
+    end;
+push_sender(_,_,_) -> false.
 
 hex(Bytes) -> << <<(hex_digit(B bsr 4)),(hex_digit(B band 15))>> || <<B>> <= Bytes >>.
 hex_digit(N) when N < 10 -> $0 + N;
@@ -308,6 +336,12 @@ identity(_) -> denied.
 %% Unknown identities, service subdomains, remote servers and cross-account
 %% peers are denied. Self MAM/private storage and server replies remain usable.
 allowed(Packet) ->
+    case voicehost_rooms:allowed(Packet) of
+        undefined -> allowed_direct(Packet);
+        Allow -> Allow
+    end.
+
+allowed_direct(Packet) ->
     From = xmpp:get_from(Packet),
     To = xmpp:get_to(Packet),
     case {From, To} of

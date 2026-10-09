@@ -9,9 +9,12 @@ import 'package:xml/xml.dart';
 import '../models/chat_message.dart';
 import '../models/chat_attachment.dart';
 import '../models/messaging_contact.dart';
+import '../models/messaging_room.dart';
 import '../models/messaging_presence.dart';
 import '../models/provisioning.dart';
 import 'chat_history_repository.dart';
+
+part 'xmpp_rooms.dart';
 
 enum XmppState {
   disconnected,
@@ -54,6 +57,22 @@ class XmppService extends ChangeNotifier {
   static const _sid = 'urn:xmpp:sid:0';
   static const _disco = 'http://jabber.org/protocol/disco#info';
   static const _roster = 'jabber:iq:roster';
+  Future<List<MessagingRoom>> Function()? roomLoader;
+  final Map<String, MessagingRoom> _rooms = {};
+  final Set<String> _joinedRooms = {},
+      _roomHistoryBusy = {},
+      _roomHasOlder = {};
+  final Map<String, String> _roomOldest = {},
+      _roomLatest = {},
+      _roomHistoryErrors = {},
+      _roomArchiveQueries = {},
+      _roomReadAnchors = {};
+  final Map<String, int> _roomArchiveCounts = {};
+  Timer? _roomTimer;
+  bool _roomsBusy = false;
+  String? _roomsError;
+  String? get roomsError => _roomsError;
+  bool get roomsBusy => _roomsBusy;
   final ChatHistoryRepository _history;
   Future<void> _storageQueue = Future.value();
   final Map<String, Completer<XmlElement>> _pendingIq = {};
@@ -188,6 +207,10 @@ class XmppService extends ChangeNotifier {
   void prepareConversation(String value) {
     if (!online || !_accessAllowed) return;
     final peer = recipientJid(value);
+    if (isRoom(peer)) {
+      _chatStatePeers.add(peer);
+      return;
+    }
     if (peer == _account || !_discoveredPeers.add(peer)) return;
     unawaited(_discoverPeer(peer));
   }
@@ -256,7 +279,7 @@ class XmppService extends ChangeNotifier {
       _element(
         'message',
         _client,
-        attributes: {'to': peer, 'type': 'chat'},
+        attributes: {'to': peer, 'type': isRoom(peer) ? 'groupchat' : 'chat'},
         children: [_element(state, _chatStates)],
       ),
     );
@@ -295,9 +318,13 @@ class XmppService extends ChangeNotifier {
     if (!online || !_foreground || !_accessAllowed) return;
     final peer = recipientJid(value);
     final message = _messages
-        .where((m) => !m.outgoing && m.peer == peer && m.id == id)
+        .where((m) => !m.outgoing && m.peer == peer && m.key == id)
         .firstOrNull;
     if (message == null || message.displayed) return;
+    if (isRoom(peer)) {
+      _markRoomDisplayed(peer, message);
+      return;
+    }
     _applyDisplayed(peer, id, outgoing: false);
     _rememberUpdate(
       ChatMessageUpdate(peer, id, outgoing: false, displayed: true),
@@ -307,7 +334,7 @@ class XmppService extends ChangeNotifier {
         _element(
           'message',
           _client,
-          attributes: {'to': peer, 'type': 'chat'},
+          attributes: {'to': peer, 'type': isRoom(peer) ? 'groupchat' : 'chat'},
           children: [
             _element('displayed', _markers, attributes: {'id': id}),
             _element('store', 'urn:xmpp:hints'),
@@ -403,6 +430,12 @@ class XmppService extends ChangeNotifier {
   }
 
   String contactLabel(String jid) =>
+      _rooms[jid]?.name ??
+      _rooms.values
+          .expand((r) => r.members)
+          .where((m) => m.jid == jid)
+          .firstOrNull
+          ?.label ??
       _directory
           .where((c) => c.jid == _canonicalPeer(jid))
           .firstOrNull
@@ -500,9 +533,14 @@ class XmppService extends ChangeNotifier {
   XmppState get state => _state;
   String? get error => _error;
   String? get jid => _boundJid;
+  String? get account => _account;
   bool get online => state == XmppState.online;
   bool get accessAllowed => _accessAllowed;
-  List<ChatMessage> get messages => List.unmodifiable(_messages);
+  List<ChatMessage> get messages => List.unmodifiable(
+    _messages.where(
+      (m) => !m.peer.contains('@rooms.') || _rooms.containsKey(m.peer),
+    ),
+  );
   List<String> get events => List.unmodifiable(_events);
 
   /// Only VoiceHost test users are accepted here. Production credentials will
@@ -534,6 +572,12 @@ class XmppService extends ChangeNotifier {
     _closeTransport();
     final accountGeneration = ++_accountGeneration;
     _messages.clear();
+    _rooms.clear();
+    _roomOldest.clear();
+    _roomLatest.clear();
+    _roomHasOlder.clear();
+    _roomReadAnchors.clear();
+    _roomHistoryErrors.clear();
     _migratedHistoryAccounts.clear();
     _directory.clear();
     _directoryError = null;
@@ -561,11 +605,14 @@ class XmppService extends ChangeNotifier {
       void mergeHistory(ChatHistorySnapshot history) {
         for (final message in history.messages) {
           try {
-            final peer = recipientJid(message.peer);
+            final peer = MessagingRoom.validJid(message.peer, _domain)
+                ? message.peer
+                : recipientJid(message.peer);
             if (_messages.any(
               (m) =>
                   m.id == message.id &&
                   m.peer == peer &&
+                  m.senderJid == message.senderJid &&
                   m.outgoing == message.outgoing &&
                   m.body == message.body,
             )) {
@@ -1105,6 +1152,11 @@ class XmppService extends ChangeNotifier {
     unawaited(_recoverHistory());
     if (accountNumber != null) unawaited(refreshDirectory());
     unawaited(_syncPush());
+    unawaited(refreshRooms());
+    _roomTimer?.cancel();
+    _roomTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_foreground && online) unawaited(refreshRooms());
+    });
   }
 
   Future<void> _enableCarbons() async {
@@ -1133,6 +1185,10 @@ class XmppService extends ChangeNotifier {
 
   String recipientJid(String value) {
     final clean = value.trim().toLowerCase();
+    if (_rooms.containsKey(clean) &&
+        _rooms[clean]!.roleFor(_account).isNotEmpty) {
+      return clean;
+    }
     final number = accountNumber;
     if (number != null && !clean.contains('@') && !clean.contains('*')) {
       final matches = _directory.where((c) => c.extension == clean).toList();
@@ -1275,7 +1331,11 @@ class XmppService extends ChangeNotifier {
       _element(
         'message',
         _client,
-        attributes: {'id': id, 'type': 'chat', 'to': peer},
+        attributes: {
+          'id': id,
+          'type': isRoom(peer) ? 'groupchat' : 'chat',
+          'to': peer,
+        },
         children: [
           _element('body', _client, text: body),
           if (attachment != null)
@@ -1290,7 +1350,7 @@ class XmppService extends ChangeNotifier {
                 'sha256': attachment.sha256,
               },
             ),
-          _element('request', _receipts),
+          if (!isRoom(peer)) _element('request', _receipts),
           _element('markable', _markers),
           if (_shareTyping) _element('active', _chatStates),
           _element('origin-id', _sid, attributes: {'id': id}),
@@ -1306,6 +1366,7 @@ class XmppService extends ChangeNotifier {
         timestamp: DateTime.now(),
         status: ChatMessageStatus.sent,
         attachment: attachment,
+        senderJid: isRoom(peer) ? _account : null,
       ),
     );
     if (_shareTyping) _sentChatStates[peer] = 'active';
@@ -1340,6 +1401,7 @@ class XmppService extends ChangeNotifier {
       _archiveMessage(message, result);
       return;
     }
+    if (_roomEnvelope(message)) return;
     final carbon = message.childElements
         .where(
           (e) =>
@@ -1772,6 +1834,11 @@ class XmppService extends ChangeNotifier {
   }
 
   void _archiveMessage(XmlElement wrapper, XmlElement result) {
+    final room = _roomArchiveQueries[result.getAttribute('queryid')];
+    if (room != null) {
+      _roomArchive(wrapper, result, room);
+      return;
+    }
     final from = wrapper.getAttribute('from');
     if (from != null && _bare(from) != _account) return;
     final results = _archiveResults[result.getAttribute('queryid')];
@@ -1883,6 +1950,12 @@ class XmppService extends ChangeNotifier {
     _error = null;
     if (clearMessages) {
       _messages.clear();
+      _rooms.clear();
+      _roomOldest.clear();
+      _roomLatest.clear();
+      _roomHasOlder.clear();
+      _roomReadAnchors.clear();
+      _roomHistoryErrors.clear();
       _directory.clear();
       _directoryError = null;
       _events.clear();
@@ -1922,6 +1995,12 @@ class XmppService extends ChangeNotifier {
   }
 
   void _closeTransport() {
+    _roomTimer?.cancel();
+    _joinedRooms.clear();
+    _roomsBusy = false;
+    _roomHistoryBusy.clear();
+    _roomArchiveQueries.clear();
+    _roomArchiveCounts.clear();
     _typingIdle?.cancel();
     _typingPeer = null;
     for (final timer in _typingTimers.values) {
@@ -2001,6 +2080,12 @@ class XmppService extends ChangeNotifier {
     _wanted = false;
     _password = null;
     _messages.clear();
+    _rooms.clear();
+    _roomOldest.clear();
+    _roomLatest.clear();
+    _roomHasOlder.clear();
+    _roomReadAnchors.clear();
+    _roomHistoryErrors.clear();
     _closeTransport();
     super.dispose();
   }

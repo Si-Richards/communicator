@@ -9,6 +9,7 @@ import 'package:voicehost_softphone/models/chat_message.dart';
 import 'package:voicehost_softphone/models/chat_attachment.dart';
 import 'package:voicehost_softphone/models/provisioning.dart';
 import 'package:voicehost_softphone/models/messaging_presence.dart';
+import 'package:voicehost_softphone/models/messaging_room.dart';
 import 'package:voicehost_softphone/services/xmpp_service.dart';
 import 'package:voicehost_softphone/services/chat_history_repository.dart';
 
@@ -915,6 +916,178 @@ void main() {
     websocket: 'wss://ejabberd.voicehost.io/websocket',
   );
 
+  final roomJid = 'vh-${'a' * 32}@rooms.ejabberd.voicehost.io';
+  MessagingRoom testRoom() => MessagingRoom(
+    jid: roomJid,
+    name: 'Team',
+    revision: 1,
+    members: [
+      for (final ext in ['207', '208', '209'])
+        MessagingRoomMember(
+          jid: '10000*$ext@ejabberd.voicehost.io',
+          name: 'User $ext',
+          extension: ext,
+          role: ext == '207' ? 'owner' : 'member',
+        ),
+    ],
+  );
+  Future<XmppService> roomClient() async {
+    final service = client();
+    service.configureManaged(managed);
+    await _until(() => service.online);
+    service.replaceRooms([testRoom()]);
+    return service;
+  }
+
+  String group(String ext, String inner, {String id = 'msg'}) =>
+      '<message xmlns="jabber:client" type="groupchat" from="$roomJid/$ext" id="$id">$inner</message>';
+
+  test(
+    'room sends groupchat, merges own echo and counts canonical readers',
+    () async {
+      final service = await roomClient();
+      service.sendMessage(recipient: roomJid, body: 'Hello room');
+      final sent = service.messages.single;
+      receive(
+        service,
+        group(
+          '207',
+          '<body>Hello room</body><origin-id xmlns="urn:xmpp:sid:0" id="${sent.id}"/>'
+              '<stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="room-1"/>',
+          id: sent.id,
+        ),
+      );
+      await _until(() => sent.status == ChatMessageStatus.delivered);
+      expect(service.messages.length, 1);
+      expect(sent.archiveId, 'room-1');
+      receive(
+        service,
+        group(
+          '208',
+          '<displayed xmlns="urn:xmpp:chat-markers:0" id="room-1"/>',
+        ),
+      );
+      await _until(() => sent.readBy.length == 1);
+      receive(
+        service,
+        group(
+          '208',
+          '<displayed xmlns="urn:xmpp:chat-markers:0" id="room-1"/>',
+        ),
+      );
+      receive(
+        service,
+        group(
+          '209',
+          '<displayed xmlns="urn:xmpp:chat-markers:0" id="room-1"/>',
+        ),
+      );
+      await _until(() => sent.readBy.length == 2);
+      final wire = server.received
+          .where(
+            (m) =>
+                m.getElement('body', namespace: 'jabber:client')?.innerText ==
+                'Hello room',
+          )
+          .single;
+      expect(wire.getAttribute('type'), 'groupchat');
+      expect(
+        wire.getElement('request', namespace: 'urn:xmpp:receipts'),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'room MUCsub unwraps only matching trusted room wrappers and retains senders',
+    () async {
+      final service = await roomClient();
+      String wrapper(String from, String inner) =>
+          '<message xmlns="jabber:client" from="$from" to="10000*207@ejabberd.voicehost.io">'
+          '<event xmlns="http://jabber.org/protocol/pubsub#event"><items node="urn:xmpp:mucsub:nodes:messages"><item>$inner</item></items></event></message>';
+      final body =
+          '<body>Hello</body><stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="room-2"/>';
+      receive(
+        service,
+        wrapper('10000*208@ejabberd.voicehost.io', group('208', body)),
+      );
+      receive(
+        service,
+        wrapper(
+          roomJid,
+          group('208', body).replaceFirst(
+            '<message ',
+            '<message to="10000*207@ejabberd.voicehost.io" ',
+          ),
+        ),
+      );
+      await _until(() => service.messages.length == 1);
+      expect(
+        service.messages.single.senderJid,
+        '10000*208@ejabberd.voicehost.io',
+      );
+      receive(
+        service,
+        group(
+          '209',
+          '<body>Hello</body><stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="room-3"/>',
+        ),
+      );
+      await _until(() => service.messages.length == 2);
+      expect(service.messages.map((m) => m.key).toSet().length, 2);
+      service.markConversationDisplayed(roomJid, service.messages.last.key);
+      expect(service.messages.every((m) => m.displayed), isTrue);
+      service.replaceRooms([]);
+      expect(service.messages, isEmpty);
+      expect(() => service.recipientJid(roomJid), throwsArgumentError);
+    },
+  );
+
+  test(
+    'room history uses the room archive and recovers earlier members and markers',
+    () async {
+      server.roomArchive[roomJid] = [
+        group('208', '<body>Earlier history</body>'),
+        group('207', '<displayed xmlns="urn:xmpp:chat-markers:0" id="r-0"/>'),
+      ];
+      final service = await roomClient();
+      await _until(
+        () => service.messages.isNotEmpty && !service.roomHistoryBusy(roomJid),
+      );
+      expect(service.messages.single.body, 'Earlier history');
+      expect(service.messages.single.displayed, isTrue);
+      expect(service.roomHistoryError(roomJid), isNull);
+      expect(service.contactLabel(roomJid), 'Team');
+      receive(
+        service,
+        group(
+          '208',
+          '<composing xmlns="http://jabber.org/protocol/chatstates"/>',
+        ),
+      );
+      await _until(() => service.isTyping(roomJid));
+      expect(service.roomTypingLabel(roomJid), contains('User 208'));
+      expect(
+        () => service.replaceRooms([
+          MessagingRoom(
+            jid: roomJid,
+            name: 'Bad',
+            revision: 1,
+            members: [
+              const MessagingRoomMember(
+                jid: '20000*207@ejabberd.voicehost.io',
+                name: 'Wrong',
+                extension: '207',
+                role: 'owner',
+              ),
+            ],
+          ),
+        ]),
+        throwsFormatException,
+      );
+    },
+  );
+
   test(
     'canonical login merges own endpoint caches once and keeps source files',
     () async {
@@ -1319,6 +1492,7 @@ class _XmppServer {
   final authenticatedUsers = <String>[];
   final users = <String, WebSocket>{};
   final archive = <_Archived>[];
+  final roomArchive = <String, List<String>>{};
   final archiveQueries = <({String? before, String? after})>[];
   List<(String, String)> roster = [];
   final rosterAliases = <String, String>{};
@@ -1487,6 +1661,26 @@ class _XmppServer {
 
   void archiveResponse(WebSocket socket, XmlElement stanza, String user) {
     final query = stanza.getElement('query', namespace: 'urn:xmpp:mam:2')!;
+    final room = stanza.getAttribute('to') ?? '';
+    if (room.contains('@rooms.')) {
+      final queryId = query.getAttribute('queryid')!;
+      final rows = roomArchive[room] ?? const <String>[];
+      for (var i = 0; i < rows.length; i++) {
+        _sendFixture(
+          socket,
+          '<message xmlns="jabber:client" from="$room"><result xmlns="urn:xmpp:mam:2" queryid="$queryId" id="r-$i">'
+          '<forwarded xmlns="urn:xmpp:forward:0"><delay xmlns="urn:xmpp:delay" stamp="2026-10-01T12:00:0${i}Z"/>${rows[i]}</forwarded></result></message>',
+        );
+      }
+      _sendFixture(
+        socket,
+        '<iq xmlns="jabber:client" from="$room" type="result" id="${stanza.getAttribute('id')}">'
+        '<fin xmlns="urn:xmpp:mam:2" complete="true"><set xmlns="http://jabber.org/protocol/rsm">'
+        '${rows.isEmpty ? '' : '<first>r-0</first><last>r-${rows.length - 1}</last>'}</set></fin></iq>',
+      );
+      return;
+    }
+
     final set = query.getElement(
       'set',
       namespace: 'http://jabber.org/protocol/rsm',

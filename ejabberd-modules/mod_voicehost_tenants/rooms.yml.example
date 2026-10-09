@@ -1,0 +1,30 @@
+# Merge into existing sections. Retain current mod_muc options and any other hosts.
+modules:
+  mod_muc:
+    hosts:
+      - "conference.@HOST@"
+      - "rooms.@HOST@"
+  mod_voicehost_tenants: {}
+
+# Append these to the existing dedicated provisioner's commands.
+# Retain lifecycle, identity, history and push bridge commands already configured.
+api_permissions:
+  "VoiceHost provisioning lifecycle":
+    from: mod_http_api
+    who:
+      acl: voicehost_provisioner
+    what:
+      - register
+      - check_account
+      - check_password
+      - get_ban_details
+      - ban_account
+      - unban_account
+      - voicehost_set_identity
+      - voicehost_migrate_history
+      - voicehost_push_events
+      - voicehost_ack_push
+      - voicehost_room_list
+      - voicehost_room_create
+      - voicehost_room_manage
+      - voicehost_room_repair

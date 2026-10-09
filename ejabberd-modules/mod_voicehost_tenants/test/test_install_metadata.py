@@ -98,7 +98,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.package = self.root / "package"
         (self.package / "src").mkdir(parents=True)
-        for filename in ("README.md", "COPYING", "mod_voicehost_tenants.spec", "src/mod_voicehost_tenants.erl"):
+        for filename in ("README.md", "COPYING", "mod_voicehost_tenants.spec", "src/mod_voicehost_tenants.erl", "src/voicehost_rooms.erl"):
             (self.package / filename).write_text("fixture\n")
         shutil.copyfile(Path(__file__).resolve().parents[1] / "install.sh", self.package / "install.sh")
         self.bin = self.root / "bin"
@@ -122,7 +122,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.log.read_text().splitlines(), ["status", "module_install mod_voicehost_tenants"])
         installed = self.contrib / "sources" / "mod_voicehost_tenants"
         files = sorted(str(p.relative_to(installed)) for p in installed.rglob("*") if p.is_file())
-        self.assertEqual(files, ["COPYING", "README.md", "mod_voicehost_tenants.spec", "src/mod_voicehost_tenants.erl"])
+        self.assertEqual(files, ["COPYING", "README.md", "mod_voicehost_tenants.spec", "src/mod_voicehost_tenants.erl", "src/voicehost_rooms.erl"])
 
     def test_upgrade_uses_supported_upgrade_command(self):
         result = self.run_installer("--upgrade")

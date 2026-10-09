@@ -54,6 +54,18 @@ def eligible_event(store, conn, event):
     target = conn.execute("SELECT * FROM messaging_push_devices WHERE node=?", (event["node"],)).fetchone()
     if not target or target["jid"] != event["jid"] or active_identity(store, conn, target["device_id"]) != target["jid"]:
         return None
+    from .messaging_rooms import is_room, check_room
+    if is_room(event["peer"]):
+        from .config import settings
+        from .ejabberd import EjabberdError
+        from fastapi import HTTPException
+        try:
+            check_room(settings, event["jid"], event["peer"])
+        except HTTPException as exc:
+            if exc.status_code == 503:
+                raise EjabberdError("Room push eligibility is temporarily unavailable") from None
+            return None
+        return target
     try:
         if canonical_jid(event["peer"]) != event["peer"]:
             return None

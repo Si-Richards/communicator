@@ -115,7 +115,7 @@ class Attachments:
         with self.store._lock, self.store._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             owner = identity(self.store, conn, device["id"], device["_access_token"])
-            check_peer(self.store, conn, owner, peer)
+            self.check_conversation(conn, owner, peer)
             self.purge(conn, now)
             account = identity_for_jid(owner)[0] + "@" + owner.split("@")[1]
             used = conn.execute("SELECT COALESCE(SUM(size),0) FROM messaging_attachments WHERE account=?", (account,)).fetchone()[0]
@@ -137,7 +137,7 @@ class Attachments:
         with self.store._lock, self.store._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             owner = identity(self.store, conn, device["id"], device["_access_token"])
-            check_peer(self.store, conn, owner, peer)
+            self.check_conversation(conn, owner, peer)
             row = conn.execute("SELECT * FROM messaging_attachments WHERE id=?", (id,)).fetchone()
             if not row or row["owner"] != owner or row["peer"] != peer or row["status"] != "uploading":
                 raise denied()
@@ -159,6 +159,20 @@ class Attachments:
             actor = identity(self.store, conn, device["id"], device["_access_token"])
             row = conn.execute("SELECT * FROM messaging_attachments WHERE id=?", (id,)).fetchone()
             if (not row or row["status"] != "ready" or row["expires"] <= int(time.time())
-                    or {row["owner"], row["peer"]} != {actor, peer} or not path.is_file()):
+                    or not path.is_file()):
+                raise denied()
+            from .messaging_rooms import is_room
+            if is_room(row["peer"]):
+                if peer != row["peer"]:
+                    raise denied()
+                self.check_conversation(conn, actor, peer)
+            elif {row["owner"], row["peer"]} != {actor, peer}:
                 raise denied()
             return path, dict(row)
+
+    def check_conversation(self, conn, owner, peer):
+        from .messaging_rooms import check_room, is_room
+        if is_room(peer):
+            check_room(self.settings, owner, peer)
+        else:
+            check_peer(self.store, conn, owner, peer)

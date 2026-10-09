@@ -135,6 +135,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         lifecycle == AppLifecycleState.detached) {
       _messaging.pause();
     }
+    _messaging.roomLoader = widget.provisioning.loadMessagingRooms;
     widget.provisioning.addListener(_syncMessagingAccess);
     _syncMessagingAccess();
     widget.mobileCalls.addListener(_handleNotificationNavigation);
@@ -299,6 +300,17 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         return;
       }
       _syncMessagingAccess();
+      if (tap.peerJid.contains('@rooms.')) {
+        // A notification may launch before the socket finishes connecting.
+        // Fetch authenticated membership independently of XMPP online state.
+        final rooms = await provisioning.loadMessagingRooms();
+        if (!mounted ||
+            !provisioning.canUseApp ||
+            provisioning.configuration?.messaging?.jid != tap.ownerJid) {
+          return;
+        }
+        _messaging.replaceRooms(rooms);
+      }
       final peer = _messaging.recipientJid(tap.peerJid);
       _pendingMessageTap = null;
       if (!_openedNotificationIds.add(tap.eventId)) {
@@ -500,8 +512,10 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                 Text(
                   'App locked',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium
-                      ?.copyWith(color: navy, fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: navy,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -509,8 +523,9 @@ class _ProvisioningLockedScreen extends StatelessWidget {
                       ? 'This device needs to be re-activated by your administrator.'
                       : 'This app is locked. Please contact your administrator.',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge
-                      ?.copyWith(color: navy, height: 1.45),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyLarge?.copyWith(color: navy, height: 1.45),
                 ),
                 if (provisioning.credentialsInvalid) ...[
                   const SizedBox(height: 24),

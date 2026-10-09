@@ -25,7 +25,8 @@ class EjabberdClient:
 
     def _request(self, command, **arguments):
         try:
-            response = self.client.post(f"{self.url}/{command}", json=arguments)
+            response = self.client.post(f"{self.url}/{command}", json=arguments,
+                                        timeout=15.0 if command.startswith("voicehost_room_") else 3.0)
             response.raise_for_status()
             result = response.json()
         except httpx.HTTPStatusError as exc:

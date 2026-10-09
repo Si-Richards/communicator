@@ -8,6 +8,7 @@ import '../controllers/phone_controller.dart';
 import '../core/app_config.dart';
 import '../models/provisioning.dart';
 import '../models/chat_attachment.dart';
+import '../models/messaging_room.dart';
 import '../repositories/provisioning_repository.dart';
 import '../repositories/settings_repository.dart';
 import '../services/mobile_call_coordinator.dart';
@@ -254,8 +255,8 @@ class ProvisioningController extends ChangeNotifier
         }
 
         final expiresAt = DateTime.now().toUtc().add(
-              Duration(seconds: result.expiresIn),
-            );
+          Duration(seconds: result.expiresIn),
+        );
         _state = ProvisionedDeviceState(
           deviceId: result.deviceId,
           accessToken: result.accessToken,
@@ -327,9 +328,7 @@ class ProvisioningController extends ChangeNotifier
         'changed=${result.configurationChanged}',
       );
 
-      var updated = _state!.copyWith(
-        deviceState: result.state,
-      );
+      var updated = _state!.copyWith(deviceState: result.state);
 
       // Device state is authoritative and must be applied immediately.
       // In particular, a transition from locked -> active must not depend on
@@ -451,9 +450,7 @@ class ProvisioningController extends ChangeNotifier
     }
   }
 
-  Future<void> removeManagedConfiguration({
-    bool notifyServer = true,
-  }) async {
+  Future<void> removeManagedConfiguration({bool notifyServer = true}) async {
     if (_busy) return;
     _setBusy(true, status: 'Removing managed configuration…');
     final state = _state;
@@ -497,7 +494,7 @@ class ProvisioningController extends ChangeNotifier
   ) async {
     if (_busy || !attachmentsAvailable || _disposed) {
       throw StateError(
-        'Messaging attachments are temporarily unavailable. Please retry.',
+        'Messaging management is temporarily unavailable. Please retry.',
       );
     }
     final device = _state!.deviceId;
@@ -526,6 +523,25 @@ class ProvisioningController extends ChangeNotifier
       if (!_disposed) _setBusy(false);
     }
   }
+
+  Future<List<MessagingRoom>> loadMessagingRooms() => _attachmentRequest(
+    (service, token) => service.messagingRooms(
+      accessToken: token,
+      owner: configuration!.messaging!.jid,
+    ),
+  );
+
+  Future<List<MessagingRoom>> changeMessagingRoom({
+    String? id,
+    required Map<String, dynamic> change,
+  }) => _attachmentRequest(
+    (service, token) => service.messagingRooms(
+      accessToken: token,
+      owner: configuration!.messaging!.jid,
+      id: id,
+      change: change,
+    ),
+  );
 
   Future<ChatAttachment> uploadMessagingAttachment({
     required String peer,
@@ -637,8 +653,8 @@ class ProvisioningController extends ChangeNotifier
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       accessTokenExpiresAt: DateTime.now().toUtc().add(
-            Duration(seconds: result.expiresIn),
-          ),
+        Duration(seconds: result.expiresIn),
+      ),
     );
     _state = updated;
     await _repository.save(updated);

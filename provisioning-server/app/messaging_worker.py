@@ -140,8 +140,11 @@ def main():
             if time.monotonic() >= next_cleanup:
                 try:
                     Attachments(store, settings).cleanup()
+                    client.call("voicehost_room_repair", host=settings.ejabberd_host)
                 except OSError:
                     log.warning("Attachment cleanup failed; check storage permissions.")
+                except EjabberdError as exc:
+                    log.warning("Room synchronization needs retry: %s", exc)
                 next_cleanup = time.monotonic() + 60
             stop.wait(5)
     finally:

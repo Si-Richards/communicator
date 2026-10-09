@@ -28,7 +28,14 @@ def dispatch_jobs(store, apns, now=None, limit=50):
             event = conn.execute("SELECT * FROM messaging_push_jobs WHERE event_id=?", (job[0],)).fetchone()
             if not event or event["status"] != "pending" or event["next_retry"] > now:
                 continue
-            target = eligible_event(store, conn, event)
+            if event["created"] + MAX_AGE <= now:
+                conn.execute("UPDATE messaging_push_jobs SET status='discarded' WHERE event_id=?", (job[0],))
+                continue
+            try:
+                target = eligible_event(store, conn, event)
+            except EjabberdError:
+                conn.execute("UPDATE messaging_push_jobs SET next_retry=? WHERE event_id=?", (now + 15, job[0]))
+                continue
             if target is None or event["created"] + MAX_AGE <= now:
                 conn.execute("UPDATE messaging_push_jobs SET status='discarded' WHERE event_id=?", (job[0],))
                 continue

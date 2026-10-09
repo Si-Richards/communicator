@@ -5,14 +5,11 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_attachment.dart';
+import '../models/messaging_room.dart';
 import '../models/provisioning.dart';
 
 class ProvisioningException implements Exception {
-  const ProvisioningException(
-    this.message, {
-    this.statusCode,
-    this.code,
-  });
+  const ProvisioningException(this.message, {this.statusCode, this.code});
 
   final String message;
   final int? statusCode;
@@ -23,11 +20,9 @@ class ProvisioningException implements Exception {
 }
 
 class ProvisioningService {
-  ProvisioningService({
-    required String baseUrl,
-    http.Client? client,
-  })  : _baseUrl = baseUrl.trim(),
-        _client = client ?? http.Client();
+  ProvisioningService({required String baseUrl, http.Client? client})
+    : _baseUrl = baseUrl.trim(),
+      _client = client ?? http.Client();
 
   final String _baseUrl;
   final http.Client _client;
@@ -36,6 +31,28 @@ class ProvisioningService {
     var root = _baseUrl.replaceFirst(RegExp(r'/+$'), '');
     if (!root.endsWith('/api/v1')) root = '$root/api/v1';
     return Uri.parse('$root$path');
+  }
+
+  Future<List<MessagingRoom>> messagingRooms({
+    required String accessToken,
+    required String owner,
+    String? id,
+    Map<String, dynamic>? change,
+  }) async {
+    final uri = _uri('/device/messaging/rooms${id == null ? '' : '/$id'}');
+    final response =
+        await (change == null
+                ? _client.get(uri, headers: _authHeaders(accessToken))
+                : _client.post(
+                    uri,
+                    headers: _authHeaders(accessToken),
+                    body: jsonEncode(change),
+                  ))
+            .timeout(const Duration(seconds: 25));
+    final json = _decode(response);
+    if (response.statusCode != 200 && response.statusCode != 201)
+      throw _exception(response, json);
+    return MessagingRoom.parseList(json, owner);
   }
 
   Future<ActivationResult> activate({
@@ -59,8 +76,7 @@ class ProvisioningService {
       throw _exception(response, json);
     }
 
-    final configurationVersion =
-        _int(json['configuration_version']) ?? 0;
+    final configurationVersion = _int(json['configuration_version']) ?? 0;
     final configJson = _map(json['configuration']);
     return ActivationResult(
       deviceId: json['device_id']?.toString() ?? '',
@@ -122,10 +138,7 @@ class ProvisioningService {
     required String accessToken,
   }) async {
     final response = await _client
-        .get(
-          _uri('/device/configuration'),
-          headers: _authHeaders(accessToken),
-        )
+        .get(_uri('/device/configuration'), headers: _authHeaders(accessToken))
         .timeout(const Duration(seconds: 15));
     final json = _decode(response);
     if (response.statusCode != 200) throw _exception(response, json);
@@ -290,15 +303,15 @@ class ProvisioningService {
   }
 
   Map<String, String> get _jsonHeaders => const {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      };
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  };
 
   Map<String, String> _authHeaders(String accessToken) => {
-        ..._jsonHeaders,
-        'Authorization': 'Bearer $accessToken',
-      };
+    ..._jsonHeaders,
+    'Authorization': 'Bearer $accessToken',
+  };
 
   Map<String, dynamic> _decode(http.Response response) {
     if (response.body.trim().isEmpty) return const {};

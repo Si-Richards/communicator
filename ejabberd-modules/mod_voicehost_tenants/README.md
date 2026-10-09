@@ -1,4 +1,6 @@
-# VoiceHost account isolation and extension directory
+# VoiceHost account isolation, extension directory and private rooms
+
+For the current room update, follow the [private rooms rollout guide](../../provisioning-server/MESSAGING-ROOMS.md) **before** the older feature-specific instructions below.
 
 ## Directory and presence repair
 
@@ -59,13 +61,13 @@ in the requester's account. The oldest active linked phone supplies the display 
 
 Messages, presence/subscriptions and direct profile/last-activity IQs must stay
 within one account. Unknown identities, disabled identities, external domains
-and service subdomains are denied. Server control IQs and each user's own archive
+and unmanaged service subdomains are denied. Server control IQs and each user's own archive
 remain available. Global discovery is restricted. Old personal roster entries
 cannot expose another account. Offline deliveries are checked again.
 
-**This first stage denies MUC rooms and external federation for these users.**
-Guest conversations and approved cross-account rooms require the next stage's
-explicit membership policy; enabling room defaults is not an exception here.
+Private rooms on `rooms.@HOST@` are allowed only with explicit provisioned
+account membership. Unmanaged MUC rooms, external federation and cross-account
+guests remain denied. See the room guide for service configuration and roles.
 Legacy/manual accounts outside the provisioned registry have no messaging access.
 The administrator/API account can still use its HTTP/console commands.
 
@@ -123,6 +125,12 @@ api_permissions:
       - unban_account
       - voicehost_set_identity
       - voicehost_migrate_history
+      - voicehost_push_events
+      - voicehost_ack_push
+      - voicehost_room_list
+      - voicehost_room_create
+      - voicehost_room_manage
+      - voicehost_room_repair
 ```
 
 `store_current_id: false` computes roster versions from the generated roster, so

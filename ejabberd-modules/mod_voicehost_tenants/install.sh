@@ -23,6 +23,7 @@ new_contrib=0; [[ -d "$contrib" ]] || new_contrib=1
 new_sources=0; [[ -d "$contrib/sources" ]] || new_sources=1
 mkdir -p "$package/src"
 cp "$root/src/mod_voicehost_tenants.erl" "$package/src/"
+cp "$root/src/voicehost_rooms.erl" "$package/src/"
 cp "$root/mod_voicehost_tenants.spec" "$root/README.md" "$root/COPYING" "$package/"
 if [[ $(id -u) = 0 ]]; then
   if [[ "$new_contrib" = 1 ]]; then chown "$uid:$gid" "$contrib"; fi
