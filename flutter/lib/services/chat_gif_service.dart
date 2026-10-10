@@ -1,23 +1,27 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-import '../models/chat_attachment.dart';
+import '../models/chat_gif_reference.dart';
 import 'attachment_bytes.dart';
 
 class ChatGif {
-  const ChatGif({required this.id, required this.title, required this.url});
+  const ChatGif({
+    required this.id,
+    required this.title,
+    required this.url,
+    required this.previewUrl,
+  });
   final String id, title;
-  final Uri url;
+  final Uri url, previewUrl;
+  ChatGifReference get reference => ChatGifReference(id);
 }
 
-/// Provider content is copied to the authenticated attachment service on send.
-/// Recipients never load tracking URLs from a chat message.
+/// GIPHY media loads directly on the device; no provider bytes/URLs are stored.
 class ChatGifService {
   ChatGifService({http.Client? client, this.apiKey = configuredKey})
     : _client = client ?? http.Client();
-  static const configuredKey = String.fromEnvironment('TENOR_API_KEY');
+  static const configuredKey = String.fromEnvironment('GIPHY_API_KEY');
   final String apiKey;
   final http.Client _client;
   bool get available => apiKey.trim().isNotEmpty;
@@ -25,109 +29,105 @@ class ChatGifService {
 
   static bool isGif(List<int> bytes) =>
       bytes.length >= 6 &&
-      (ascii.decode(bytes.take(6).toList(), allowInvalid: true) == 'GIF87a' ||
-          ascii.decode(bytes.take(6).toList(), allowInvalid: true) == 'GIF89a');
+      [
+        'GIF87a',
+        'GIF89a',
+      ].contains(ascii.decode(bytes.take(6).toList(), allowInvalid: true));
 
-  static Uri? _mediaUri(Object? value) {
-    final uri = Uri.tryParse(value?.toString() ?? '');
+  static Uri? mediaUri(Object? value) {
+    if (value is! String) return null;
+    final uri = Uri.tryParse(value);
     return uri != null &&
             uri.scheme == 'https' &&
             uri.userInfo.isEmpty &&
             !uri.hasPort &&
-            ['media.tenor.com', 'media1.tenor.com'].contains(uri.host)
+            RegExp(r'^media[0-9]*\.giphy\.com$').hasMatch(uri.host)
         ? uri
         : null;
   }
 
-  Future<List<ChatGif>> search(String query) async {
+  ChatGif? _parse(Object? item) {
+    if (item is! Map ||
+        !ChatGifReference.validId(item['id']) ||
+        item['images'] is! Map) {
+      return null;
+    }
+    final images = item['images'] as Map;
+    final rendition = images['fixed_height'];
+    if (rendition is! Map) return null;
+    final url = mediaUri(rendition['url']);
+    final preview = images['fixed_height_small'];
+    final previewUrl = preview is Map ? mediaUri(preview['url']) : null;
+    if (url == null) return null;
+    return ChatGif(
+      id: item['id'],
+      title: item['title'] is String ? item['title'] : 'GIF',
+      url: url,
+      previewUrl: previewUrl ?? url,
+    );
+  }
+
+  Future<Map<String, dynamic>> _request(
+    String path, {
+    Map<String, String> parameters = const {},
+  }) async {
     if (!available) throw StateError('GIF search is not configured.');
-    final parameters = {
-      'key': apiKey,
-      'client_key': 'voicehost_communicator',
-      'limit': '24',
-      'media_filter': 'tinygif',
-      'contentfilter': 'high',
-      'locale': 'en_GB',
-      'country': 'GB',
-      if (query.trim().isNotEmpty) 'q': query.trim(),
-    };
     final response = await _client
         .send(
           http.Request(
             'GET',
-            Uri.https(
-              'tenor.googleapis.com',
-              '/v2/${query.trim().isEmpty ? 'featured' : 'search'}',
-              parameters,
-            ),
+            Uri.https('api.giphy.com', path, {
+              'api_key': apiKey,
+              'rating': 'g',
+              ...parameters,
+            }),
           )..followRedirects = false,
         )
         .timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200) throw StateError('GIF search failed.');
+    if (response.statusCode == 429) {
+      throw StateError('GIPHY request limit reached. Please retry later.');
+    }
+    if (response.statusCode != 200) throw StateError('GIPHY request failed.');
     final data = jsonDecode(
       utf8.decode(
         await readAttachmentBytes(response.stream, maxBytes: 1024 * 1024),
       ),
     );
-    if (data is! Map || data['results'] is! List) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Invalid GIPHY response.');
+    }
+    return data;
+  }
+
+  Future<List<ChatGif>> search(String query) async {
+    if (query.length > 50) throw ArgumentError('Search up to 50 characters.');
+    final data = await _request(
+      '/v1/gifs/${query.trim().isEmpty ? 'trending' : 'search'}',
+      parameters: {
+        'limit': '24',
+        'lang': 'en',
+        if (query.trim().isNotEmpty) 'q': query,
+      },
+    );
+    if (data['data'] is! List) {
       throw const FormatException('Invalid GIF search.');
     }
-    final results = <ChatGif>[];
-    for (final item in (data['results'] as List).take(24)) {
-      if (item is! Map || item['media_formats'] is! Map) continue;
-      final format = item['media_formats']['tinygif'];
-      if (format is! Map || item['id'] is! String) continue;
-      final url = _mediaUri(format['url']);
-      final size = format['size'];
-      if (url == null ||
-          size is! int ||
-          size < 1 ||
-          size > ChatAttachment.maxBytes) {
-        continue;
-      }
-      results.add(
-        ChatGif(
-          id: item['id'],
-          title: item['content_description'] is String
-              ? item['content_description']
-              : 'GIF',
-          url: url,
-        ),
-      );
-    }
-    return results;
+    return (data['data'] as List)
+        .take(24)
+        .map(_parse)
+        .whereType<ChatGif>()
+        .toList();
   }
 
-  Future<void> registerShare(ChatGif gif) async {
-    if (!available) return;
-    try {
-      await _client
-          .get(
-            Uri.https('tenor.googleapis.com', '/v2/registershare', {
-              'key': apiKey,
-              'client_key': 'voicehost_communicator',
-              'id': gif.id,
-            }),
-          )
-          .timeout(const Duration(seconds: 5));
-    } catch (_) {
-      /* Provider statistics must never interrupt message delivery. */
+  Future<ChatGif> resolve(ChatGifReference reference) async {
+    if (!ChatGifReference.validId(reference.id)) {
+      throw const FormatException('Invalid GIF identifier.');
     }
-  }
-
-  Future<Uint8List> download(ChatGif gif) async {
-    if (_mediaUri(gif.url.toString()) == null) {
-      throw const FormatException('Invalid GIF URL.');
+    final data = await _request('/v1/gifs/${reference.id}');
+    final gif = _parse(data['data']);
+    if (gif == null || gif.id != reference.id) {
+      throw StateError('This GIF is no longer available.');
     }
-    final response = await _client
-        .send(http.Request('GET', gif.url)..followRedirects = false)
-        .timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200 ||
-        (response.contentLength ?? 0) > ChatAttachment.maxBytes) {
-      throw StateError('GIF download failed.');
-    }
-    final bytes = await readAttachmentBytes(response.stream);
-    if (!isGif(bytes)) throw const FormatException('This file is not a GIF.');
-    return bytes;
+    return gif;
   }
 }

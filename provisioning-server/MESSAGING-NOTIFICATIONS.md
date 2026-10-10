@@ -270,6 +270,33 @@ again when it next opens. `DeviceTokenNotForTopic`, `BadTopic` or provider-token
 errors require checking the key, team, key ID, bundle ID and signed environment.
 Do not switch to the other APNs environment as a fallback for a rejected token.
 
+## Room multicast delivery on ejabberd 26.09
+
+The bridge handles both direct chats and verified private room messages. ejabberd
+26.09 unwraps offline MUCsub multicast packets before invoking the push hook; the
+inner groupchat stanza has no `to` address. The module now records push-node owners
+from authenticated c2s push-enable requests in the durable `voicehost_push_owner`
+Mnesia table, restores that recipient and applies the existing enabled identity,
+tenant and current room-membership checks. Push nodes cannot be reassigned by a
+different identity. Strict retained MUCsub wrappers are also accepted. Stable room
+stanza IDs deduplicate normal and multicast paths, and sender echoes do not alert.
+
+For a deployment where direct APNs and rooms already work, pull this branch,
+upgrade `mod_voicehost_tenants` using its install script with `--upgrade`, and
+restart ejabberd. Preserve existing Mnesia data. No new API permission, worker
+configuration or APNs credential is needed. **Open/reconnect messaging on each
+phone after the upgrade**: its next push-enable request populates the owner table;
+previously sleeping registrations cannot recover a missing room recipient until
+that happens. See the [app update guide](../flutter/MESSAGING.md) for one-line
+rollout commands. The current worker already rechecks room eligibility before
+sending; if running an older worker, apply the [room rollout](MESSAGING-ROOMS.md).
+
+Test with another room member sending while the recipient phone is locked, then
+remove that recipient and check subsequent alerts are denied. Room alert text stays
+generic; the room's name and history are resolved after a refreshed provisioning
+check when opening it. The app's unread/navigation counts come from loaded/cached
+messages, and do not set an APNs `badge` or claim a server-wide unread total.
+
 ## Delivery limits and rollback
 
 The ejabberd queue stores metadata only, is capped at 50,000 events, and expires
@@ -306,3 +333,4 @@ delivery and the iOS native build require your credentials/signing environment.
 - [XEP-0357 push notifications](https://xmpp.org/extensions/xep-0357.html)
 - [ejabberd mod_push](https://docs.ejabberd.im/admin/configuration/modules/#mod-push)
 - [Apple APNs request format](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)
+

@@ -1,5 +1,6 @@
 import 'chat_attachment.dart';
 import 'chat_text_format.dart';
+import 'chat_gif_reference.dart';
 
 enum ChatMessageStatus { received, sent, delivered, read, failed }
 
@@ -42,6 +43,7 @@ class ChatMessage {
     this.markable = false,
     this.displayed = false,
     this.attachment,
+    this.gif,
     this.senderJid,
     this.formatting = const [],
     Set<String>? readBy,
@@ -57,6 +59,7 @@ class ChatMessage {
   final bool outgoing;
   final DateTime timestamp;
   final ChatAttachment? attachment;
+  final ChatGifReference? gif;
   ChatMessageStatus status;
   String? archiveId;
   bool markable;
@@ -92,6 +95,7 @@ class ChatMessage {
     'markable': markable,
     'displayed': displayed,
     if (attachment != null) 'attachment': attachment!.toJson(),
+    if (gif != null) 'giphy_id': gif!.id,
   };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -109,6 +113,7 @@ class ChatMessage {
     markable: json['markable'] == true,
     displayed: json['displayed'] == true,
     attachment: ChatAttachment.tryFromJson(json['attachment']),
+    gif: ChatGifReference.parse(json['giphy_id']),
     senderJid: json['sender_jid'] as String?,
     readBy: (json['read_by'] as List?)?.whereType<String>().toSet(),
   );

@@ -63,6 +63,52 @@ cases() ->
        ?assertEqual(1,length(mod_voicehost_tenants:push_events(?H,100)))
      end),
      ?_test(begin
+       %% Reproduce mod_push's unwrapped multicast packet: no inner recipient.
+       Node= <<"vh-",(binary:copy(<<"b">>,64))/binary>>,
+       IQ=#iq{from=jid:make(?H),to=jid:make(?H),sub_els=[#pubsub{publish=#ps_publish{node=Node}}]},
+       From=jid:replace_resource(r(),<<"213">>),
+       SID=#stanza_id{by=r(),id= <<"room-stable-2">>},
+       Inner=#message{type=groupchat,from=From,to=undefined,id= <<"client-m2">>,
+                      body=[#text{data= <<"Private room text">>}],sub_els=[SID]},
+       Before=length(mod_voicehost_tenants:push_events(?H,100)),
+       ?assertEqual(drop,mod_voicehost_tenants:push_send(IQ,Inner)),
+       ?assertEqual(Before,length(mod_voicehost_tenants:push_events(?H,100))),
+       Enable=#iq{type=set,from=j(?B),to=j(?B),
+                   sub_els=[#push_enable{jid=jid:make(?H),node=Node}]},
+       ?assertEqual({Enable,#{jid=>j(?B)}},mod_voicehost_tenants:user_send({Enable,#{jid=>j(?B)}})),
+       ?assertEqual(drop,mod_voicehost_tenants:push_send(IQ,Inner)),
+       Events=mod_voicehost_tenants:push_events(?H,100),
+       ?assertEqual(Before+1,length(Events)),
+       [{_,Node,Owner,Peer,_}]=[E || E={_,N,_,_,_} <- Events,N=:=Node],
+       ?assertEqual(jid:encode(j(?B)),Owner),?assertEqual(jid:encode(r()),Peer),
+       %% Strict wrapper fallback must deduplicate against the same room SID.
+       Wrapper=#message{type=normal,from=r(),to=j(?B),sub_els=[#ps_event{
+                 items=#ps_items{node= <<"urn:xmpp:mucsub:nodes:messages">>,
+                    items=[#ps_item{sub_els=[Inner]}]}}]},
+       ?assertEqual(drop,mod_voicehost_tenants:push_send(IQ,Wrapper)),
+       ?assertEqual(Before+1,length(mod_voicehost_tenants:push_events(?H,100))),
+       %% A different user cannot rebind or disable another device's node.
+       OtherEnable=Enable#iq{from=j(?A),to=j(?A)},
+       mod_voicehost_tenants:user_send({OtherEnable,#{jid=>j(?A)}}),
+       Disable=#iq{type=set,from=j(?A),to=j(?A),
+                   sub_els=[#push_disable{jid=jid:make(?H),node=Node}]},
+       mod_voicehost_tenants:user_send({Disable,#{jid=>j(?A)}}),
+       Next=Inner#message{id= <<"client-m3">>,sub_els=[SID#stanza_id{id= <<"room-stable-3">>}]},
+       mod_voicehost_tenants:push_send(IQ,Next),
+       ?assertEqual(Before+2,length(mod_voicehost_tenants:push_events(?H,100))),
+       %% Suppress sender echoes, marker-only packets and removed identities.
+       mod_voicehost_tenants:push_send(IQ,Next#message{from=jid:replace_resource(r(),<<"230">>)}),
+       mod_voicehost_tenants:push_send(IQ,Next#message{body=[]}),
+       0=mod_voicehost_tenants:set_identity(?B,?H,<<"10000">>,<<"230">>,<<"230">>,<<"230">>,0),
+       mod_voicehost_tenants:push_send(IQ,Next#message{id= <<"disabled">>,sub_els=[]}),
+       ?assertEqual(Before+2,length(mod_voicehost_tenants:push_events(?H,100))),
+       0=mod_voicehost_tenants:set_identity(?B,?H,<<"10000">>,<<"230">>,<<"230">>,<<"230">>,1),
+       OwnDisable=Disable#iq{from=j(?B),to=j(?B)},
+       mod_voicehost_tenants:user_send({OwnDisable,#{jid=>j(?B)}}),
+       mod_voicehost_tenants:push_send(IQ,Next#message{id= <<"after-disable">>,sub_els=[]}),
+       ?assertEqual(Before+2,length(mod_voicehost_tenants:push_events(?H,100)))
+     end),
+     ?_test(begin
        persistent_term:put(voicehost_native_fail,true),
        ?assertEqual(2,change(?A,<<"remove">>,?C,<<>>,3)),
        ?assertNot(voicehost_rooms:member(j(?A),r())),
@@ -84,3 +130,4 @@ cases() ->
      end),
      ?_assertEqual(0,change(?B,<<"close">>,<<>>,<<>>,6)),
      ?_assertEqual([],voicehost_rooms:list(?B,?H))].
+

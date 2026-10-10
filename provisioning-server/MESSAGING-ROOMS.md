@@ -26,7 +26,7 @@ interrupted changes every minute; retry creation with the same operation ID.
 Users join `vh-<32 hex digits>@rooms.ejabberd.voicehost.io` under their numeric
 extension. Friendly room/sender labels come from provisioned identity data.
 Membership refreshes every 30 seconds while messaging is online in the foreground;
-Refresh in Rooms checks immediately. MUC subscriptions deliver across a user's
+Refresh rooms in Conversations checks immediately. MUC subscriptions deliver across a user's
 resources and support the existing per-device APNs path when a session is offline.
 Room APNs eligibility is checked again before delivery and on notification opening.
 Removal, leave, closure or identity disable denies subsequent messages, archive
@@ -126,7 +126,7 @@ The native PushKit template is unchanged by this room update.
 
 ## Acceptance checks
 
-1. Update two users in account 10000. In Messages → Rooms → Create, enter a name
+1. Update two users in account 10000. In Messages → Conversations → Create, enter a name
    and select account users. Check room and sender names, numeric extensions and
    dates/times. Send text, a camera photo and a file; open them on the other phone.
 2. Check typing and "Read by N" while the other user views the message. A second
@@ -163,3 +163,4 @@ provisioning HTTP service and controller passed isolated Dart type checks with
 platform/package API stubs. Ten isolated call-startup checks passed. Full Flutter
 analysis/tests, iOS build/APNs and live ejabberd integration remain deployment
 checks on the Mac/server; no live server changes were performed here.
+

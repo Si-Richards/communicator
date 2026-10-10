@@ -9,6 +9,7 @@ import 'package:voicehost_softphone/models/chat_message.dart';
 import 'package:voicehost_softphone/models/chat_text_format.dart';
 import 'package:voicehost_softphone/models/chat_reaction.dart';
 import 'package:voicehost_softphone/models/chat_attachment.dart';
+import 'package:voicehost_softphone/models/chat_gif_reference.dart';
 import 'package:voicehost_softphone/models/provisioning.dart';
 import 'package:voicehost_softphone/models/messaging_presence.dart';
 import 'package:voicehost_softphone/models/messaging_room.dart';
@@ -109,57 +110,126 @@ void main() {
     },
   );
 
-  test('reaction forgery and delayed replay cannot change current reactions', () async {
-    final alice = client();
-    await login(alice, '10000*207');
-    alice.sendMessage(recipient: '208', body: 'Hello');
-    final m = alice.messages.single;
-    String reaction(String actor, String emoji, {String delay = ''}) =>
-        '<message xmlns="jabber:client" from="$actor" type="chat"><reactions xmlns="urn:xmpp:reactions:0" id="${m.id}">'
-        '${emoji.isEmpty ? '' : '<reaction>$emoji</reaction>'}</reactions>$delay</message>';
-    receive(alice, reaction(peer, '👍'));
-    await _until(() => alice.reactionsFor(m).isNotEmpty);
-    receive(alice, reaction(peer, ''));
-    await _until(() => alice.reactionsFor(m).isEmpty);
-    receive(
-      alice,
-      reaction(
-        peer,
-        '👍',
-        delay: '<delay xmlns="urn:xmpp:delay" stamp="2020-01-01T00:00:00Z"/>',
-      ),
-    );
-    receive(alice, reaction('20000*208@ejabberd.voicehost.io', '❤️'));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-    expect(alice.reactionsFor(m), isEmpty);
-  });
-
-  test('rejected direct-chat reaction rolls back its optimistic update', () async {
-    final alice = client();
-    await login(alice, '10000*207');
-    alice.sendMessage(recipient: '208', body: 'Hello');
-    final m = alice.messages.single;
-    alice.toggleReaction(m, '👍');
-    await _until(
-      () => server.received.any(
+  test(
+    'GIPHY references travel over XMPP without arbitrary remote URLs',
+    () async {
+      final alice = client(), bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      alice.sendMessage(
+        recipient: '208',
+        body: 'GIF · GIPHY',
+        gif: const ChatGifReference('One123'),
+      );
+      await _until(() => bob.messages.isNotEmpty);
+      expect(bob.messages.single.gif!.id, 'One123');
+      expect(bob.unreadCount, 1);
+      final wire = server.received.lastWhere(
         (s) =>
-            s.getElement('reactions', namespace: ChatReaction.namespace) !=
-            null,
-      ),
-    );
-    final id = server.received
-        .lastWhere(
+            s.name.local == 'message' &&
+            s.getElement('gif', namespace: ChatGifReference.namespace) != null,
+      );
+      expect(wire.toXmlString(), isNot(contains('media.giphy.com')));
+      expect(
+        () => alice.sendMessage(
+          recipient: '208',
+          body: 'bad',
+          gif: const ChatGifReference('../tracker'),
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test(
+    'local unread counts can clear offline and survive history reload',
+    () async {
+      final history = MemoryChatHistoryRepository();
+      final service = client(history: history);
+      await login(service, '10000*207');
+      for (final id in ['one', 'two']) {
+        receive(
+          service,
+          '<message xmlns="jabber:client" from="$peer" type="chat" id="$id">'
+          '<body>Hello</body><markable xmlns="urn:xmpp:chat-markers:0"/></message>',
+        );
+      }
+      await _until(() => service.messages.length == 2);
+      expect(service.unreadCount, 2);
+      service.pause();
+      service.setForeground(true);
+      final markers = readMarkers().length;
+      service.markConversationDisplayed(peer, service.messages.last.key);
+      expect(service.unreadCount, 0);
+      expect(readMarkers().length, markers);
+      await service.flushHistory();
+      final cached = await history.load(
+        "${service.account}|${XmppService.endpoint}",
+      );
+      expect(cached.messages, hasLength(2));
+      expect(cached.messages.every((m) => m.displayed), isTrue);
+      service.setAccessAllowed(false);
+      expect(service.unreadCount, 0);
+    },
+  );
+
+  test(
+    'reaction forgery and delayed replay cannot change current reactions',
+    () async {
+      final alice = client();
+      await login(alice, '10000*207');
+      alice.sendMessage(recipient: '208', body: 'Hello');
+      final m = alice.messages.single;
+      String reaction(String actor, String emoji, {String delay = ''}) =>
+          '<message xmlns="jabber:client" from="$actor" type="chat"><reactions xmlns="urn:xmpp:reactions:0" id="${m.id}">'
+          '${emoji.isEmpty ? '' : '<reaction>$emoji</reaction>'}</reactions>$delay</message>';
+      receive(alice, reaction(peer, '👍'));
+      await _until(() => alice.reactionsFor(m).isNotEmpty);
+      receive(alice, reaction(peer, ''));
+      await _until(() => alice.reactionsFor(m).isEmpty);
+      receive(
+        alice,
+        reaction(
+          peer,
+          '👍',
+          delay: '<delay xmlns="urn:xmpp:delay" stamp="2020-01-01T00:00:00Z"/>',
+        ),
+      );
+      receive(alice, reaction('20000*208@ejabberd.voicehost.io', '❤️'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(alice.reactionsFor(m), isEmpty);
+    },
+  );
+
+  test(
+    'rejected direct-chat reaction rolls back its optimistic update',
+    () async {
+      final alice = client();
+      await login(alice, '10000*207');
+      alice.sendMessage(recipient: '208', body: 'Hello');
+      final m = alice.messages.single;
+      alice.toggleReaction(m, '👍');
+      await _until(
+        () => server.received.any(
           (s) =>
               s.getElement('reactions', namespace: ChatReaction.namespace) !=
               null,
-        )
-        .getAttribute('id');
-    receive(
-      alice,
-      '<message xmlns="jabber:client" from="$peer" type="error" id="$id"><error type="modify"/></message>',
-    );
-    await _until(() => alice.reactionsFor(m).isEmpty);
-  });
+        ),
+      );
+      final id = server.received
+          .lastWhere(
+            (s) =>
+                s.getElement('reactions', namespace: ChatReaction.namespace) !=
+                null,
+          )
+          .getAttribute('id');
+      receive(
+        alice,
+        '<message xmlns="jabber:client" from="$peer" type="error" id="$id"><error type="modify"/></message>',
+      );
+      await _until(() => alice.reactionsFor(m).isEmpty);
+    },
+  );
 
   test(
     'archived reactions arriving before their target survive cache reload',
@@ -170,7 +240,8 @@ void main() {
         _Archived(
           '2',
           '',
-          attachmentXml: '<reactions xmlns="urn:xmpp:reactions:0" id="target"><reaction>👍</reaction></reactions>',
+          attachmentXml:
+              '<reactions xmlns="urn:xmpp:reactions:0" id="target"><reaction>👍</reaction></reactions>',
         ),
       ]);
       final history = MemoryChatHistoryRepository();
@@ -1052,6 +1123,58 @@ void main() {
   String group(String ext, String inner, {String id = 'msg'}) =>
       '<message xmlns="jabber:client" type="groupchat" from="$roomJid/$ext" id="$id">$inner</message>';
 
+  test('room unread watermarks survive reconnect and older history', () async {
+    final history = MemoryChatHistoryRepository();
+    final service = client(history: history);
+    service.configureManaged(managed);
+    await _until(() => service.online);
+    service.replaceRooms([testRoom()]);
+    receive(
+      service,
+      group(
+        '208',
+        '<body>Latest</body><stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="latest-room-id"/>',
+        id: 'latest',
+      ),
+    );
+    await _until(() => service.messages.length == 1);
+    expect(service.unreadCount, 1);
+    service.pause();
+    service.setForeground(true);
+    service.markConversationDisplayed(roomJid, service.messages.single.key);
+    expect(service.unreadCount, 0);
+    await service.flushHistory();
+    final restored = client(history: history);
+    restored.configureManaged(managed);
+    await _until(() => restored.online);
+    restored.replaceRooms([testRoom()]);
+    await _until(() => restored.messages.isNotEmpty);
+    expect(restored.unreadCount, 0);
+    receive(
+      restored,
+      group(
+        '208',
+        '<body>Older</body>'
+            '<delay xmlns="urn:xmpp:delay" stamp="2020-01-01T00:00:00Z"/>'
+            '<stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="earlier-room-id"/>',
+        id: 'earlier',
+      ),
+    );
+    await _until(() => restored.messages.length == 2);
+    expect(restored.unreadCount, 0);
+    receive(
+      restored,
+      group(
+        '208',
+        '<body>New unread</body>'
+            '<stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="new-room-id"/>',
+        id: 'new',
+      ),
+    );
+    await _until(() => restored.messages.length == 3);
+    expect(restored.unreadCount, 1);
+  });
+
   test('room reactions use service stanza IDs and reject non-members', () async {
     final service = await roomClient();
     receive(
@@ -1190,15 +1313,43 @@ void main() {
       );
       receive(
         service,
+        wrapper(
+          roomJid,
+          group(
+            '208',
+            '<body>Multicast</body><stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="room-multicast"/>',
+            id: 'multicast',
+          ),
+        ),
+      );
+      await _until(() => service.messages.length == 2);
+      receive(
+        service,
+        wrapper(
+          roomJid,
+          group(
+            '208',
+            '<body>Forged destination</body>',
+            id: 'forged',
+          ).replaceFirst(
+            '<message ',
+            '<message to="10000*999@ejabberd.voicehost.io" ',
+          ),
+        ),
+      );
+      receive(
+        service,
         group(
           '209',
           '<body>Hello</body><stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="room-3"/>',
         ),
       );
-      await _until(() => service.messages.length == 2);
-      expect(service.messages.map((m) => m.key).toSet().length, 2);
+      await _until(() => service.messages.length == 3);
+      expect(service.messages.map((m) => m.key).toSet().length, 3);
+      expect(service.unreadCount, 3);
       service.markConversationDisplayed(roomJid, service.messages.last.key);
       expect(service.messages.every((m) => m.displayed), isTrue);
+      expect(service.unreadCount, 0);
       service.replaceRooms([]);
       expect(service.messages, isEmpty);
       expect(() => service.recipientJid(roomJid), throwsArgumentError);
@@ -1416,7 +1567,10 @@ void main() {
         previous,
       );
       expect(
-        ChatHistorySnapshot.fromJson({'version': 1, 'messages': []}).migratedAccounts,
+        ChatHistorySnapshot.fromJson({
+          'version': 1,
+          'messages': [],
+        }).migratedAccounts,
         isEmpty,
       );
     },

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:xml/xml.dart';
 import 'package:voicehost_softphone/models/chat_text_format.dart';
 import 'package:voicehost_softphone/models/chat_message.dart';
+import 'package:voicehost_softphone/models/chat_gif_reference.dart';
 import 'package:voicehost_softphone/models/chat_reaction.dart';
 import 'package:voicehost_softphone/services/chat_gif_service.dart';
 import 'package:voicehost_softphone/services/chat_history_repository.dart';
@@ -138,29 +138,31 @@ void main() {
     expect(legacy.formatting, isEmpty);
   });
   test(
-    'Tenor search uses configured key and filters unsafe media URLs',
+    'GIPHY search and trending use a configured key and preserve media URLs',
     () async {
+      final requests = <http.Request>[];
       final service = ChatGifService(
         apiKey: 'test-key',
         client: MockClient((request) async {
-          expect(request.url.host, 'tenor.googleapis.com');
-          expect(request.url.path, '/v2/search');
-          expect(request.url.queryParameters['q'], 'happy');
-          expect(request.url.queryParameters['media_filter'], 'tinygif');
+          requests.add(request);
+          expect(request.url.host, 'api.giphy.com');
+          expect(request.url.queryParameters['api_key'], 'test-key');
+          expect(request.url.queryParameters['rating'], 'g');
           return http.Response(
             jsonEncode({
-              'results': [
+              'data': [
                 for (final url in [
-                  'https://media.tenor.com/test/tenor.gif',
+                  'https://media0.giphy.com/media/one/200.gif?cid=provider',
                   'https://example.com/tracker.gif',
-                  'http://media.tenor.com/test.gif',
-                  'https://media.tenor.com:444/test.gif',
+                  'http://media.giphy.com/test.gif',
+                  'https://media.giphy.com:444/test.gif',
+                  'https://media.giphy.com.evil.example/test.gif',
                 ])
                   {
                     'id': 'one',
-                    'content_description': 'Happy',
-                    'media_formats': {
-                      'tinygif': {'url': url, 'size': 100},
+                    'title': 'Happy',
+                    'images': {
+                      'fixed_height': {'url': url},
                     },
                   },
               ],
@@ -170,27 +172,76 @@ void main() {
         }),
       );
       addTearDown(service.close);
-      expect((await service.search('happy')).length, 1);
+      final results = await service.search('happy & hello');
+      expect(results.length, 1);
+      expect(results.single.url.query, 'cid=provider');
+      expect(requests.single.url.path, '/v1/gifs/search');
+      expect(requests.single.url.queryParameters['q'], 'happy & hello');
+      await service.search('');
+      expect(requests.last.url.path, '/v1/gifs/trending');
+      await expectLater(service.search('a' * 51), throwsArgumentError);
     },
   );
-  test('GIF downloads preserve animation bytes and reject non-GIFs', () async {
-    final gif = ChatGif(
-      id: 'one',
-      title: 'Happy',
-      url: Uri.parse('https://media.tenor.com/test/tenor.gif'),
-    );
-    final bytes = Uint8List.fromList(ascii.encode('GIF89a-animation-data'));
-    final service = ChatGifService(
-      client: MockClient((_) async => http.Response.bytes(bytes, 200)),
-    );
-    addTearDown(service.close);
-    expect(await service.download(gif), bytes);
-    final bad = ChatGifService(
-      client: MockClient((_) async => http.Response('Not a GIF', 200)),
-    );
-    addTearDown(bad.close);
-    await expectLater(bad.download(gif), throwsFormatException);
-  });
+  test(
+    'GIPHY messages store only provider IDs and resolve them through GIPHY',
+    () async {
+      const ref = ChatGifReference('One123');
+      final message = XmlDocument.parse(
+        '<message>${ref.encode().toXmlString()}</message>',
+      ).rootElement;
+      expect(ChatGifReference.decode(message)!.id, ref.id);
+      for (final id in ['../account', 'https://tracker.example', 'a' * 129]) {
+        expect(ChatGifReference.parse(id), isNull);
+      }
+      expect(
+        ChatGifReference.decode(
+          XmlDocument.parse(
+            '<message><gif xmlns="urn:voicehost:gif:1" provider="other" id="One123"/></message>',
+          ).rootElement,
+        ),
+        isNull,
+      );
+      final requests = <http.Request>[];
+      final service = ChatGifService(
+        apiKey: 'key',
+        client: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode({
+              'data': {
+                'id': 'One123',
+                'images': {
+                  'fixed_height': {
+                    'url': 'https://media.giphy.com/media/One123/200.gif',
+                  },
+                },
+              },
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(service.close);
+      expect((await service.resolve(ref)).id, 'One123');
+      expect(requests.single.url.path, '/v1/gifs/One123');
+      final m = ChatMessage(
+        id: 'gif',
+        peer: '10000*208@ejabberd.voicehost.io',
+        body: 'GIF · GIPHY',
+        outgoing: true,
+        timestamp: DateTime.utc(2026),
+        status: ChatMessageStatus.sent,
+        gif: ref,
+      );
+      expect(ChatMessage.fromJson(m.toJson()).gif!.id, 'One123');
+      expect(jsonEncode(m.toJson()), isNot(contains('https://')));
+      expect(
+        ChatGifService.isGif(ascii.encode('GIF89a-local-animation')),
+        isTrue,
+      );
+      expect(ChatGifService.isGif(ascii.encode('Not a GIF')), isFalse);
+    },
+  );
   testWidgets(
     'formatting toolbar fits narrow screens and shows selected styles',
     (tester) async {

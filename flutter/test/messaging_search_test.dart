@@ -18,8 +18,7 @@ class _SearchService extends XmppService {
     connected = true;
   }
 
-  @override
-  List<ChatMessage> get messages => [
+  final items = <ChatMessage>[
     for (final ext in ['208', '230'])
       ChatMessage(
         id: ext,
@@ -30,6 +29,10 @@ class _SearchService extends XmppService {
         status: ChatMessageStatus.received,
       ),
   ];
+  @override
+  List<ChatMessage> get messages => items;
+  @override
+  void prepareConversation(String value) {}
   @override
   String contactLabel(String jid) =>
       jid.contains('208') ? 'Reception · 208' : 'Accounts · 230';
@@ -103,33 +106,109 @@ void main() {
       expect(find.text('Reception · 208'), findsOneWidget);
     },
   );
-  testWidgets('room search matches names and member names/extensions', (
+  testWidgets(
+    'unified conversations include empty rooms and search their members',
+    (tester) async {
+      final service = _SearchService();
+      await service.prepareFixture();
+      addTearDown(service.dispose);
+      await tester.binding.setSurfaceSize(const Size(320, 568));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(home: MessagesScreen(messaging: service)),
+      );
+      expect(find.text('Rooms'), findsNothing);
+      expect(find.text('Create room'), findsOneWidget);
+      final search = find.widgetWithText(TextField, 'Search conversations');
+      await tester.enterText(search, 'CONNOR 230');
+      await tester.pump();
+      expect(find.text('Operations'), findsOneWidget);
+      expect(find.text('Sales team'), findsNothing);
+      await tester.enterText(search, 'sales');
+      await tester.pump();
+      expect(find.text('Sales team'), findsOneWidget);
+      await tester.enterText(search, 'unknown');
+      await tester.pump();
+      expect(find.text('No matching conversations.'), findsOneWidget);
+      await tester.tap(find.byTooltip('Clear conversation search'));
+      await tester.pump();
+      await tester.scrollUntilVisible(
+        find.text('Operations'),
+        100,
+        scrollable: find.descendant(
+          of: find.byType(ListView).first,
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(find.text('Operations'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'unread filter shows counts, excludes outgoing messages and clears on reads',
+    (tester) async {
+      final service = _SearchService();
+      await service.prepareFixture();
+      service.items.add(
+        ChatMessage(
+          id: 'sent',
+          peer: '10000*208@ejabberd.voicehost.io',
+          body: 'Sent',
+          outgoing: true,
+          timestamp: DateTime.utc(2026, 2),
+          status: ChatMessageStatus.sent,
+        ),
+      );
+      addTearDown(service.dispose);
+      await tester.pumpWidget(
+        MaterialApp(home: MessagesScreen(messaging: service)),
+      );
+      expect(find.text('Unread (2)'), findsOneWidget);
+      await tester.tap(find.text('Unread (2)'));
+      await tester.pump();
+      expect(find.text('Sales team'), findsNothing);
+      service.items
+          .where((m) => !m.outgoing)
+          .forEach((m) => m.displayed = true);
+      service.notifyListeners();
+      await tester.pump();
+      expect(find.text('Unread (0)'), findsOneWidget);
+      expect(find.text('No unread conversations.'), findsOneWidget);
+      service.setAccessAllowed(false);
+      expect(service.unreadCount, 0);
+    },
+  );
+  testWidgets('both tabs share the search style and show messaging status', (
     tester,
   ) async {
     final service = _SearchService();
     await service.prepareFixture();
     addTearDown(service.dispose);
-    await tester.binding.setSurfaceSize(const Size(320, 568));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(home: MessagesScreen(messaging: service)),
     );
-    await tester.tap(find.text('Rooms'));
+    expect(find.text('Messaging connected · Available'), findsOneWidget);
+    final conversation = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Search conversations'),
+    );
+    await tester.tap(find.text('Directory'));
     await tester.pumpAndSettle();
-    final search = find.widgetWithText(TextField, 'Search rooms');
-    await tester.enterText(search, 'CONNOR 230');
+    final directory = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Search name or extension'),
+    );
+    expect(directory.decoration!.border, conversation.decoration!.border);
+    expect(directory.decoration!.isDense, conversation.decoration!.isDense);
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Search name or extension'),
+      'nothing',
+    );
     await tester.pump();
-    expect(find.text('Operations'), findsOneWidget);
-    expect(find.text('Sales team'), findsNothing);
-    await tester.enterText(search, 'sales');
+    await tester.tap(find.byTooltip('Clear directory search'));
     await tester.pump();
-    expect(find.text('Sales team'), findsOneWidget);
-    await tester.enterText(search, 'unknown');
-    await tester.pump();
-    expect(find.text('No matching rooms.'), findsOneWidget);
-    await tester.tap(find.byTooltip('Clear room search'));
-    await tester.pump();
-    expect(find.text('Operations'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextField, 'Search name or extension'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }

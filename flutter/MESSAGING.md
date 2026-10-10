@@ -1,87 +1,117 @@
-# Messaging: reactions, formatting, GIFs and search
+# Messaging: GIPHY, unread counts and combined conversations
 
-The messaging branch now adds these Flutter features to both direct conversations
-and private account rooms. The existing ejabberd module and provisioning attachment
-service support these changes; no server rebuild or new API permission is needed.
+This update replaces Tenor with GIPHY, combines rooms and direct chats in
+Conversations, adds an Unread filter and navigation badge, and shows your own
+messaging connection/presence status. Upgrade the ejabberd module as described
+below to correct room APNs delivery. The existing provisioning notification worker
+already supports rooms; this update does not change its API or configuration.
 
-- **Reactions:** tap the reaction button beneath a message or long-press its bubble.
-  Choose an emoji; choosing one of your existing reactions removes it. Counts group
-  distinct canonical users, so multiple devices on one extension do not inflate them.
-  Room reactions wait for the service echo and reference its stable stanza ID.
-- **Visual formatting:** select text in the composer and use Bold, Italic, Underline
-  or Strikethrough. The editor shows styles immediately. With a collapsed cursor,
-  buttons change the style of newly typed text. Clear formatting resets selected
-  text, or the whole draft when no text is selected. Plain text remains available
-  to older clients; a restricted XHTML-IM payload carries the formatting. Remote
-  HTML is rendered as native text, with no scripts, URLs, fonts or external images.
-- **GIFs:** use the GIF button or Attach → Choose GIF file. Files retain their
-  original animated bytes and use the existing authenticated upload/download path,
-  10 MiB limit and attachment retention. GIFs play inside a conversation. Photos
-  still use the existing image picker/compression flow; GIF selection uses the file
-  picker to preserve animation.
-- **Search:** Conversations matches the name, extension/JID and most recent message
-  preview. Rooms matches room names and current member names/extensions. Search
-  ignores case, combines multiple words and includes a clear button. It searches
-  loaded conversation previews, not the entire message archive.
+- **Conversations:** rooms appear alongside direct chats, including rooms without
+  messages. Create room and Refresh rooms are here; room membership/settings remain
+  available from the room conversation. There is no separate Rooms tab.
+- **Search:** Conversations and Directory use the same search field styling and
+  clear button. Conversation search matches names, extensions/JIDs, latest message
+  previews and room members. Search covers loaded previews, not the whole archive.
+- **Unread:** row badges, bold titles, an Unread filter and the Messages navigation
+  badge show incoming unread messages. Counts include loaded/cached history and
+  verified current rooms. Viewing messages in the foreground clears their local
+  unread state, even offline, and persists read watermarks across reconnects and
+  older history loading. Background delivery does not mark messages read. This is
+  an in-app indicator; it does not set the iOS home-screen application badge.
+- **Your status:** the header shows the messaging connection state and your
+  Available/Away/Busy presence. Tap it to change presence. Messaging status is
+  separate from SIP registration and call DND.
+- **Provisioning:** the Managed device box no longer exposes the messaging username;
+  the Managed configuration box no longer shows the Janus server row.
+- **Reactions and formatting:** reactions and the visual Bold/Italic/Underline/
+  Strikethrough editor remain available in direct chats and rooms. The restricted
+  XHTML-IM payload falls back to plain text on older clients.
+- **Local GIFs:** Attach → Choose GIF file preserves animation using the existing
+  authenticated attachment service, 10 MiB limit and attachment retention.
 
-## Optional in-app Tenor search
+## GIPHY configuration
 
-GIF files work without a provider key. To enable the searchable Tenor picker,
-create a VoiceHost-owned Tenor v2 API key and supply it when building the app:
+Create a VoiceHost-owned GIPHY API key and supply it when building the app. Use
+separate approved platform keys as required by GIPHY. No demo key is embedded:
 
 ```bash
-flutter run --dart-define=TENOR_API_KEY=YOUR_TENOR_KEY
+flutter run --dart-define=GIPHY_API_KEY=YOUR_GIPHY_KEY
 # Supply the same define to flutter build ipa / apk / appbundle / windows.
 ```
 
-The key is a client API key compiled into the application, not a server secret.
-Use appropriate restrictions in the provider console. No demo key is embedded.
-Search uses Tenor's search/featured endpoints with a high content filter and the
-picker displays Tenor attribution. Search terms and selected GIF share statistics
-are sent to Tenor; account JIDs, recipients and conversation bodies are not sent.
-Selected GIFs are downloaded and re-uploaded to VoiceHost before messaging; chat
-recipients receive only the authenticated attachment identifier, not a remote URL.
-A provider outage affects GIF search, not text messages or local GIF attachments.
+The key is compiled into the client, not stored as a provisioning-server secret.
+The picker uses GIPHY search/trending with a G rating, preserves search terms and
+shows “Powered By GIPHY” attribution. Chat messages/cache store only validated
+provider IDs. Each recipient resolves the ID through GIPHY and loads animated
+media directly from GIPHY; provider media is not downloaded and re-uploaded to
+VoiceHost. Selected draft URLs are transient. Local GIF files keep the existing
+attachment path. Search terms and requested GIF IDs go to GIPHY; account JIDs,
+recipients and message captions are not sent there.
 
-## Update and verify
+Build all receiving apps with a key to display provider GIFs. Without a key, local
+GIF attachments still work and provider references show GIF unavailable. Older
+apps show the caption/fallback text. A provider outage affects GIPHY media/search,
+not text messages or local attachments. Beta keys have a limited request quota;
+obtain production approval before a broad rollout.
+
+## Deploy the room APNs correction first
+
+On ejabberd, from the existing checkout:
+
+```bash
+cd /opt/voicehost-messaging && git pull --ff-only origin feature/ejabberd-messaging && bash ejabberd-modules/mod_voicehost_tenants/install.sh /opt/ejabberd-26.09/bin/ejabberdctl --upgrade && /opt/ejabberd-26.09/bin/ejabberdctl restart
+```
+
+Preserve existing Mnesia, archive and push data. The module creates the durable
+`voicehost_push_owner` table at startup. It binds VoiceHost push nodes to the
+canonical user from authenticated push-enable requests. ejabberd 26.09 unwraps
+room multicast notifications without an inner recipient; the bridge uses that
+binding, then checks current tenant, enabled identity and room membership. Stable
+room stanza IDs deduplicate repeated delivery paths and sender echoes are skipped.
+No new API permission, public endpoint or APNs credential is required.
+
+After restart completes, check `/opt/ejabberd-26.09/bin/ejabberdctl status`. Open or
+reconnect messaging on **each phone once after the module upgrade** so its normal
+push-enable request registers the node owner. Previously sleeping registrations
+have no binding until then. Background/lock the recipient and send a new room
+message from another member to verify the standard APNs alert. Follow the
+[notification guide](../provisioning-server/MESSAGING-NOTIFICATIONS.md) for worker
+logs and membership checks.
+
+## Update the app and verify
 
 From the existing Flutter directory on the Mac:
 
 ```bash
-git pull --ff-only origin feature/ejabberd-messaging
-flutter pub get
-flutter analyze
-flutter test
-flutter run
+git pull --ff-only origin feature/ejabberd-messaging && flutter pub get && flutter analyze && flutter test && flutter run --dart-define=GIPHY_API_KEY=YOUR_GIPHY_KEY
 ```
 
-Update both devices when testing the new UI. Check:
+Use the same GIPHY define with your normal signed release build. Update both
+participants and verify:
 
-1. React to a direct message and a room message. Add a second emoji, remove it and
-   reconnect. Verify counts do not duplicate on a second device for the same user.
-2. Format different parts of a draft, edit/replace text, send it, and reload history.
-   Try a formatted attachment caption and an unformatted message on an older app.
-3. Send a local animated GIF in both chat types; confirm inline animation and file
-   saving. If Tenor is enabled, search, select a GIF, review its draft and send it.
-4. Search each list by a name and extension, try an unknown term, clear it, and
-   verify new messages do not reset the current query.
-5. Confirm call controls/CallKit, provisioning locks, membership removal, plain
-   messages, typing, receipts and other attachments still work.
+1. Search Conversations and Directory on a narrow screen. Create a room from
+   Conversations, including a room with no messages, and open its settings.
+2. Send direct and room messages while the recipient views another page. Check
+   row/navigation counts and the Unread filter; open the chat, reconnect and load
+   older history without making already-read messages unread again.
+3. Change your presence and check the connection/status header after disconnecting.
+4. Search/select/send a GIPHY result and a local GIF in both chat types. Confirm
+   animation, captions and provider attribution after history reload.
+5. Test a direct APNs alert and a room APNs alert with the recipient locked. Check
+   removal/leave prevents subsequent room alerts and taps still refresh eligibility.
+6. Check provisioning cleanup, call controls/CallKit, locks, reactions, formatting,
+   typing, receipts and ordinary attachments.
 
-The protocol tests cover foreign-account rejection, room non-member rejection,
-error rollback, reaction removals, delayed replay and reactions received before
-older target messages. Cache and editor tests cover backwards-compatible loading,
-style preservation and safe fallback to plain text. Live ejabberd/iOS verification
-still needs the deployed app on real devices.
-
-Validated with Flutter 3.47.7 / Dart 3.13.5: `flutter analyze` reported no issues
-and the full `flutter test` suite passed (102 tests).
+Automated tests cover GIPHY response validation, provider-only references,
+consistent search widgets, combined lists, unread filtering/offline reads/history,
+room multicast envelopes and the real Erlang push queue/owner binding. Live APNs
+and signed native builds still require the deployed devices and signing environment.
 
 ---
 
 # Managed ejabberd messaging and conversation recovery
 
-Private account rooms are implemented. Follow the [room rollout guide](../provisioning-server/MESSAGING-ROOMS.md): update ejabberd/configuration, provisioning and then the app. Messages → Rooms creates rooms and manages members. Current members can read the full retained history.
+Private account rooms are implemented. Follow the [room rollout guide](../provisioning-server/MESSAGING-ROOMS.md): update ejabberd/configuration, provisioning and then the app. Messages → Conversations creates rooms; room conversation settings manage members. Current members can read the full retained history.
 
 Account directory and extension addressing are implemented on this branch.
 Install/configure the [ejabberd tenant module](../ejabberd-modules/mod_voicehost_tenants/README.md)
@@ -274,7 +304,7 @@ recovers through MAM, carbons and the encrypted chat cache. Limits, participant
 authorization, retention and the required provisioning/Nginx/app rollout are in
 [MESSAGING-ATTACHMENTS.md](../provisioning-server/MESSAGING-ATTACHMENTS.md).
 
-Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, durable outbox/retry guarantees, editing/retraction or groups. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
+Not yet included: Android FCM messaging notifications, XEP-0198 stream resumption, durable outbox/retry guarantees, editing/retraction or cross-account groups. Standard iOS alerts require the configured notification worker and updated native bridge; enabling `mod_push` alone is insufficient. Full message contents recover from archives on return to the app.
 
 The protocol tests use a real loopback WebSocket fixture for login, routing, receipts, MAM discovery/paging, duplicate recovery, interrupted pages, expired cursors, failed storage, account changes and lock/logout. Storage tests verify encrypted reopening, account/endpoint isolation and tamper rejection. Provisioning tests verify credential retention/rotation, account-change validation, disablement, portal redaction and validation secrecy. These checks supplement the on-device tests above; this environment cannot build/sign an iOS binary or verify your private account's live archive.
 

@@ -9,6 +9,7 @@ import 'package:xml/xml.dart';
 import '../models/chat_message.dart';
 import '../models/chat_text_format.dart';
 import '../models/chat_reaction.dart';
+import '../models/chat_gif_reference.dart';
 import '../models/chat_attachment.dart';
 import '../models/messaging_contact.dart';
 import '../models/messaging_room.dart';
@@ -110,6 +111,16 @@ class XmppService extends ChangeNotifier {
   bool get shareTyping => _shareTyping;
   bool get shareReadReceipts => _shareReadReceipts;
   MessagingPresence get ownPresence => _ownPresence;
+  int get unreadCount => !accessAllowed
+      ? 0
+      : messages
+            .where(
+              (m) =>
+                  !m.outgoing &&
+                  !m.displayed &&
+                  (!m.peer.contains('@rooms.') || isRoom(m.peer)),
+            )
+            .length;
 
   MessagingPresence presenceFor(String jid) {
     final peer = _canonicalPeer(jid);
@@ -327,7 +338,7 @@ class XmppService extends ChangeNotifier {
   /// The UI supplies the latest message actually visible on the current route.
   /// Push receipt, archive loading and background activity never call this.
   void markConversationDisplayed(String value, String id) {
-    if (!online || !_foreground || !_accessAllowed) return;
+    if (!_foreground || !_accessAllowed) return;
     final peer = recipientJid(value);
     final message = _messages
         .where((m) => !m.outgoing && m.peer == peer && m.key == id)
@@ -341,7 +352,7 @@ class XmppService extends ChangeNotifier {
     _rememberUpdate(
       ChatMessageUpdate(peer, id, outgoing: false, displayed: true),
     );
-    if (_shareReadReceipts && message.markable) {
+    if (online && _shareReadReceipts && message.markable) {
       _send(
         _element(
           'message',
@@ -392,7 +403,11 @@ class XmppService extends ChangeNotifier {
   void _reapplyUpdates() {
     _recoveredUpdates.removeWhere((update) {
       if (update.displayed) {
-        _applyDisplayed(update.peer, update.id, outgoing: update.outgoing);
+        if (update.peer.contains('@rooms.') && !update.outgoing) {
+          _applyLocalRoomDisplayed(update.peer, update.id);
+        } else {
+          _applyDisplayed(update.peer, update.id, outgoing: update.outgoing);
+        }
         return false; // Retain the watermark for older pages and reconnect.
       }
       final message = _messages
@@ -470,7 +485,8 @@ class XmppService extends ChangeNotifier {
     }
     if (!configuration.ready) {
       disconnect(clearMessages: true);
-      _error = 'Your messaging account is being prepared. Refresh provisioning shortly.';
+      _error =
+          'Your messaging account is being prepared. Refresh provisioning shortly.';
       _setState(XmppState.disconnected);
       return;
     }
@@ -646,7 +662,9 @@ class XmppService extends ChangeNotifier {
           final room = MessagingRoom.validJid(update.peer, _domain);
           if (!room) recipientJid(update.peer);
           if (update.actor != _account) recipientJid(update.actor);
-          if (!room && update.actor != _account && update.actor != update.peer) {
+          if (!room &&
+              update.actor != _account &&
+              update.actor != update.peer) {
             continue;
           }
           _rememberReaction(update);
@@ -659,7 +677,9 @@ class XmppService extends ChangeNotifier {
       _ownPresence = snapshot.presence;
       for (final update in snapshot.statusUpdates) {
         try {
-          recipientJid(update.peer);
+          if (!MessagingRoom.validJid(update.peer, _domain)) {
+            recipientJid(update.peer);
+          }
           _rememberUpdate(update);
         } on ArgumentError {
           /* Ignore metadata outside this account. */
@@ -685,7 +705,8 @@ class XmppService extends ChangeNotifier {
           _migratedHistoryAccounts.add(previousStorage);
           migrated = true;
         } catch (_) {
-          _historyError = 'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
+          _historyError =
+              'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
         }
       }
       _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -701,7 +722,8 @@ class XmppService extends ChangeNotifier {
     } catch (_) {
       if (_disposed || accountGeneration != _accountGeneration) return;
       // Do not overwrite an unreadable cache with an empty history.
-      _historyError = 'Saved history could not be opened. Archive recovery will still be attempted.';
+      _historyError =
+          'Saved history could not be opened. Archive recovery will still be attempted.';
     }
     if (!_accessAllowed ||
         _disposed ||
@@ -864,8 +886,9 @@ class XmppService extends ChangeNotifier {
         return;
       }
       // RFC 7395 allows several complete XML elements in one text frame.
-      final elements = XmlDocumentFragment.parse(data).children
-          .whereType<XmlElement>();
+      final elements = XmlDocumentFragment.parse(
+        data,
+      ).children.whereType<XmlElement>();
       for (final element in elements) {
         if (_channel == null) break;
         final name = element.name.local;
@@ -1035,6 +1058,7 @@ class XmppService extends ChangeNotifier {
                   ChatAttachment.namespace,
                   ChatReaction.namespace,
                   ChatTextFormat.htmlNamespace,
+                  ChatGifReference.namespace,
                 ])
                   _element('feature', _disco, attributes: {'var': feature}),
               ],
@@ -1257,8 +1281,9 @@ class XmppService extends ChangeNotifier {
     if (!_isCanonicalAccount) return bare;
     final parts = bare.split('@');
     if (parts.length != 2 || parts.last != _domain) return bare;
-    final match = RegExp(r'^([0-9]+)\*([0-9]{3,5})[a-z]*$')
-        .firstMatch(parts.first);
+    final match = RegExp(
+      r'^([0-9]+)\*([0-9]{3,5})[a-z]*$',
+    ).firstMatch(parts.first);
     if (match == null || match.group(1) != accountNumber) return bare;
     return '${match.group(1)}*${match.group(2)}@$_domain';
   }
@@ -1345,6 +1370,7 @@ class XmppService extends ChangeNotifier {
     required String recipient,
     required String body,
     ChatAttachment? attachment,
+    ChatGifReference? gif,
     List<ChatTextFormat> formatting = const [],
   }) {
     if (!online) throw StateError('Messaging is not online.');
@@ -1353,6 +1379,10 @@ class XmppService extends ChangeNotifier {
       throw ArgumentError('Enter a message of up to 10,000 characters.');
     }
     final richText = ChatTextFormat.encode(body, formatting);
+    if (gif != null &&
+        (!ChatGifReference.validId(gif.id) || attachment != null)) {
+      throw ArgumentError('Invalid GIF message.');
+    }
     final id = _id();
     _send(
       _element(
@@ -1366,6 +1396,7 @@ class XmppService extends ChangeNotifier {
         children: [
           _element('body', _client, text: body),
           ?richText,
+          if (gif != null) gif.encode(),
           if (attachment != null)
             _element(
               'attachment',
@@ -1394,6 +1425,7 @@ class XmppService extends ChangeNotifier {
         timestamp: DateTime.now(),
         status: ChatMessageStatus.sent,
         attachment: attachment,
+        gif: gif,
         formatting: formatting,
         senderJid: isRoom(peer) ? _account : null,
       ),
@@ -1572,6 +1604,7 @@ class XmppService extends ChangeNotifier {
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: _trustedArchiveId(message),
         attachment: _attachment(message),
+        gif: ChatGifReference.decode(message),
         formatting: ChatTextFormat.decode(message, body),
         markable:
             !outgoing &&
@@ -1680,7 +1713,8 @@ class XmppService extends ChangeNotifier {
           // discarding the local cache. Old gaps may no longer exist on server.
           _cursor = null;
           await _archivePage(before: '');
-          _historyError = 'The archive cursor expired. Recent available history was recovered.';
+          _historyError =
+              'The archive cursor expired. Recent available history was recovered.';
         }
       }
     } catch (_) {
@@ -1954,6 +1988,7 @@ class XmppService extends ChangeNotifier {
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: archiveId,
         attachment: _attachment(message),
+        gif: ChatGifReference.decode(message),
         formatting: ChatTextFormat.decode(message, body),
         markable:
             !outgoing &&

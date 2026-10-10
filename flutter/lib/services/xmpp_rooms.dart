@@ -176,7 +176,8 @@ extension MessagingRooms on XmppService {
     );
     if (inner != null &&
         XmppService._bare(inner.getAttribute('from') ?? '') == room &&
-        XmppService._bare(inner.getAttribute('to') ?? '') == _account &&
+        (inner.getAttribute('to') == null ||
+            XmppService._bare(inner.getAttribute('to')!) == _account) &&
         inner.getAttribute('type') == 'groupchat') {
       _roomMessage(inner);
     }
@@ -213,6 +214,11 @@ extension MessagingRooms on XmppService {
     if (displayed != null && displayed.length <= 256) {
       final key = '$peer\u0000$sender';
       _roomReadAnchors[key] = displayed;
+      if (outgoing) {
+        _rememberUpdate(
+          ChatMessageUpdate(peer, displayed, outgoing: false, displayed: true),
+        );
+      }
       _applyRoomReaders(peer);
       if (timestamp == null) {
         unawaited(_persist());
@@ -270,12 +276,14 @@ extension MessagingRooms on XmppService {
           archiveId: archiveId,
           markable: archiveId != null,
           attachment: _attachment(message),
+          gif: ChatGifReference.decode(message),
           formatting: ChatTextFormat.decode(message, body),
         ),
       );
     }
     _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     _applyRoomReaders(peer);
+    _reapplyUpdates();
     if (timestamp == null) {
       _trimMessages();
       unawaited(_persist());
@@ -301,11 +309,27 @@ extension MessagingRooms on XmppService {
     }
   }
 
+  void _applyLocalRoomDisplayed(String peer, String anchorId) {
+    final rows = _messages.where((m) => m.peer == peer).toList();
+    final anchor = rows.indexWhere(
+      (m) => m.key == anchorId || m.archiveId == anchorId,
+    );
+    if (anchor < 0) return;
+    for (final m in rows.take(anchor + 1)) {
+      if (!m.outgoing) m.displayed = true;
+    }
+  }
+
   void _markRoomDisplayed(String peer, ChatMessage message) {
-    if (message.archiveId == null) return;
-    _roomReadAnchors['$peer\u0000$_account'] = message.archiveId!;
-    _applyRoomReaders(peer);
-    if (_shareReadReceipts) {
+    _applyLocalRoomDisplayed(peer, message.key);
+    _rememberUpdate(
+      ChatMessageUpdate(peer, message.key, outgoing: false, displayed: true),
+    );
+    if (message.archiveId != null) {
+      _roomReadAnchors['$peer\u0000$_account'] = message.archiveId!;
+      _applyRoomReaders(peer);
+    }
+    if (online && _shareReadReceipts && message.archiveId != null) {
       _send(
         XmppService._element(
           'message',

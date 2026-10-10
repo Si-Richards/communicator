@@ -15,6 +15,7 @@ import 'ui/messages_screen.dart';
 import 'ui/phone_screen.dart';
 import 'ui/provisioning_screen.dart';
 import 'ui/voicemail_screen.dart';
+import 'ui/messaging_widgets.dart';
 
 class VoiceHostApp extends StatelessWidget {
   const VoiceHostApp({
@@ -365,7 +366,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     ];
 
     return AnimatedBuilder(
-      animation: Listenable.merge([controller, widget.provisioning]),
+      animation: Listenable.merge([
+        controller,
+        widget.provisioning,
+        _messaging,
+      ]),
       builder: (context, _) {
         if (!widget.provisioning.startupReady) {
           return _ProvisioningLoadingScreen(provisioning: widget.provisioning);
@@ -410,9 +415,15 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                 selectedIcon: Icon(Icons.contacts),
                 label: 'Contacts',
               ),
-              const NavigationDestination(
-                icon: Icon(Icons.message_outlined),
-                selectedIcon: Icon(Icons.message),
+              NavigationDestination(
+                icon: MessagingUnreadBadge(
+                  count: _messaging.unreadCount,
+                  child: const Icon(Icons.message_outlined),
+                ),
+                selectedIcon: MessagingUnreadBadge(
+                  count: _messaging.unreadCount,
+                  child: const Icon(Icons.message),
+                ),
                 label: 'Messages',
               ),
             ],

@@ -43,9 +43,9 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -98,10 +98,10 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                         model.credentialsInvalid
                             ? 'Re-activate device'
                             : model.isEnrolled
-                                ? 'Managed device'
-                                : widget.activationGate
-                                    ? 'Activate VoiceHost'
-                                    : 'Activate device',
+                            ? 'Managed device'
+                            : widget.activationGate
+                            ? 'Activate VoiceHost'
+                            : 'Activate device',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 8),
@@ -124,14 +124,14 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                           config?.messaging == null
                               ? 'Messaging: no settings in cached configuration'
                               : config!.features['messaging'] == false
-                                  ? 'Messaging: disabled by feature policy'
-                                  : !config.messaging!.enabled
-                                      ? 'Messaging: disabled by administrator'
-                                      : !config.messaging!.configured
-                                          ? 'Messaging: provisioned settings incomplete'
-                                          : !config.messaging!.ready
-                                              ? 'Messaging: account being prepared'
-                                              : 'Messaging: configured (${config.messaging!.jid})',
+                              ? 'Messaging: disabled by feature policy'
+                              : !config.messaging!.enabled
+                              ? 'Messaging: disabled by administrator'
+                              : !config.messaging!.configured
+                              ? 'Messaging: provisioned settings incomplete'
+                              : !config.messaging!.ready
+                              ? 'Messaging: account being prepared'
+                              : 'Messaging: configured',
                         ),
                       ],
                       if (model.error != null) ...[
@@ -210,17 +210,9 @@ class _ProvisioningScreenState extends State<ProvisioningScreen> {
                             label: 'Strategy',
                             value: config.connectionStrategy,
                           ),
-                          _Row(
-                            label: 'Telephony',
-                            value: config.telephonyMode,
-                          ),
+                          _Row(label: 'Telephony', value: config.telephonyMode),
                           if (config.extension != null)
-                            _Row(
-                              label: 'Extension',
-                              value: config.extension!,
-                            ),
-                          if (config.janusUrl != null)
-                            _Row(label: 'Janus', value: config.janusUrl!),
+                            _Row(label: 'Extension', value: config.extension!),
                         ],
                       ),
                     ),

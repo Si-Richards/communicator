@@ -37,7 +37,13 @@ tenant and a disabled identity must remain absent. Check dates in old history
 and new messages. If the directory remains empty, inspect `messaging-worker`
 errors and confirm both identities are published as enabled messaging users.
 
-For standard iOS chat alerts, follow the [APNs notification rollout guide](../../provisioning-server/MESSAGING-NOTIFICATIONS.md).
+For standard iOS direct and room alerts, follow the [APNs notification rollout guide](../../provisioning-server/MESSAGING-NOTIFICATIONS.md).
+The current module adds a durable `voicehost_push_owner` table to recover the
+recipient omitted by ejabberd 26.09's unwrapped room multicast notifications.
+Upgrade/restart the module, then open/reconnect messaging on every phone once to
+record its authenticated push-node ownership. Preserve Mnesia data; no new API
+permission is required. Delivery still checks enabled identities and current room
+membership, and skips sender echoes.
 
 For ejabberd 26.09. Install this module on **149.19.177.17 before updating the
 provisioning containers**. It is the enforcement boundary; the Flutter app alone
@@ -294,3 +300,4 @@ The test-only host-registry stub is deliberately excluded from installation.
 Live 26.09 hook wiring, TLS and API ACL acceptance must still be checked on your
 server. Flutter wire fixtures cover extension resolution, suffix aliases, foreign
 roster/message filtering, duplicate contacts and lock cleanup.
+

@@ -70,7 +70,7 @@ class _ChatGifPickerState extends State<ChatGifPicker> {
         children: [
           TextField(
             controller: _query,
-            maxLength: 100,
+            maxLength: 50,
             decoration: const InputDecoration(
               hintText: 'Search GIFs',
               prefixIcon: Icon(Icons.search),
@@ -92,10 +92,7 @@ class _ChatGifPickerState extends State<ChatGifPicker> {
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Powered by Tenor · Searches are sent to Tenor.',
-              style: TextStyle(fontSize: 12),
-            ),
+            child: Text('Powered By GIPHY', style: TextStyle(fontSize: 12)),
           ),
           Expanded(
             child: _busy
@@ -131,7 +128,7 @@ class _ChatGifPickerState extends State<ChatGifPicker> {
                         child: InkWell(
                           onTap: () => Navigator.pop(context, gif),
                           child: Image.network(
-                            gif.url.toString(),
+                            gif.previewUrl.toString(),
                             fit: BoxFit.cover,
                             cacheWidth: 320,
                             errorBuilder: (_, _, _) =>

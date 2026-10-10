@@ -15,6 +15,7 @@
 -record(voicehost_identity, {key, account, extension, address, name, enabled = false}).
 -record(voicehost_history_copy, {key, last_id = 0, done = false}).
 -record(voicehost_push_event, {key, host, node, jid, peer, created}).
+-record(voicehost_push_owner, {key, user, updated}).
 
 start(_Host, _Opts) ->
     case mnesia:create_table(voicehost_identity,
@@ -42,6 +43,14 @@ start(_Host, _Opts) ->
         PushError -> error({voicehost_push_event_table, PushError})
     end,
     ok = mnesia:wait_for_tables([voicehost_push_event], 30000),
+    case mnesia:create_table(voicehost_push_owner,
+                            [{disc_copies, [node()]},
+                             {attributes, record_info(fields, voicehost_push_owner)}]) of
+        {atomic, ok} -> ok;
+        {aborted, {already_exists, voicehost_push_owner}} -> ok;
+        OwnerError -> error({voicehost_push_owner_table, OwnerError})
+    end,
+    ok = mnesia:wait_for_tables([voicehost_push_owner], 30000),
     ok = voicehost_rooms:init(),
     {ok, [{hook, filter_packet, filter_packet, 10, global},
           {hook, user_send_packet, user_send, 10},
@@ -115,7 +124,28 @@ valid_push_node(Node) when is_binary(Node) ->
     re:run(Node, <<"\\Avh-[a-f0-9]{64}\\z">>, [{capture,none}]) =:= match;
 valid_push_node(_) -> false.
 
-enqueue_push(Node, Host, #message{type=Type,from=From,to=To,body=Body,id=ID,sub_els=Els} = Packet)
+%% ejabberd 26.09 unwraps multicast MUCsub packets before this hook. Their
+%% inner `to` is undefined. Recover it only from a node enabled by an
+%% authenticated c2s session, never from message content or an account guess.
+enqueue_push(Node, Host, #message{type=groupchat,to=undefined} = Packet) ->
+    case catch mnesia:dirty_read(voicehost_push_owner, {Host,Node}) of
+        [#voicehost_push_owner{user=User}] ->
+            enqueue_push(Node, Host, Packet#message{to=jid:make(User,Host)});
+        _ -> ok
+    end;
+%% Accept strict wrappers too, for hook paths that retain the outer packet.
+enqueue_push(Node, Host, #message{type=normal,from=Room,to=#jid{}=To} = Packet) ->
+    case {voicehost_rooms:room_key(Room), xmpp:get_subtag(Packet,#ps_event{})} of
+        {{Host,_}, #ps_event{items=#ps_items{node= <<"urn:xmpp:mucsub:nodes:messages">>,
+                         items=[#ps_item{sub_els=[#message{type=groupchat,from=From,to=InnerTo}=Inner]}]}}} ->
+            case jid:remove_resource(From) =:= jid:remove_resource(Room) andalso
+                 (InnerTo =:= undefined orelse jid:remove_resource(InnerTo) =:= jid:remove_resource(To)) of
+                true -> enqueue_push(Node,Host,Inner#message{to=To});
+                false -> ok
+            end;
+        _ -> ok
+    end;
+enqueue_push(Node, Host, #message{type=Type,from=From,to=#jid{}=To,body=Body,id=ID,sub_els=Els} = Packet)
   when Type=:=chat; Type=:=groupchat ->
     case allowed(Packet) andalso lists:any(fun(#text{data=D}) -> D =/= <<>> end,Body) andalso
          To#jid.lserver =:= Host andalso push_sender(Type,From,To) of
@@ -124,7 +154,14 @@ enqueue_push(Node, Host, #message{type=Type,from=From,to=To,body=Body,id=ID,sub_
             %% repeated hook invocations; missing IDs get a fresh server nonce.
             SIDs = [SID || #stanza_id{id=SID,by=#jid{lserver=H}} <- Els,
                            H =:= Host orelse H =:= voicehost_rooms:room_host(Host)],
-            Stamp = case {ID,SIDs} of {<<>>,[]} -> crypto:strong_rand_bytes(16); _ -> {ID,SIDs} end,
+            RoomSIDs = [SID || #stanza_id{id=SID,by=By} <- Els,
+                              By =:= jid:remove_resource(From)],
+            Stamp = case {Type,RoomSIDs,ID,SIDs} of
+                        {groupchat,[SID],_,_} -> {room_stanza,SID};
+                        {_,_,<<>>,[]} -> crypto:strong_rand_bytes(16);
+                        {groupchat,_,_,_} -> {From#jid.lresource,ID,SIDs};
+                        _ -> {ID,SIDs}
+                    end,
             Key = hex(crypto:hash(sha256,term_to_binary({Node,jid:remove_resource(From),jid:remove_resource(To),Stamp}))),
             Event = #voicehost_push_event{key=Key,host=Host,node=Node,
                         jid=jid:encode(jid:make(To#jid.luser,Host)),
@@ -153,6 +190,41 @@ push_sender(groupchat,#jid{lresource=Nick}=Room,#jid{lserver=H,luser=U}) ->
         _ -> false
     end;
 push_sender(_,_,_) -> false.
+
+%% Preserve the device node's owner before mod_push handles enable. A failed
+%% enable cannot generate a notification. Nodes cannot be reassigned by a
+%% different identity, and delivery still rechecks enabled room membership.
+remember_push_node(#iq{type=set,sub_els=[#push_enable{
+                      jid=#jid{luser= <<>>,lserver=Host,lresource= <<>>},node=Node}]},
+                   #jid{luser=User,lserver=Host}) ->
+    case valid_push_node(Node) of
+        true ->
+            _ = mnesia:transaction(fun() ->
+                mnesia:lock({table,voicehost_push_owner},write),
+                case mnesia:read(voicehost_push_owner,{Host,Node},write) of
+                    [] ->
+                        case mnesia:table_info(voicehost_push_owner,size) < 50000 of
+                            true -> mnesia:write(#voicehost_push_owner{key={Host,Node},user=User,
+                                               updated=erlang:system_time(second)});
+                            false -> mnesia:abort(push_owner_full)
+                        end;
+                    [#voicehost_push_owner{user=User}=Owner] ->
+                        mnesia:write(Owner#voicehost_push_owner{updated=erlang:system_time(second)});
+                    [_] -> ok
+                end
+            end), ok;
+        false -> ok
+    end;
+remember_push_node(#iq{type=set,sub_els=[#push_disable{
+                      jid=#jid{luser= <<>>,lserver=Host,lresource= <<>>},node=Node}]},
+                   #jid{luser=User,lserver=Host}) when is_binary(Node) ->
+    _ = mnesia:transaction(fun() ->
+        case mnesia:read(voicehost_push_owner,{Host,Node},write) of
+            [#voicehost_push_owner{user=User}] -> mnesia:delete({voicehost_push_owner,{Host,Node}});
+            _ -> ok
+        end
+    end), ok;
+remember_push_node(_,_) -> ok.
 
 hex(Bytes) -> << <<(hex_digit(B bsr 4)),(hex_digit(B band 15))>> || <<B>> <= Bytes >>.
 hex_digit(N) when N < 10 -> $0 + N;
@@ -422,7 +494,7 @@ user_send({Packet, State} = Acc) ->
                     end;
                 _ ->
                     case allowed(Packet) of
-                        true -> Acc;
+                        true -> remember_push_node(Packet,JID), Acc;
                         false -> {stop, {drop, State}}
                     end
             end
@@ -467,3 +539,4 @@ roster_info(_Acc, User, Host, JID) ->
         true -> {both, none, [<<"Account users">>]};
         false -> {none, none, []}
     end.
+
