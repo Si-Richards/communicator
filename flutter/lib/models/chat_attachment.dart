@@ -33,8 +33,14 @@ class ChatAttachment {
   final String mediaType;
   final int size;
   final String sha256;
+  bool get isGif => mediaType == 'image/gif';
   bool get isImage => mediaType.startsWith('image/');
-  String get summary => '${isImage ? 'Photo' : 'File'}: $name';
+  String get summary =>
+      '${isGif
+          ? 'GIF'
+          : isImage
+          ? 'Photo'
+          : 'File'}: $name';
   String get sizeLabel => size < 1024 * 1024
       ? '${(size / 1024).ceil()} KB'
       : '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';

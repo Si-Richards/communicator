@@ -15,12 +15,14 @@ void main() {
       );
       await tester.tap(find.text('Directory'));
       await tester.pumpAndSettle();
-      expect(find.text('Reception'), findsOneWidget);
-      expect(find.text('Extension 208'), findsOneWidget);
+      expect(find.text('Reception · 208'), findsOneWidget);
       expect(find.textContaining('10000*'), findsNothing);
-      await tester.enterText(find.byType(TextField), '208');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Search name or extension'),
+        '208',
+      );
       await tester.pump();
-      await tester.tap(find.text('Reception'));
+      await tester.tap(find.text('Reception · 208'));
       await tester.pumpAndSettle();
       expect(find.text('Reception · 208'), findsOneWidget);
       expect(find.textContaining('ejabberd.voicehost.io'), findsNothing);
@@ -58,6 +60,9 @@ void main() {
 }
 
 class _DirectoryService extends XmppService {
+  // This UI fixture has no transport for feature discovery.
+  @override
+  void prepareConversation(String value) {}
   @override
   bool get online => true;
   @override

@@ -7,6 +7,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:xml/xml.dart';
 
 import '../models/chat_message.dart';
+import '../models/chat_text_format.dart';
+import '../models/chat_reaction.dart';
 import '../models/chat_attachment.dart';
 import '../models/messaging_contact.dart';
 import '../models/messaging_room.dart';
@@ -15,6 +17,7 @@ import '../models/provisioning.dart';
 import 'chat_history_repository.dart';
 
 part 'xmpp_rooms.dart';
+part 'xmpp_reactions.dart';
 
 enum XmppState {
   disconnected,
@@ -57,6 +60,9 @@ class XmppService extends ChangeNotifier {
   static const _sid = 'urn:xmpp:sid:0';
   static const _disco = 'http://jabber.org/protocol/disco#info';
   static const _roster = 'jabber:iq:roster';
+  final Map<String, ChatReaction> _reactions = {};
+  final Map<String, (ChatReaction, ChatReaction?)> _pendingReactions = {};
+  final Map<String, List<ChatReaction>> _archiveReactions = {};
   Future<List<MessagingRoom>> Function()? roomLoader;
   final Map<String, MessagingRoom> _rooms = {};
   final Set<String> _joinedRooms = {},
@@ -78,6 +84,7 @@ class XmppService extends ChangeNotifier {
   void _notifyRoomListeners() {
     if (!_disposed) notifyListeners();
   }
+
   final ChatHistoryRepository _history;
   Future<void> _storageQueue = Future.value();
   final Map<String, Completer<XmlElement>> _pendingIq = {};
@@ -463,8 +470,7 @@ class XmppService extends ChangeNotifier {
     }
     if (!configuration.ready) {
       disconnect(clearMessages: true);
-      _error =
-          'Your messaging account is being prepared. Refresh provisioning shortly.';
+      _error = 'Your messaging account is being prepared. Refresh provisioning shortly.';
       _setState(XmppState.disconnected);
       return;
     }
@@ -576,6 +582,8 @@ class XmppService extends ChangeNotifier {
     _wanted = false;
     _closeTransport();
     final accountGeneration = ++_accountGeneration;
+    _reactions.clear();
+    _pendingReactions.clear();
     _messages.clear();
     _rooms.clear();
     _roomOldest.clear();
@@ -633,6 +641,19 @@ class XmppService extends ChangeNotifier {
       }
 
       mergeHistory(snapshot);
+      for (final update in snapshot.reactionUpdates) {
+        try {
+          final room = MessagingRoom.validJid(update.peer, _domain);
+          if (!room) recipientJid(update.peer);
+          if (update.actor != _account) recipientJid(update.actor);
+          if (!room && update.actor != _account && update.actor != update.peer) {
+            continue;
+          }
+          _rememberReaction(update);
+        } on ArgumentError {
+          /* Metadata outside this account is discarded. */
+        }
+      }
       _shareTyping = snapshot.shareTyping;
       _shareReadReceipts = snapshot.shareReadReceipts;
       _ownPresence = snapshot.presence;
@@ -664,8 +685,7 @@ class XmppService extends ChangeNotifier {
           _migratedHistoryAccounts.add(previousStorage);
           migrated = true;
         } catch (_) {
-          _historyError =
-              'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
+          _historyError = 'Some earlier saved history could not be opened. Archive recovery will still be attempted.';
         }
       }
       _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -681,8 +701,7 @@ class XmppService extends ChangeNotifier {
     } catch (_) {
       if (_disposed || accountGeneration != _accountGeneration) return;
       // Do not overwrite an unreadable cache with an empty history.
-      _historyError =
-          'Saved history could not be opened. Archive recovery will still be attempted.';
+      _historyError = 'Saved history could not be opened. Archive recovery will still be attempted.';
     }
     if (!_accessAllowed ||
         _disposed ||
@@ -713,7 +732,7 @@ class XmppService extends ChangeNotifier {
     var start = _messages.length > 2000 ? _messages.length - 2000 : 0;
     var bytes = 0;
     for (var index = _messages.length - 1; index >= start; index--) {
-      bytes += utf8.encode(_messages[index].body).length + 1024;
+      bytes += utf8.encode(jsonEncode(_messages[index].toJson())).length + 1024;
       if (bytes > 4 * 1024 * 1024) {
         start = index + 1;
         break;
@@ -734,6 +753,7 @@ class XmppService extends ChangeNotifier {
         shareReadReceipts: _shareReadReceipts,
         presence: _ownPresence,
         statusUpdates: _recoveredUpdates.toList(),
+        reactionUpdates: _reactions.values.toList(),
       ).toJson(),
     );
     final operation = _storageQueue.then(
@@ -844,9 +864,8 @@ class XmppService extends ChangeNotifier {
         return;
       }
       // RFC 7395 allows several complete XML elements in one text frame.
-      final elements = XmlDocumentFragment.parse(
-        data,
-      ).children.whereType<XmlElement>();
+      final elements = XmlDocumentFragment.parse(data).children
+          .whereType<XmlElement>();
       for (final element in elements) {
         if (_channel == null) break;
         final name = element.name.local;
@@ -1014,6 +1033,8 @@ class XmppService extends ChangeNotifier {
                   _markers,
                   _receipts,
                   ChatAttachment.namespace,
+                  ChatReaction.namespace,
+                  ChatTextFormat.htmlNamespace,
                 ])
                   _element('feature', _disco, attributes: {'var': feature}),
               ],
@@ -1236,9 +1257,8 @@ class XmppService extends ChangeNotifier {
     if (!_isCanonicalAccount) return bare;
     final parts = bare.split('@');
     if (parts.length != 2 || parts.last != _domain) return bare;
-    final match = RegExp(
-      r'^([0-9]+)\*([0-9]{3,5})[a-z]*$',
-    ).firstMatch(parts.first);
+    final match = RegExp(r'^([0-9]+)\*([0-9]{3,5})[a-z]*$')
+        .firstMatch(parts.first);
     if (match == null || match.group(1) != accountNumber) return bare;
     return '${match.group(1)}*${match.group(2)}@$_domain';
   }
@@ -1325,12 +1345,14 @@ class XmppService extends ChangeNotifier {
     required String recipient,
     required String body,
     ChatAttachment? attachment,
+    List<ChatTextFormat> formatting = const [],
   }) {
     if (!online) throw StateError('Messaging is not online.');
     final peer = recipientJid(recipient);
     if (body.trim().isEmpty || body.length > 10000) {
       throw ArgumentError('Enter a message of up to 10,000 characters.');
     }
+    final richText = ChatTextFormat.encode(body, formatting);
     final id = _id();
     _send(
       _element(
@@ -1343,6 +1365,7 @@ class XmppService extends ChangeNotifier {
         },
         children: [
           _element('body', _client, text: body),
+          ?richText,
           if (attachment != null)
             _element(
               'attachment',
@@ -1371,6 +1394,7 @@ class XmppService extends ChangeNotifier {
         timestamp: DateTime.now(),
         status: ChatMessageStatus.sent,
         attachment: attachment,
+        formatting: formatting,
         senderJid: isRoom(peer) ? _account : null,
       ),
     );
@@ -1470,9 +1494,11 @@ class XmppService extends ChangeNotifier {
               message.getAttribute('id')
         : message.getAttribute('id');
     if (message.getAttribute('type') == 'error') {
+      _rejectReaction(id, peer);
       _updateStatus(id, peer, ChatMessageStatus.failed);
       return;
     }
+    if (_receiveReaction(message, peer, outgoing ? _account! : peer)) return;
     final receipt = message.getElement('received', namespace: _receipts);
     if (receipt != null && !outgoing) {
       _updateStatus(
@@ -1546,6 +1572,7 @@ class XmppService extends ChangeNotifier {
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: _trustedArchiveId(message),
         attachment: _attachment(message),
+        formatting: ChatTextFormat.decode(message, body),
         markable:
             !outgoing &&
             id != null &&
@@ -1653,8 +1680,7 @@ class XmppService extends ChangeNotifier {
           // discarding the local cache. Old gaps may no longer exist on server.
           _cursor = null;
           await _archivePage(before: '');
-          _historyError =
-              'The archive cursor expired. Recent available history was recovered.';
+          _historyError = 'The archive cursor expired. Recent available history was recovered.';
         }
       }
     } catch (_) {
@@ -1715,6 +1741,8 @@ class XmppService extends ChangeNotifier {
     final updates = <ChatMessageUpdate>[];
     _archiveResults[queryId] = results;
     _archiveUpdates[queryId] = updates;
+    final reactions = <ChatReaction>[];
+    _archiveReactions[queryId] = reactions;
     try {
       final response = await _query(
         id,
@@ -1776,7 +1804,10 @@ class XmppService extends ChangeNotifier {
       final set = fin.getElement('set', namespace: _rsm);
       final first = set?.getElement('first', namespace: _rsm)?.innerText;
       final last = set?.getElement('last', namespace: _rsm)?.innerText;
-      if ((!complete || results.isNotEmpty || updates.isNotEmpty) &&
+      if ((!complete ||
+              results.isNotEmpty ||
+              updates.isNotEmpty ||
+              reactions.isNotEmpty) &&
           (first == null || first.isEmpty || last == null || last.isEmpty)) {
         throw StateError('Missing archive cursors.');
       }
@@ -1806,6 +1837,9 @@ class XmppService extends ChangeNotifier {
         _rememberUpdate(update);
       }
       _reapplyUpdates();
+      for (final reaction in reactions) {
+        _rememberReaction(reaction);
+      }
       final oldCursor = _cursor;
       final oldOldest = _oldest;
       final oldHasOlder = _hasOlder;
@@ -1835,6 +1869,7 @@ class XmppService extends ChangeNotifier {
     } finally {
       _archiveResults.remove(queryId);
       _archiveUpdates.remove(queryId);
+      _archiveReactions.remove(queryId);
     }
   }
 
@@ -1848,10 +1883,12 @@ class XmppService extends ChangeNotifier {
     if (from != null && _bare(from) != _account) return;
     final results = _archiveResults[result.getAttribute('queryid')];
     final updates = _archiveUpdates[result.getAttribute('queryid')];
+    final reactions = _archiveReactions[result.getAttribute('queryid')];
     final archiveId = result.getAttribute('id');
     if (results == null ||
         updates == null ||
-        results.length + updates.length >= 100 ||
+        reactions == null ||
+        results.length + updates.length + reactions.length >= 100 ||
         archiveId == null ||
         archiveId.isEmpty) {
       return;
@@ -1875,6 +1912,12 @@ class XmppService extends ChangeNotifier {
     try {
       recipientJid(peer);
     } catch (_) {
+      return;
+    }
+    if (message.getElement('reactions', namespace: ChatReaction.namespace) !=
+        null) {
+      final reaction = _parseReaction(message, peer, sender, timestamp);
+      if (reaction != null) reactions.add(reaction);
       return;
     }
     final displayed = message
@@ -1911,6 +1954,7 @@ class XmppService extends ChangeNotifier {
         status: outgoing ? ChatMessageStatus.sent : ChatMessageStatus.received,
         archiveId: archiveId,
         attachment: _attachment(message),
+        formatting: ChatTextFormat.decode(message, body),
         markable:
             !outgoing &&
             message.getAttribute('id') != null &&
@@ -1954,6 +1998,8 @@ class XmppService extends ChangeNotifier {
     _boundJid = null;
     _error = null;
     if (clearMessages) {
+      _reactions.clear();
+      _pendingReactions.clear();
       _messages.clear();
       _rooms.clear();
       _roomOldest.clear();
@@ -2084,6 +2130,8 @@ class XmppService extends ChangeNotifier {
     _accountGeneration++;
     _wanted = false;
     _password = null;
+    _reactions.clear();
+    _pendingReactions.clear();
     _messages.clear();
     _rooms.clear();
     _roomOldest.clear();

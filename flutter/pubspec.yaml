@@ -18,6 +18,7 @@ dependencies:
   http: ^1.5.0
   dartdap: ^0.11.4
   xml: ^6.6.1
+  characters: ^1.4.0
   cryptography: ^2.9.0
   crypto: ^3.0.6
   path_provider: ^2.1.5

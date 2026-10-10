@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
@@ -6,6 +7,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/chat_message.dart';
+import '../models/chat_reaction.dart';
+import '../services/chat_gif_service.dart';
+import 'chat_rich_text.dart';
+import 'chat_gif_picker.dart';
+import 'chat_gif_message.dart';
 import '../models/messaging_room.dart';
 import '../models/chat_attachment.dart';
 import '../controllers/provisioning_controller.dart';
@@ -16,10 +22,25 @@ import 'messaging_diagnostics_screen.dart';
 
 final messagingRouteObserver = RouteObserver<ModalRoute<dynamic>>();
 
-class MessagesScreen extends StatelessWidget {
+class MessagesScreen extends StatefulWidget {
   const MessagesScreen({super.key, required this.messaging, this.provisioning});
   final XmppService messaging;
   final ProvisioningController? provisioning;
+
+  @override
+  State<MessagesScreen> createState() => _MessagesScreenState();
+}
+
+class _MessagesScreenState extends State<MessagesScreen> {
+  XmppService get messaging => widget.messaging;
+  ProvisioningController? get provisioning => widget.provisioning;
+  final _search = TextEditingController();
+  String _query = '';
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   Future<void> _newChat(BuildContext context) async {
     final recipient = await showDialog<String>(
@@ -77,8 +98,17 @@ class MessagesScreen extends StatelessWidget {
       for (final message in messaging.messages) {
         latest[message.peer] = message;
       }
-      final conversations = latest.values.toList()
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final conversations =
+          latest.values
+              .where(
+                (message) => _matchesMessagingSearch(_query, [
+                  messaging.contactLabel(message.peer),
+                  message.peer,
+                  message.body,
+                ]),
+              )
+              .toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       return DefaultTabController(
         length: 3,
         child: Scaffold(
@@ -171,14 +201,37 @@ class MessagesScreen extends StatelessWidget {
                           : null,
                       child: const Text('Load older messages'),
                     ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: TextField(
+                      controller: _search,
+                      decoration: InputDecoration(
+                        hintText: 'Search conversations',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _query.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear conversation search',
+                                onPressed: () {
+                                  _search.clear();
+                                  setState(() => _query = '');
+                                },
+                                icon: const Icon(Icons.close),
+                              ),
+                      ),
+                      onChanged: (value) => setState(() => _query = value),
+                    ),
+                  ),
                   const Divider(height: 1),
                   Expanded(
                     child: conversations.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Padding(
-                              padding: EdgeInsets.all(24),
+                              padding: const EdgeInsets.all(24),
                               child: Text(
-                                'No conversations yet. Start a conversation when messaging is online.',
+                                _query.trim().isNotEmpty
+                                    ? 'No matching conversations.'
+                                    : 'No conversations yet. Start a conversation when messaging is online.',
                                 textAlign: TextAlign.center,
                               ),
                             ),
@@ -216,14 +269,13 @@ class MessagesScreen extends StatelessWidget {
                                         '${messaging.unreadFor(message.peer)} unread',
                                       ),
                                     Text(
-                                      MaterialLocalizations.of(
-                                        context,
-                                      ).formatShortDate(
-                                        message.timestamp.toLocal(),
-                                      ),
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.labelSmall,
+                                      MaterialLocalizations.of(context)
+                                          .formatShortDate(
+                                            message.timestamp.toLocal(),
+                                          ),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall,
                                     ),
                                     Text(
                                       TimeOfDay.fromDateTime(
@@ -328,9 +380,8 @@ class _MessageStatusIcon extends StatelessWidget {
               ? const Color(0xFF80D8FF)
               : status == ChatMessageStatus.failed
               ? const Color(0xFFFFAB91)
-              : Theme.of(
-                  context,
-                ).colorScheme.onSecondary.withValues(alpha: 0.75),
+              : Theme.of(context).colorScheme.onSecondary
+                    .withValues(alpha: 0.75),
         ),
       ),
     );
@@ -547,7 +598,7 @@ class MessagingChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<MessagingChatScreen>
     with WidgetsBindingObserver, RouteAware {
-  final _text = TextEditingController();
+  final _text = ChatRichTextController();
   final _scroll = ScrollController();
   final _viewport = GlobalKey();
   final _messageKeys = <String, GlobalKey>{};
@@ -561,6 +612,7 @@ class _ChatScreenState extends State<MessagingChatScreen>
   String? _draftDevice;
   String? _draftPeer;
   bool _draftPhoto = false;
+  ChatGif? _draftGif;
 
   bool _attachmentOwnerAllowed(String? owner, String? device) =>
       mounted &&
@@ -572,9 +624,8 @@ class _ChatScreenState extends State<MessagingChatScreen>
 
   void _attachmentError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _selectAttachment(String source) async {
@@ -592,7 +643,7 @@ class _ChatScreenState extends State<MessagingChatScreen>
       String name;
       Stream<List<int>> stream;
       int? size;
-      if (source == 'file') {
+      if (source == 'file' || source == 'gif') {
         final file = await FilePicker.pickFile();
         if (file == null) {
           return;
@@ -617,6 +668,9 @@ class _ChatScreenState extends State<MessagingChatScreen>
         throw ArgumentError('Attachments must be no larger than 10 MB.');
       }
       final bytes = await readAttachmentBytes(stream);
+      if (source == 'gif' && !ChatGifService.isGif(bytes)) {
+        throw ArgumentError('Choose a GIF file.');
+      }
       if (!_attachmentOwnerAllowed(owner, device) || widget.peer != peer) {
         return;
       }
@@ -629,9 +683,10 @@ class _ChatScreenState extends State<MessagingChatScreen>
       if (name.isEmpty) name = 'attachment';
       if (name.length > 160) name = name.substring(0, 160);
       setState(() {
+        _draftGif = null;
         _draftBytes = bytes;
         _draftName = name;
-        _draftPhoto = source != 'file';
+        _draftPhoto = source != 'file' || ChatGifService.isGif(bytes);
         _draftOwner = owner;
         _draftDevice = device;
         _draftPeer = peer;
@@ -647,6 +702,141 @@ class _ChatScreenState extends State<MessagingChatScreen>
     }
   }
 
+  Future<void> _chooseGif() async {
+    if (ChatGifService.configuredKey.isEmpty) {
+      await _selectAttachment('gif');
+      return;
+    }
+    final owner = widget.provisioning?.configuration?.messaging?.jid;
+    final device = widget.provisioning?.deviceId;
+    final peer = widget.peer;
+    final gif = await showDialog<ChatGif>(
+      context: context,
+      builder: (_) => const ChatGifPicker(),
+    );
+    if (gif == null ||
+        !_attachmentOwnerAllowed(owner, device) ||
+        peer != widget.peer) {
+      return;
+    }
+    setState(() {
+      _attachmentBusy = true;
+      _attachmentActivity = 'Preparing GIF…';
+    });
+    final service = ChatGifService();
+    try {
+      final bytes = await service.download(gif);
+      if (!_attachmentOwnerAllowed(owner, device) || peer != widget.peer) {
+        return;
+      }
+      setState(() {
+        _draftBytes = bytes;
+        _draftName = 'animation.gif';
+        _draftGif = gif;
+        _draftPhoto = true;
+        _draftOwner = owner;
+        _draftDevice = device;
+        _draftPeer = peer;
+      });
+    } catch (_) {
+      _attachmentError('Could not download this GIF. Please retry.');
+    } finally {
+      service.close();
+      if (mounted) {
+        setState(() {
+          _attachmentBusy = false;
+        });
+      }
+    }
+  }
+
+  void _react(ChatMessage message, String emoji) {
+    try {
+      widget.messaging.toggleReaction(message, emoji);
+    } catch (_) {
+      _attachmentError('Could not react. Check your connection and retry.');
+    }
+  }
+
+  Future<void> _chooseReaction(ChatMessage message) async {
+    final mine =
+        widget.messaging.reactionsFor(message)[widget.messaging.jid] ??
+        const <String>[];
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('React to message'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final emoji in ChatReaction.choices)
+                    IconButton(
+                      tooltip: mine.contains(emoji)
+                          ? 'Remove $emoji reaction'
+                          : 'React $emoji',
+                      isSelected: mine.contains(emoji),
+                      onPressed: () => Navigator.pop(context, emoji),
+                      icon: Text(emoji, style: const TextStyle(fontSize: 26)),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (emoji != null && mounted) _react(message, emoji);
+  }
+
+  Widget _reactionChips(ChatMessage message) {
+    final reactions = widget.messaging.reactionsFor(message);
+    final grouped = <String, List<String>>{};
+    for (final entry in reactions.entries) {
+      for (final emoji in entry.value) {
+        grouped.putIfAbsent(emoji, () => []).add(entry.key);
+      }
+    }
+    return Wrap(
+      spacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final entry in grouped.entries)
+          Tooltip(
+            message: entry.value
+                .map(
+                  (jid) => jid == widget.messaging.jid
+                      ? 'You'
+                      : widget.messaging.contactLabel(jid),
+                )
+                .join(', '),
+            child: FilterChip(
+              label: Text('${entry.key} ${entry.value.length}'),
+              selected: entry.value.contains(widget.messaging.jid),
+              onSelected:
+                  widget.messaging.canReact(message) &&
+                      ChatReaction.choices.contains(entry.key)
+                  ? (_) => _react(message, entry.key)
+                  : null,
+            ),
+          ),
+        if (widget.messaging.canReact(message))
+          IconButton(
+            tooltip: 'React to message',
+            visualDensity: VisualDensity.compact,
+            iconSize: 18,
+            onPressed: () => _chooseReaction(message),
+            icon: const Icon(Icons.add_reaction_outlined),
+          ),
+      ],
+    );
+  }
+
   Future<void> _sendAttachment() async {
     final bytes = _draftBytes;
     if (bytes == null ||
@@ -655,7 +845,9 @@ class _ChatScreenState extends State<MessagingChatScreen>
         _draftPeer != widget.peer) {
       return;
     }
+    final gif = _draftGif;
     final caption = _text.text;
+    final formatting = _text.formatting;
     final peer = widget.peer;
     setState(() {
       _attachmentBusy = true;
@@ -677,11 +869,17 @@ class _ChatScreenState extends State<MessagingChatScreen>
         recipient: peer,
         body: caption.trim().isEmpty ? attachment.summary : caption,
         attachment: attachment,
+        formatting: caption.trim().isEmpty ? const [] : formatting,
       );
       setState(() {
         _draftBytes = null;
         _draftName = null;
+        _draftGif = null;
       });
+      if (gif != null) {
+        final provider = ChatGifService();
+        unawaited(provider.registerShare(gif).whenComplete(provider.close));
+      }
       _text.clear();
     } catch (_) {
       _attachmentError(
@@ -909,6 +1107,8 @@ class _ChatScreenState extends State<MessagingChatScreen>
         }
       }
     });
+    // A lifecycle/route callback can run without a pending frame.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
@@ -928,7 +1128,11 @@ class _ChatScreenState extends State<MessagingChatScreen>
       return;
     }
     try {
-      widget.messaging.sendMessage(recipient: widget.peer, body: _text.text);
+      widget.messaging.sendMessage(
+        recipient: widget.peer,
+        body: _text.text,
+        formatting: _text.formatting,
+      );
       _text.clear();
     } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1072,128 +1276,146 @@ class _ChatScreenState extends State<MessagingChatScreen>
                       alignment: message.outgoing
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(12),
-                        constraints: BoxConstraints(
-                          maxWidth: MediaQuery.sizeOf(context).width * 0.8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: message.outgoing
-                              ? colors.secondary
-                              : colors.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (message.senderJid != null)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 4),
-                                child: Text(
-                                  widget.messaging.contactLabel(
-                                    message.senderJid!,
+                      child: GestureDetector(
+                        onLongPress: widget.messaging.canReact(message)
+                            ? () => _chooseReaction(message)
+                            : null,
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.sizeOf(context).width * 0.8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: message.outgoing
+                                ? colors.secondary
+                                : colors.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (message.senderJid != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    widget.messaging.contactLabel(
+                                      message.senderJid!,
+                                    ),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                      color: message.outgoing
+                                          ? colors.onSecondary
+                                          : colors.onSurface,
+                                    ),
                                   ),
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                    color: message.outgoing
+                                ),
+                              if (message.attachment != null)
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: message.outgoing
                                         ? colors.onSecondary
                                         : colors.onSurface,
                                   ),
-                                ),
-                              ),
-                            if (message.attachment != null)
-                              TextButton.icon(
-                                style: TextButton.styleFrom(
-                                  foregroundColor: message.outgoing
-                                      ? colors.onSecondary
-                                      : colors.onSurface,
-                                ),
-                                onPressed:
-                                    !_attachmentBusy &&
-                                        widget
-                                                .provisioning
-                                                ?.attachmentsAvailable ==
-                                            true
-                                    ? () => _openAttachment(message.attachment!)
-                                    : null,
-                                icon: Icon(
-                                  message.attachment!.isImage
-                                      ? Icons.photo_outlined
-                                      : Icons.insert_drive_file_outlined,
-                                ),
-                                label: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      message.attachment!.name,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text(
-                                      '${message.attachment!.sizeLabel} · ${message.attachment!.isImage ? 'View photo' : 'Save file'}',
-                                      style: const TextStyle(fontSize: 11),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (message.attachment == null ||
-                                message.body != message.attachment!.summary)
-                              Text(
-                                message.body,
-                                style: TextStyle(
-                                  color: message.outgoing
-                                      ? colors.onSecondary
-                                      : colors.onSurface,
-                                ),
-                              ),
-                            const SizedBox(height: 5),
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 6,
-                              children: [
-                                Text(
-                                  '${MaterialLocalizations.of(context).formatShortDate(message.timestamp.toLocal())} · '
-                                  '${TimeOfDay.fromDateTime(message.timestamp.toLocal()).format(context)}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: message.outgoing
-                                        ? colors.onSecondary.withValues(
-                                            alpha: 0.75,
-                                          )
-                                        : colors.onSurfaceVariant,
+                                  onPressed:
+                                      !_attachmentBusy &&
+                                          widget
+                                                  .provisioning
+                                                  ?.attachmentsAvailable ==
+                                              true
+                                      ? () =>
+                                            _openAttachment(message.attachment!)
+                                      : null,
+                                  icon: Icon(
+                                    message.attachment!.isImage
+                                        ? Icons.photo_outlined
+                                        : Icons.insert_drive_file_outlined,
+                                  ),
+                                  label: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        message.attachment!.name,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Text(
+                                        '${message.attachment!.sizeLabel} · ${message.attachment!.isImage ? 'View photo' : 'Save file'}',
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                if (message.outgoing &&
-                                    widget.messaging.isRoom(widget.peer))
+                              if (message.attachment == null ||
+                                  message.body != message.attachment!.summary)
+                                Text.rich(
+                                  chatSpan(
+                                    message.body,
+                                    message.formatting,
+                                    TextStyle(
+                                      color: message.outgoing
+                                          ? colors.onSecondary
+                                          : colors.onSurface,
+                                    ),
+                                  ),
+                                ),
+                              if (message.attachment?.isGif == true &&
+                                  widget.provisioning != null)
+                                ChatGifMessage(
+                                  provisioning: widget.provisioning!,
+                                  peer: widget.peer,
+                                  attachment: message.attachment!,
+                                ),
+                              _reactionChips(message),
+                              const SizedBox(height: 5),
+                              Wrap(
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 6,
+                                children: [
                                   Text(
-                                    message.status == ChatMessageStatus.sent
-                                        ? 'Sent'
-                                        : message.status ==
-                                              ChatMessageStatus.failed
-                                        ? 'Failed'
-                                        : 'In room',
+                                    '${MaterialLocalizations.of(context).formatShortDate(message.timestamp.toLocal())} · '
+                                    '${TimeOfDay.fromDateTime(message.timestamp.toLocal()).format(context)}',
                                     style: TextStyle(
                                       fontSize: 11,
-                                      color: colors.onSecondary,
+                                      color: message.outgoing
+                                          ? colors.onSecondary.withValues(
+                                              alpha: 0.75,
+                                            )
+                                          : colors.onSurfaceVariant,
                                     ),
                                   ),
-                                if (message.outgoing &&
-                                    !widget.messaging.isRoom(widget.peer))
-                                  _MessageStatusIcon(status: message.status),
-                                if (message.outgoing &&
-                                    message.readBy.isNotEmpty)
-                                  Text(
-                                    'Read by ${message.readBy.length}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: colors.onSecondary,
+                                  if (message.outgoing &&
+                                      widget.messaging.isRoom(widget.peer))
+                                    Text(
+                                      message.status == ChatMessageStatus.sent
+                                          ? 'Sent'
+                                          : message.status ==
+                                                ChatMessageStatus.failed
+                                          ? 'Failed'
+                                          : 'In room',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: colors.onSecondary,
+                                      ),
                                     ),
-                                  ),
-                              ],
-                            ),
-                          ],
+                                  if (message.outgoing &&
+                                      !widget.messaging.isRoom(widget.peer))
+                                    _MessageStatusIcon(status: message.status),
+                                  if (message.outgoing &&
+                                      message.readBy.isNotEmpty)
+                                    Text(
+                                      'Read by ${message.readBy.length}',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: colors.onSecondary,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -1245,6 +1467,10 @@ class _ChatScreenState extends State<MessagingChatScreen>
                     ),
                   ),
                 ),
+              ChatFormattingToolbar(
+                controller: _text,
+                enabled: widget.messaging.online && !_attachmentBusy,
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
                 child: Row(
@@ -1269,8 +1495,20 @@ class _ChatScreenState extends State<MessagingChatScreen>
                             value: 'file',
                             child: Text('Choose file'),
                           ),
+                          const PopupMenuItem(
+                            value: 'gif',
+                            child: Text('Choose GIF file'),
+                          ),
                         ],
                         icon: const Icon(Icons.attach_file),
+                      ),
+                    if (widget.provisioning?.attachmentsAvailable == true)
+                      IconButton(
+                        tooltip: 'Choose GIF',
+                        icon: const Icon(Icons.gif_box_outlined),
+                        onPressed: widget.messaging.online && !_attachmentBusy
+                            ? _chooseGif
+                            : null,
                       ),
                     Expanded(
                       child: TextField(
@@ -1304,7 +1542,7 @@ class _ChatScreenState extends State<MessagingChatScreen>
   );
 }
 
-class _RoomsPanel extends StatelessWidget {
+class _RoomsPanel extends StatefulWidget {
   const _RoomsPanel({
     required this.messaging,
     required this.provisioning,
@@ -1313,6 +1551,22 @@ class _RoomsPanel extends StatelessWidget {
   final XmppService messaging;
   final ProvisioningController? provisioning;
   final ValueChanged<String> onSelect;
+
+  @override
+  State<_RoomsPanel> createState() => _RoomsPanelState();
+}
+
+class _RoomsPanelState extends State<_RoomsPanel> {
+  XmppService get messaging => widget.messaging;
+  ProvisioningController? get provisioning => widget.provisioning;
+  ValueChanged<String> get onSelect => widget.onSelect;
+  final _search = TextEditingController();
+  String _query = '';
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   Future<void> _create(BuildContext context) async {
     if (provisioning == null) return;
@@ -1327,8 +1581,17 @@ class _RoomsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rooms = messaging.rooms.toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+    final rooms =
+        messaging.rooms
+            .where(
+              (r) => _matchesMessagingSearch(_query, [
+                r.name,
+                r.jid,
+                ...r.members.map((m) => '${m.name} ${m.extension}'),
+              ]),
+            )
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
     return Column(
       children: [
         Padding(
@@ -1361,6 +1624,27 @@ class _RoomsPanel extends StatelessWidget {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: TextField(
+            controller: _search,
+            decoration: InputDecoration(
+              hintText: 'Search rooms',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear room search',
+                      onPressed: () {
+                        _search.clear();
+                        setState(() => _query = '');
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+            ),
+            onChanged: (value) => setState(() => _query = value),
+          ),
+        ),
         if (messaging.roomsBusy) const LinearProgressIndicator(),
         if (messaging.roomsError != null)
           Padding(
@@ -1369,8 +1653,12 @@ class _RoomsPanel extends StatelessWidget {
           ),
         Expanded(
           child: rooms.isEmpty
-              ? const Center(
-                  child: Text('Create a room with users from your account.'),
+              ? Center(
+                  child: Text(
+                    _query.trim().isNotEmpty
+                        ? 'No matching rooms.'
+                        : 'Create a room with users from your account.',
+                  ),
                 )
               : ListView.builder(
                   itemCount: rooms.length,
@@ -1569,9 +1857,8 @@ class _RoomSettingsState extends State<_RoomSettings> {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
       }
       await widget.messaging.refreshRooms();
     } finally {
@@ -1627,9 +1914,7 @@ class _RoomSettingsState extends State<_RoomSettings> {
       builder: (context) => AlertDialog(
         title: Text(action == 'close' ? 'Close room?' : 'Leave room?'),
         content: Text(
-          action == 'close'
-              ? 'Members will lose access to this room.'
-              : 'You will lose access to this room. An owner must appoint another owner before leaving.',
+          action == 'close' ? 'Members will lose access to this room.' : 'You will lose access to this room. An owner must appoint another owner before leaving.',
         ),
         actions: [
           TextButton(
@@ -1754,4 +2039,9 @@ class _RoomSettingsState extends State<_RoomSettings> {
       );
     },
   );
+}
+
+bool _matchesMessagingSearch(String query, Iterable<String> values) {
+  final text = values.join(' ').toLowerCase();
+  return query.trim().toLowerCase().split(RegExp(r'\s+')).every(text.contains);
 }

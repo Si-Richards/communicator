@@ -1,4 +1,5 @@
 import 'chat_attachment.dart';
+import 'chat_text_format.dart';
 
 enum ChatMessageStatus { received, sent, delivered, read, failed }
 
@@ -42,6 +43,7 @@ class ChatMessage {
     this.displayed = false,
     this.attachment,
     this.senderJid,
+    this.formatting = const [],
     Set<String>? readBy,
   }) : readBy = readBy ?? <String>{};
 
@@ -51,6 +53,7 @@ class ChatMessage {
   String get key => senderJid == null ? id : "$senderJid|$id";
   final String peer;
   final String body;
+  final List<ChatTextFormat> formatting;
   final bool outgoing;
   final DateTime timestamp;
   final ChatAttachment? attachment;
@@ -80,6 +83,8 @@ class ChatMessage {
     if (senderJid != null) 'sender_jid': senderJid,
     if (readBy.isNotEmpty) 'read_by': readBy.toList(),
     'body': body,
+    if (formatting.isNotEmpty)
+      'formatting': formatting.map((r) => r.toJson()).toList(),
     'outgoing': outgoing,
     'timestamp': timestamp.toUtc().toIso8601String(),
     'status': status.name,
@@ -93,6 +98,10 @@ class ChatMessage {
     id: json['id'] as String,
     peer: json['peer'] as String,
     body: json['body'] as String,
+    formatting: ChatTextFormat.parse(
+      json['formatting'],
+      json['body'] as String,
+    ),
     outgoing: json['outgoing'] as bool,
     timestamp: DateTime.parse(json['timestamp'] as String).toLocal(),
     status: ChatMessageStatus.values.byName(json['status'] as String),

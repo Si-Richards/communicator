@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/chat_message.dart';
+import '../models/chat_reaction.dart';
 import '../models/messaging_presence.dart';
 
 class ChatHistorySnapshot {
@@ -20,6 +21,7 @@ class ChatHistorySnapshot {
     this.shareReadReceipts = true,
     this.presence = MessagingPresence.available,
     this.statusUpdates = const [],
+    this.reactionUpdates = const [],
   });
   final List<ChatMessage> messages;
   final String? cursor;
@@ -30,6 +32,7 @@ class ChatHistorySnapshot {
   final bool shareReadReceipts;
   final MessagingPresence presence;
   final List<ChatMessageUpdate> statusUpdates;
+  final List<ChatReaction> reactionUpdates;
 
   Map<String, dynamic> toJson() => {
     'version': 1,
@@ -42,6 +45,7 @@ class ChatHistorySnapshot {
     'share_read_receipts': shareReadReceipts,
     'presence': presence.name,
     'status_updates': statusUpdates.map((update) => update.toJson()).toList(),
+    'reaction_updates': reactionUpdates.map((r) => r.toJson()).toList(),
   };
 
   factory ChatHistorySnapshot.fromJson(Map<String, dynamic> json) {
@@ -77,6 +81,13 @@ class ChatHistorySnapshot {
                     Map<String, dynamic>.from(item as Map),
                   ),
                 )
+                .toList()
+          : const [],
+      reactionUpdates: json['reaction_updates'] is List
+          ? (json['reaction_updates'] as List)
+                .take(1000)
+                .map(ChatReaction.parse)
+                .whereType<ChatReaction>()
                 .toList()
           : const [],
       migratedAccounts: json['migrated_accounts'] is List

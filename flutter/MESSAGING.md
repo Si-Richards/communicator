@@ -1,3 +1,84 @@
+# Messaging: reactions, formatting, GIFs and search
+
+The messaging branch now adds these Flutter features to both direct conversations
+and private account rooms. The existing ejabberd module and provisioning attachment
+service support these changes; no server rebuild or new API permission is needed.
+
+- **Reactions:** tap the reaction button beneath a message or long-press its bubble.
+  Choose an emoji; choosing one of your existing reactions removes it. Counts group
+  distinct canonical users, so multiple devices on one extension do not inflate them.
+  Room reactions wait for the service echo and reference its stable stanza ID.
+- **Visual formatting:** select text in the composer and use Bold, Italic, Underline
+  or Strikethrough. The editor shows styles immediately. With a collapsed cursor,
+  buttons change the style of newly typed text. Clear formatting resets selected
+  text, or the whole draft when no text is selected. Plain text remains available
+  to older clients; a restricted XHTML-IM payload carries the formatting. Remote
+  HTML is rendered as native text, with no scripts, URLs, fonts or external images.
+- **GIFs:** use the GIF button or Attach → Choose GIF file. Files retain their
+  original animated bytes and use the existing authenticated upload/download path,
+  10 MiB limit and attachment retention. GIFs play inside a conversation. Photos
+  still use the existing image picker/compression flow; GIF selection uses the file
+  picker to preserve animation.
+- **Search:** Conversations matches the name, extension/JID and most recent message
+  preview. Rooms matches room names and current member names/extensions. Search
+  ignores case, combines multiple words and includes a clear button. It searches
+  loaded conversation previews, not the entire message archive.
+
+## Optional in-app Tenor search
+
+GIF files work without a provider key. To enable the searchable Tenor picker,
+create a VoiceHost-owned Tenor v2 API key and supply it when building the app:
+
+```bash
+flutter run --dart-define=TENOR_API_KEY=YOUR_TENOR_KEY
+# Supply the same define to flutter build ipa / apk / appbundle / windows.
+```
+
+The key is a client API key compiled into the application, not a server secret.
+Use appropriate restrictions in the provider console. No demo key is embedded.
+Search uses Tenor's search/featured endpoints with a high content filter and the
+picker displays Tenor attribution. Search terms and selected GIF share statistics
+are sent to Tenor; account JIDs, recipients and conversation bodies are not sent.
+Selected GIFs are downloaded and re-uploaded to VoiceHost before messaging; chat
+recipients receive only the authenticated attachment identifier, not a remote URL.
+A provider outage affects GIF search, not text messages or local GIF attachments.
+
+## Update and verify
+
+From the existing Flutter directory on the Mac:
+
+```bash
+git pull --ff-only origin feature/ejabberd-messaging
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
+
+Update both devices when testing the new UI. Check:
+
+1. React to a direct message and a room message. Add a second emoji, remove it and
+   reconnect. Verify counts do not duplicate on a second device for the same user.
+2. Format different parts of a draft, edit/replace text, send it, and reload history.
+   Try a formatted attachment caption and an unformatted message on an older app.
+3. Send a local animated GIF in both chat types; confirm inline animation and file
+   saving. If Tenor is enabled, search, select a GIF, review its draft and send it.
+4. Search each list by a name and extension, try an unknown term, clear it, and
+   verify new messages do not reset the current query.
+5. Confirm call controls/CallKit, provisioning locks, membership removal, plain
+   messages, typing, receipts and other attachments still work.
+
+The protocol tests cover foreign-account rejection, room non-member rejection,
+error rollback, reaction removals, delayed replay and reactions received before
+older target messages. Cache and editor tests cover backwards-compatible loading,
+style preservation and safe fallback to plain text. Live ejabberd/iOS verification
+still needs the deployed app on real devices.
+
+Validated with Flutter 3.47.7 / Dart 3.13.5: `flutter analyze` reported no issues
+and the full `flutter test` suite passed (102 tests).
+
+---
+
 # Managed ejabberd messaging and conversation recovery
 
 Private account rooms are implemented. Follow the [room rollout guide](../provisioning-server/MESSAGING-ROOMS.md): update ejabberd/configuration, provisioning and then the app. Messages → Rooms creates rooms and manages members. Current members can read the full retained history.

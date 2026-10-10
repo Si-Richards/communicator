@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:xml/xml.dart';
 import 'package:voicehost_softphone/models/chat_message.dart';
+import 'package:voicehost_softphone/models/chat_text_format.dart';
+import 'package:voicehost_softphone/models/chat_reaction.dart';
 import 'package:voicehost_softphone/models/chat_attachment.dart';
 import 'package:voicehost_softphone/models/provisioning.dart';
 import 'package:voicehost_softphone/models/messaging_presence.dart';
@@ -76,6 +78,114 @@ void main() {
       '<$direction xmlns="urn:xmpp:carbons:2">'
       '<forwarded xmlns="urn:xmpp:forward:0">$inner</forwarded>'
       '</$direction></message>';
+
+  test(
+    'rich text and reactions survive direct chat delivery and removals',
+    () async {
+      final alice = client(), bob = client();
+      await login(alice, '10000*207');
+      await login(bob, '10000*208');
+      alice.sendMessage(
+        recipient: '208',
+        body: 'Hello team',
+        formatting: [const ChatTextFormat(0, 5, 3)],
+      );
+      await _until(() => bob.messages.isNotEmpty);
+      expect(bob.messages.single.formatting.single.style, 3);
+      bob.toggleReaction(bob.messages.single, '👍');
+      await _until(() => alice.reactionsFor(alice.messages.single).isNotEmpty);
+      expect(alice.reactionsFor(alice.messages.single)[peer], ['👍']);
+      expect(alice.messages.length, 1);
+      bob.toggleReaction(bob.messages.single, '👍');
+      await _until(() => alice.reactionsFor(alice.messages.single).isEmpty);
+      final wire = server.received
+          .where(
+            (s) =>
+                s.getElement('reactions', namespace: ChatReaction.namespace) !=
+                null,
+          )
+          .last;
+      expect(wire.getElement('store', namespace: 'urn:xmpp:hints'), isNotNull);
+    },
+  );
+
+  test('reaction forgery and delayed replay cannot change current reactions', () async {
+    final alice = client();
+    await login(alice, '10000*207');
+    alice.sendMessage(recipient: '208', body: 'Hello');
+    final m = alice.messages.single;
+    String reaction(String actor, String emoji, {String delay = ''}) =>
+        '<message xmlns="jabber:client" from="$actor" type="chat"><reactions xmlns="urn:xmpp:reactions:0" id="${m.id}">'
+        '${emoji.isEmpty ? '' : '<reaction>$emoji</reaction>'}</reactions>$delay</message>';
+    receive(alice, reaction(peer, '👍'));
+    await _until(() => alice.reactionsFor(m).isNotEmpty);
+    receive(alice, reaction(peer, ''));
+    await _until(() => alice.reactionsFor(m).isEmpty);
+    receive(
+      alice,
+      reaction(
+        peer,
+        '👍',
+        delay: '<delay xmlns="urn:xmpp:delay" stamp="2020-01-01T00:00:00Z"/>',
+      ),
+    );
+    receive(alice, reaction('20000*208@ejabberd.voicehost.io', '❤️'));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(alice.reactionsFor(m), isEmpty);
+  });
+
+  test('rejected direct-chat reaction rolls back its optimistic update', () async {
+    final alice = client();
+    await login(alice, '10000*207');
+    alice.sendMessage(recipient: '208', body: 'Hello');
+    final m = alice.messages.single;
+    alice.toggleReaction(m, '👍');
+    await _until(
+      () => server.received.any(
+        (s) =>
+            s.getElement('reactions', namespace: ChatReaction.namespace) !=
+            null,
+      ),
+    );
+    final id = server.received
+        .lastWhere(
+          (s) =>
+              s.getElement('reactions', namespace: ChatReaction.namespace) !=
+              null,
+        )
+        .getAttribute('id');
+    receive(
+      alice,
+      '<message xmlns="jabber:client" from="$peer" type="error" id="$id"><error type="modify"/></message>',
+    );
+    await _until(() => alice.reactionsFor(m).isEmpty);
+  });
+
+  test(
+    'archived reactions arriving before their target survive cache reload',
+    () async {
+      server.archive.addAll([
+        _Archived('0', 'Old message', clientId: 'target'),
+        _Archived('1', 'Newer message', clientId: 'newer'),
+        _Archived(
+          '2',
+          '',
+          attachmentXml: '<reactions xmlns="urn:xmpp:reactions:0" id="target"><reaction>👍</reaction></reactions>',
+        ),
+      ]);
+      final history = MemoryChatHistoryRepository();
+      final alice = client(history: history);
+      await login(alice, '10000*207');
+      await _until(() => !alice.historyBusy && alice.hasOlder);
+      await alice.loadOlder();
+      expect(alice.reactionsFor(alice.messages.first)[peer], ['👍']);
+      await alice.flushHistory();
+      final snapshot = await history.load(
+        '10000*207@ejabberd.voicehost.io|wss://ejabberd.voicehost.io/websocket',
+      );
+      expect(snapshot.reactionUpdates.single.emojis, ['👍']);
+    },
+  );
 
   test(
     'attachments retain metadata and ordinary delivery/read semantics',
@@ -942,6 +1052,58 @@ void main() {
   String group(String ext, String inner, {String id = 'msg'}) =>
       '<message xmlns="jabber:client" type="groupchat" from="$roomJid/$ext" id="$id">$inner</message>';
 
+  test('room reactions use service stanza IDs and reject non-members', () async {
+    final service = await roomClient();
+    receive(
+      service,
+      group(
+        '208',
+        '<body>Team note</body><stanza-id xmlns="urn:xmpp:sid:0" by="$roomJid" id="room-target"/>',
+        id: 'sender-id',
+      ),
+    );
+    await _until(() => service.messages.isNotEmpty);
+    final m = service.messages.single;
+    service.toggleReaction(m, '👍');
+    await _until(
+      () => server.received.any(
+        (s) =>
+            s.getElement('reactions', namespace: ChatReaction.namespace) !=
+            null,
+      ),
+    );
+    final wire = server.received.lastWhere(
+      (s) =>
+          s.getElement('reactions', namespace: ChatReaction.namespace) != null,
+    );
+    expect(
+      wire
+          .getElement('reactions', namespace: ChatReaction.namespace)!
+          .getAttribute('id'),
+      'room-target',
+    );
+    expect(wire.getAttribute('type'), 'groupchat');
+    receive(
+      service,
+      group(
+        '207',
+        '<reactions xmlns="urn:xmpp:reactions:0" id="room-target"><reaction>👍</reaction></reactions>',
+      ),
+    );
+    await _until(() => service.reactionsFor(m).isNotEmpty);
+    receive(
+      service,
+      group(
+        '999',
+        '<reactions xmlns="urn:xmpp:reactions:0" id="room-target"><reaction>❤️</reaction></reactions>',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(service.reactionsFor(m).keys, ['10000*207@ejabberd.voicehost.io']);
+    service.replaceRooms([]);
+    expect(service.messages, isEmpty);
+  });
+
   test(
     'room sends groupchat, merges own echo and counts canonical readers',
     () async {
@@ -1254,7 +1416,7 @@ void main() {
         previous,
       );
       expect(
-        ChatHistorySnapshot.fromJson({'messages': []}).migratedAccounts,
+        ChatHistorySnapshot.fromJson({'version': 1, 'messages': []}).migratedAccounts,
         isEmpty,
       );
     },

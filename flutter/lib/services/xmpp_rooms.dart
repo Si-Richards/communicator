@@ -73,6 +73,7 @@ extension MessagingRooms on XmppService {
       _roomLatest.remove(peer);
       _roomHasOlder.remove(peer);
       _messages.removeWhere((m) => m.peer == peer);
+      _reactions.removeWhere((_, r) => r.peer == peer);
       for (final resource
           in _typingResources.entries
               .where((e) => e.value == peer)
@@ -86,6 +87,9 @@ extension MessagingRooms on XmppService {
     // The first authoritative response also purges cached rooms we no longer belong to.
     _messages.removeWhere(
       (m) => m.peer.contains('@rooms.') && !_rooms.containsKey(m.peer),
+    );
+    _reactions.removeWhere(
+      (_, r) => r.peer.contains('@rooms.') && !_rooms.containsKey(r.peer),
     );
     for (final room in rooms) {
       _chatStatePeers.add(room.jid);
@@ -201,6 +205,7 @@ extension MessagingRooms on XmppService {
         !_rooms[peer]!.members.any((m) => m.jid == sender)) {
       return;
     }
+    if (_receiveReaction(message, peer, sender, timestamp: timestamp)) return;
     if (timestamp == null && !outgoing) _receiveChatState(message, peer);
     final displayed = message
         .getElement('displayed', namespace: XmppService._markers)
@@ -265,6 +270,7 @@ extension MessagingRooms on XmppService {
           archiveId: archiveId,
           markable: archiveId != null,
           attachment: _attachment(message),
+          formatting: ChatTextFormat.decode(message, body),
         ),
       );
     }
